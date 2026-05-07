@@ -16,7 +16,7 @@
 #include <vector>
 
 void BuildTraces(std::vector<TString> input_output_filenames,
-                 std::vector<TString> file_labels,
+                 std::vector<TString> file_labels, Bool_t save_plots = kTRUE,
                  Bool_t reprocess = kFALSE) {
   if (!reprocess)
     return;
@@ -154,31 +154,34 @@ void BuildTraces(std::vector<TString> input_output_filenames,
           TraceRight->Write("", TObject::kOverwrite);
           TraceTotal->Write("", TObject::kOverwrite);
 
-          TString trace_subdir = "traces/" + file_label;
-          TString trace_tag = Form("strip%d_event%lld", triggerStrip, j);
+          if (save_plots) {
+            TString trace_subdir = "traces/" + file_label;
+            TString trace_tag = Form("strip%d_event%lld", triggerStrip, j);
 
-          TCanvas *c_left = PlottingUtils::GetConfiguredCanvas(kFALSE);
-          TraceLeft->Draw("ALP");
-          if (Constants::SAVE_LR_TRACES)
-            PlottingUtils::SaveFigure(c_left, "trace_left_" + trace_tag,
+            TCanvas *c_left = PlottingUtils::GetConfiguredCanvas(kFALSE);
+            TraceLeft->Draw("ALP");
+            if (Constants::SAVE_LR_TRACES)
+              PlottingUtils::SaveFigure(c_left, "trace_left_" + trace_tag,
+                                        trace_subdir, PlotSaveOptions::kLINEAR);
+            delete c_left;
+
+            TCanvas *c_right = PlottingUtils::GetConfiguredCanvas(kFALSE);
+            TraceRight->Draw("ALP");
+            if (Constants::SAVE_LR_TRACES)
+              PlottingUtils::SaveFigure(c_right, "trace_right_" + trace_tag,
+                                        trace_subdir,
+                                        PlotSaveOptions::kLINEAR);
+            delete c_right;
+
+            TCanvas *c_total = PlottingUtils::GetConfiguredCanvas(kFALSE);
+            TraceTotal->Draw("ALP");
+            PlottingUtils::SaveFigure(c_total, "trace_total_" + trace_tag,
                                       trace_subdir, PlotSaveOptions::kLINEAR);
-          delete c_left;
+            delete c_total;
 
-          TCanvas *c_right = PlottingUtils::GetConfiguredCanvas(kFALSE);
-          TraceRight->Draw("ALP");
-          if (Constants::SAVE_LR_TRACES)
-            PlottingUtils::SaveFigure(c_right, "trace_right_" + trace_tag,
-                                      trace_subdir, PlotSaveOptions::kLINEAR);
-          delete c_right;
-
-          TCanvas *c_total = PlottingUtils::GetConfiguredCanvas(kFALSE);
-          TraceTotal->Draw("ALP");
-          PlottingUtils::SaveFigure(c_total, "trace_total_" + trace_tag,
-                                    trace_subdir, PlotSaveOptions::kLINEAR);
-          delete c_total;
-
-          std::cout << "Saved event from strip " << triggerStrip << " (entry "
-                    << j << ") under " << trace_subdir << std::endl;
+            std::cout << "Saved event from strip " << triggerStrip << " (entry "
+                      << j << ") under " << trace_subdir << std::endl;
+          }
         }
       }
       delete TraceLeft;
@@ -191,10 +194,10 @@ void BuildTraces(std::vector<TString> input_output_filenames,
       }
     }
 
-    {
+    input_output_file->cd();
+    h2_TotalE_vs_StripE->Write("", TObject::kOverwrite);
+    if (save_plots) {
       std::lock_guard<std::mutex> lock(g_plot_mutex);
-      input_output_file->cd();
-      h2_TotalE_vs_StripE->Write("", TObject::kOverwrite);
       TCanvas *histCanvas = PlottingUtils::GetConfiguredCanvas(kFALSE);
       PlottingUtils::ConfigureAndDraw2DHistogram(h2_TotalE_vs_StripE,
                                                  histCanvas);
@@ -203,8 +206,8 @@ void BuildTraces(std::vector<TString> input_output_filenames,
                                 "traces/" + file_label,
                                 PlotSaveOptions::kLINEAR);
       delete histCanvas;
-      delete h2_TotalE_vs_StripE;
     }
+    delete h2_TotalE_vs_StripE;
 
     input_output_file->Write("", TObject::kOverwrite);
     input_output_file->Close();
@@ -227,5 +230,5 @@ void TraceCreator() {
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
                                 TString(gSystem->pwd()) + "/plots",
                                 TString(gSystem->pwd()) + "/root_files");
-  BuildTraces(input_output_filenames, file_labels, reprocess_initial);
+  BuildTraces(input_output_filenames, file_labels, kTRUE, reprocess_initial);
 }

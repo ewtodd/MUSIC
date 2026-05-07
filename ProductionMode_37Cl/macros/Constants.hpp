@@ -8,16 +8,14 @@
 
 namespace Constants {
 
-inline const std::vector<Int_t> RUN_NUMBERS = {12, 13, 14, 16, 17,
-                                               18, 19, 20, 37};
-const Int_t N_FILES = 2;
+inline const std::vector<Int_t> RUN_NUMBERS = {
+    16, 17, 37}; // {12, 13, 14, 16, 17, 18, 19, 20, 37};
+const Int_t N_FILES = 3;
 
 const Int_t N_BOARDS = 4;
 const Int_t N_CHANNELS = 16;
 
 const Int_t TRIGGER_THRESHOLD = 500;
-
-const Bool_t SILENT_PIPELINE = kFALSE;
 
 const UShort_t REF_BOARD = 1;
 inline const std::vector<UShort_t> BOARD_CHANNELS = {12, 0, 0, 0};

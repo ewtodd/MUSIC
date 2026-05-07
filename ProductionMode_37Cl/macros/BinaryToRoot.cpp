@@ -33,7 +33,7 @@ void BinaryToRoot() {
                                 TString(gSystem->pwd()) + "/plots",
                                 TString(gSystem->pwd()) + "/root_files");
 
-  TString base_path = "/run/media/e-work/B16A-129A/LabData/MUSIC/";
+  TString base_path = "/home/e-work/LabData/MUSIC/37Cl/";
 
   struct Job {
     TString filepath;

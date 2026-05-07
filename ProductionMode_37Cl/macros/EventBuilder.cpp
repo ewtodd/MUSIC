@@ -219,6 +219,8 @@ void BuildEvents(std::vector<TString> input_filenames,
 
     std::cout << "Pass 2: assigning hits to nearest grid..." << std::endl;
 
+    input_file->cd();
+
     for (Long64_t j = 0; j < n_entries; j++) {
       input_tree->GetEntry(j);
 

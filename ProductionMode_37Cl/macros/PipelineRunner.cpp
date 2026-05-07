@@ -9,7 +9,6 @@
 #include <TROOT.h>
 #include <TSystem.h>
 #include <cstddef>
-#include <cstdio>
 #include <fstream>
 #include <future>
 #include <iostream>
@@ -36,7 +35,7 @@ Bool_t RunPipelineOneFile(FileSpec spec) {
 
   BuildEvents(sorted_name, events_name, kTRUE);
 
-  BuildTraces(events_name, file_labels, kTRUE);
+  BuildTraces(events_name, file_labels, kFALSE, kTRUE);
 
   {
     std::lock_guard<std::mutex> lock(pipeline_log_mutex);
@@ -51,17 +50,12 @@ void PipelineRunner() {
                                 TString(gSystem->pwd()) + "/plots",
                                 TString(gSystem->pwd()) + "/root_files");
 
-  std::ofstream null_sink;
-  std::streambuf *saved_cout = nullptr;
-  std::streambuf *saved_cerr = nullptr;
+  TString log_path = TString(gSystem->pwd()) + "/pipeline.log";
+  std::ofstream log_file(log_path.Data());
+  std::streambuf *saved_cout = std::cout.rdbuf(log_file.rdbuf());
+  std::streambuf *saved_cerr = std::cerr.rdbuf(log_file.rdbuf());
   Int_t saved_error_level = gErrorIgnoreLevel;
-
-  if (Constants::SILENT_PIPELINE) {
-    null_sink.open("/dev/null");
-    saved_cout = std::cout.rdbuf(null_sink.rdbuf());
-    saved_cerr = std::cerr.rdbuf(null_sink.rdbuf());
-    gErrorIgnoreLevel = kFatal;
-  }
+  gErrorIgnoreLevel = kError;
 
   std::vector<FileSpec> specs = BuildFileSpecs();
   Int_t n_specs = Int_t(specs.size());
@@ -90,11 +84,9 @@ void PipelineRunner() {
 
   std::cout << "All pipelines complete." << std::endl;
 
-  if (Constants::SILENT_PIPELINE) {
-    std::cout.rdbuf(saved_cout);
-    std::cerr.rdbuf(saved_cerr);
-    gErrorIgnoreLevel = saved_error_level;
-    null_sink.close();
-    std::cout << "Pipeline finished (output was silenced)." << std::endl;
-  }
+  std::cout.rdbuf(saved_cout);
+  std::cerr.rdbuf(saved_cerr);
+  gErrorIgnoreLevel = saved_error_level;
+  log_file.close();
+  std::cout << "Pipeline finished. Output logged to " << log_path << std::endl;
 }
