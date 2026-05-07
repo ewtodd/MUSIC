@@ -1,3 +1,5 @@
+#include "IOUtils.hpp"
+#include "InitUtils.hpp"
 #include <TCanvas.h>
 #include <TF1.h>
 #include <TFile.h>
@@ -99,8 +101,12 @@ Double_t GetStoppingPowerFromLISE(const TString &filename, Int_t modelIndex,
 
 void CalcStoppingPower() {
 
-  TString input_filepath = "root_files/SiCalibration_Results.root";
-  TFile *inFile = new TFile(input_filepath, "UPDATE");
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                TString(gSystem->pwd()) + "/plots",
+                                TString(gSystem->pwd()) + "/root_files");
+
+  TString input_filepath = "SiCalibration_Results.root";
+  TFile *inFile = IO::OpenForWriting(input_filepath, "UPDATE");
 
   if (!inFile || inFile->IsZombie()) {
     std::cerr << "ERROR: Could not read ROOT file." << std::endl;

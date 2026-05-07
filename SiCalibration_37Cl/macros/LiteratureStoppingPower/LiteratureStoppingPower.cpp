@@ -1,4 +1,5 @@
 #include "InitUtils.hpp"
+#include "PlottingUtils.hpp"
 #include <TCanvas.h>
 #include <TF1.h>
 #include <TGraph.h>
@@ -63,7 +64,9 @@ void ReadLISEFile(const TString &filename, Double_t exp_min, Double_t exp_max,
 }
 
 void LiteratureStoppingPower() {
-  InitUtils::SetROOTPreferences();
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                TString(gSystem->pwd()) + "/plots",
+                                TString(gSystem->pwd()) + "/root_files");
 
   Double_t exp_E_A[] = {2.624, 2.550, 2.450, 2.339, 2.207, 2.134, 2.038, 1.955,
                         1.843, 1.717, 1.624, 1.446, 1.414, 1.352, 1.230, 1.091,
@@ -144,9 +147,6 @@ void LiteratureStoppingPower() {
 
   canvas->Update();
 
-  // Save plot
-  if (gSystem->AccessPathName("plots")) {
-    gSystem->mkdir("plots", kTRUE);
-  }
-  canvas->SaveAs("plots/StoppingPower_vs_Energy_Comparison.png");
+  PlottingUtils::SaveFigure(canvas, "StoppingPower_vs_Energy_Comparison", "",
+                            PlotSaveOptions::kLINEAR);
 }

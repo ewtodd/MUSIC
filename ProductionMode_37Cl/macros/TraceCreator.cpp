@@ -1,5 +1,7 @@
 #include "Constants.hpp"
+#include "IOUtils.hpp"
 #include "InitUtils.hpp"
+#include "PipelineMutex.hpp"
 #include "PlottingUtils.hpp"
 #include <TCanvas.h>
 #include <TFile.h>
@@ -7,11 +9,14 @@
 #include <TROOT.h>
 #include <TSystem.h>
 #include <TTree.h>
+#include <cstddef>
 #include <iostream>
+#include <mutex>
 #include <ostream>
 #include <vector>
 
 void BuildTraces(std::vector<TString> input_output_filenames,
+                 std::vector<TString> file_labels,
                  Bool_t reprocess = kFALSE) {
   if (!reprocess)
     return;
@@ -19,9 +24,10 @@ void BuildTraces(std::vector<TString> input_output_filenames,
   Int_t n_files = input_output_filenames.size();
   for (Int_t i = 0; i < n_files; i++) {
     TString input_output_filename = input_output_filenames[i];
-    TString input_output_filepath =
-        "root_files/" + input_output_filename + ".root";
-    TFile *input_output_file = new TFile(input_output_filepath, "UPDATE");
+    TString input_output_filepath = input_output_filename + ".root";
+    TString file_label = file_labels[i];
+    TFile *input_output_file =
+        IO::OpenForWriting(input_output_filepath, "UPDATE");
 
     if (!input_output_file || input_output_file->IsZombie()) {
       std::cerr << "Error opening file: " << input_output_filepath << std::endl;
@@ -68,10 +74,10 @@ void BuildTraces(std::vector<TString> input_output_filenames,
                       "Sum of Strips 3-4 [ADC];"
                       "Sum of Strips 1-2 [ADC]",
                       Constants::TRIGGER_THRESHOLD),
-                 250, 0, 10000, 250, 0, 10000);
+                 250, 0, 12000, 250, 0, 12000);
 
-    const Int_t MAX_SAVES = 3;
     Int_t save_count = 0;
+    Int_t save_count_per_strip[18] = {0};
 
     for (Long64_t j = 0; j < n_entries; j++) {
       input_output_tree->GetEntry(j);
@@ -96,10 +102,18 @@ void BuildTraces(std::vector<TString> input_output_filenames,
           Double_t sum_second_two = totaldE[k + 2] + totaldE[k + 3];
 
           h2_TotalE_vs_StripE->Fill(sum_second_two, sum_first_two);
-          if (save_count < MAX_SAVES) {
+
+          Bool_t can_save =
+              Constants::PER_STRIP_TRACE_LIMIT
+                  ? (save_count_per_strip[k] < Constants::MAX_TRACE_SAVES)
+                  : (save_count < Constants::MAX_TRACE_SAVES);
+          if (can_save) {
             save_event = kTRUE;
             triggerStrip = k;
-            save_count++;
+            if (Constants::PER_STRIP_TRACE_LIMIT)
+              save_count_per_strip[k]++;
+            else
+              save_count++;
           }
           break;
         }
@@ -112,58 +126,60 @@ void BuildTraces(std::vector<TString> input_output_filenames,
       if (save_event) {
 
         TraceLeft->SetName(Form("TraceLeft_e%lld", j));
-        TraceLeft->SetTitle(Form(
-            "Left dE vs Strip Index (Event %lld);Strip Index;Left dE [ADC]",
-            j));
-        TraceLeft->SetLineColor(kBlue);
-        TraceLeft->SetLineWidth(2);
-        TraceLeft->SetMarkerColor(kBlue);
-        TraceLeft->GetYaxis()->SetRangeUser(0, 2000);
+        PlottingUtils::ConfigureGraph(
+            TraceLeft, kBlue + 1,
+            Form("Left dE Event %lld;Strip Index;Left dE [ADC]", j));
+        TraceLeft->SetMarkerColor(kBlue + 1);
+        TraceLeft->GetYaxis()->SetRangeUser(0, 3000);
 
         TraceRight->SetName(Form("TraceRight_e%lld", j));
-        TraceRight->SetTitle(Form(
-            "Right dE vs Strip Index (Event %lld);Strip Index;Right dE[ADC]",
-            j));
-        TraceRight->SetLineColor(kRed);
-        TraceRight->SetLineWidth(2);
-        TraceRight->SetMarkerColor(kRed);
-        TraceRight->GetYaxis()->SetRangeUser(0, 2000);
+        PlottingUtils::ConfigureGraph(
+            TraceRight, kRed + 1,
+            Form("Right dE Event %lld;Strip Index;Right dE [ADC]", j));
+        TraceRight->SetMarkerColor(kRed + 1);
+        TraceRight->GetYaxis()->SetRangeUser(0, 3000);
 
         TraceTotal->SetName(Form("TraceTotal_e%lld", j));
-        TraceTotal->SetTitle(Form(
-            "Total dE vs Strip Index (Event %lld);Strip Index;Total dE [ADC]",
-            j));
-        TraceTotal->SetLineColor(kBlack);
-        TraceTotal->SetLineWidth(2);
+        PlottingUtils::ConfigureGraph(
+            TraceTotal, kBlack,
+            Form("Total dE Event %lld;Strip Index;Total dE [ADC]", j));
         TraceTotal->SetMarkerColor(kBlack);
-        TraceTotal->GetYaxis()->SetRangeUser(0, 5000);
+        TraceTotal->GetYaxis()->SetRangeUser(0, 6000);
 
-        trace_dir->cd();
-        TraceLeft->Write("", TObject::kOverwrite);
-        TraceRight->Write("", TObject::kOverwrite);
-        TraceTotal->Write("", TObject::kOverwrite);
+        {
+          std::lock_guard<std::mutex> lock(g_plot_mutex);
 
-        TCanvas *c_traces = new TCanvas("c_traces", "Traces", 1600, 1200);
-        c_traces->Divide(1, 3);
+          trace_dir->cd();
+          TraceLeft->Write("", TObject::kOverwrite);
+          TraceRight->Write("", TObject::kOverwrite);
+          TraceTotal->Write("", TObject::kOverwrite);
 
-        c_traces->cd(1);
-        TraceLeft->Draw("ALP");
+          TString trace_subdir = "traces/" + file_label;
+          TString trace_tag = Form("strip%d_event%lld", triggerStrip, j);
 
-        c_traces->cd(2);
-        TraceRight->Draw("ALP");
+          TCanvas *c_left = PlottingUtils::GetConfiguredCanvas(kFALSE);
+          TraceLeft->Draw("ALP");
+          if (Constants::SAVE_LR_TRACES)
+            PlottingUtils::SaveFigure(c_left, "trace_left_" + trace_tag,
+                                      trace_subdir, PlotSaveOptions::kLINEAR);
+          delete c_left;
 
-        c_traces->cd(3);
-        TraceTotal->Draw("ALP");
+          TCanvas *c_right = PlottingUtils::GetConfiguredCanvas(kFALSE);
+          TraceRight->Draw("ALP");
+          if (Constants::SAVE_LR_TRACES)
+            PlottingUtils::SaveFigure(c_right, "trace_right_" + trace_tag,
+                                      trace_subdir, PlotSaveOptions::kLINEAR);
+          delete c_right;
 
-        TString trace_filename =
-            Form("%s_Strip%d_Event%lld", input_output_filename.Data(),
-                 triggerStrip, j);
-        PlottingUtils::SaveFigure(c_traces, trace_filename, "", PlotSaveOptions::kLINEAR);
+          TCanvas *c_total = PlottingUtils::GetConfiguredCanvas(kFALSE);
+          TraceTotal->Draw("ALP");
+          PlottingUtils::SaveFigure(c_total, "trace_total_" + trace_tag,
+                                    trace_subdir, PlotSaveOptions::kLINEAR);
+          delete c_total;
 
-        delete c_traces;
-
-        std::cout << "Saved event from strip " << triggerStrip << " (entry "
-                  << j << ") as " << trace_filename << std::endl;
+          std::cout << "Saved event from strip " << triggerStrip << " (entry "
+                    << j << ") under " << trace_subdir << std::endl;
+        }
       }
       delete TraceLeft;
       delete TraceRight;
@@ -175,14 +191,20 @@ void BuildTraces(std::vector<TString> input_output_filenames,
       }
     }
 
-    input_output_file->cd();
-    h2_TotalE_vs_StripE->Write("", TObject::kOverwrite);
-    TCanvas *histCanvas = new TCanvas("", "", 1600, 800);
-    PlottingUtils::ConfigureAndDraw2DHistogram(h2_TotalE_vs_StripE, histCanvas);
-    PlottingUtils::SaveFigure(histCanvas, input_output_filename + "_hist",
-                              "", PlotSaveOptions::kLINEAR);
-    delete histCanvas;
-    delete h2_TotalE_vs_StripE;
+    {
+      std::lock_guard<std::mutex> lock(g_plot_mutex);
+      input_output_file->cd();
+      h2_TotalE_vs_StripE->Write("", TObject::kOverwrite);
+      TCanvas *histCanvas = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      PlottingUtils::ConfigureAndDraw2DHistogram(h2_TotalE_vs_StripE,
+                                                 histCanvas);
+      h2_TotalE_vs_StripE->GetYaxis()->SetTitleOffset(1.3);
+      PlottingUtils::SaveFigure(histCanvas, "totalE_vs_stripE",
+                                "traces/" + file_label,
+                                PlotSaveOptions::kLINEAR);
+      delete histCanvas;
+      delete h2_TotalE_vs_StripE;
+    }
 
     input_output_file->Write("", TObject::kOverwrite);
     input_output_file->Close();
@@ -192,14 +214,18 @@ void BuildTraces(std::vector<TString> input_output_filenames,
 void TraceCreator() {
   Bool_t reprocess_initial = kTRUE;
 
-  std::vector<TString> input_output_filenames;
+  std::vector<TString> input_output_filenames, file_labels;
 
-  for (Int_t i = 0; i < Constants::N_FILES; i++) {
-    input_output_filenames.push_back(Form("Events_Run37_%d", i));
+  std::vector<FileSpec> specs = BuildFileSpecs();
+  for (std::size_t k = 0; k < specs.size(); k++) {
+    input_output_filenames.push_back(EventsName(specs[k]));
     std::cout << "Processing file: " << std::endl;
-    std::cout << input_output_filenames[i] << std::endl;
+    std::cout << input_output_filenames.back() << std::endl;
+    file_labels.push_back(FileLabel(specs[k]));
   }
 
-  InitUtils::SetROOTPreferences();
-  BuildTraces(input_output_filenames, reprocess_initial);
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                TString(gSystem->pwd()) + "/plots",
+                                TString(gSystem->pwd()) + "/root_files");
+  BuildTraces(input_output_filenames, file_labels, reprocess_initial);
 }

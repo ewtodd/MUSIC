@@ -1,32 +1,31 @@
 #include "Constants.hpp"
+#include "IOUtils.hpp"
 #include "InitUtils.hpp"
+#include "PipelineMutex.hpp"
 #include "PlottingUtils.hpp"
 #include <TFile.h>
 #include <TGraph.h>
-#include <TMarker.h>
-#include <TPaveText.h>
+#include <TH1D.h>
+#include <TH1F.h>
+#include <TH2D.h>
 #include <TROOT.h>
-#include <TRandom3.h>
 #include <TSystem.h>
 #include <TTree.h>
 #include <algorithm>
+#include <cstddef>
+#include <mutex>
+#include <utility>
 #include <vector>
 
 struct TimeShiftResult {
-  Long64_t board_0_1_average;
-  Long64_t board_0_1_stddev;
-  Long64_t board_0_2_average;
-  Long64_t board_0_2_stddev;
-  Long64_t board_0_3_average;
-  Long64_t board_0_3_stddev;
+  std::vector<Long64_t> board_shifts;
 };
 
 void ComputeNSD2(const std::vector<Double_t> &ref_x,
                  const std::vector<Double_t> &ref_y,
                  const std::vector<Double_t> &gr_x,
                  const std::vector<Double_t> &gr_y, Double_t shift,
-                 Double_t thresh_dt_us, Double_t overlap_tmin_s,
-                 Double_t overlap_tmax_s, Int_t &npts, Double_t &nsd2) {
+                 Double_t thresh_dt_us, Int_t &npts, Double_t &nsd2) {
   nsd2 = 0;
   npts = 0;
 
@@ -38,30 +37,31 @@ void ComputeNSD2(const std::vector<Double_t> &ref_x,
   Double_t tmin = TMath::Max(tmin_ref, tmin_gr);
   Double_t tmax = TMath::Min(tmax_ref, tmax_gr);
 
-  size_t gr_idx = 0;
+  std::size_t gr_idx = 0;
 
-  for (size_t p = 0; p < ref_x.size(); p++) {
+  for (std::size_t p = 0; p < ref_x.size(); p++) {
     Double_t tref = ref_x[p];
     Double_t dtref = ref_y[p];
 
-    if (tref >= tmin && tref <= tmax && dtref > thresh_dt_us) {
-      Double_t tref_shifted = tref + shift;
+    if (tref < tmin || tref > tmax || dtref <= thresh_dt_us)
+      continue;
 
-      while (gr_idx < gr_x.size() - 1 && gr_x[gr_idx + 1] < tref_shifted) {
-        gr_idx++;
-      }
+    Double_t tref_shifted = tref + shift;
 
-      if (gr_idx < gr_x.size() - 1) {
-        Double_t x0 = gr_x[gr_idx];
-        Double_t x1 = gr_x[gr_idx + 1];
-        Double_t y0 = gr_y[gr_idx];
-        Double_t y1 = gr_y[gr_idx + 1];
+    while (gr_idx < gr_x.size() - 1 && gr_x[gr_idx + 1] < tref_shifted)
+      gr_idx++;
 
-        Double_t dt = y0 + (y1 - y0) * (tref_shifted - x0) / (x1 - x0);
-        nsd2 += pow(dt - dtref, 2);
-        npts++;
-      }
-    }
+    if (gr_idx >= gr_x.size() - 1)
+      continue;
+
+    Double_t x0 = gr_x[gr_idx];
+    Double_t x1 = gr_x[gr_idx + 1];
+    Double_t y0 = gr_y[gr_idx];
+    Double_t y1 = gr_y[gr_idx + 1];
+
+    Double_t dt = y0 + (y1 - y0) * (tref_shifted - x0) / (x1 - x0);
+    nsd2 += pow(dt - dtref, 2);
+    npts++;
   }
 
   if (nsd2 > 0 && npts > 0) {
@@ -71,81 +71,10 @@ void ComputeNSD2(const std::vector<Double_t> &ref_x,
   }
 }
 
-Double_t FindShiftBeam(TGraph *ref, TGraph *gr, Double_t overlap_tmin_s,
-                       Double_t overlap_tmax_s, Double_t thresh_dt_us,
-                       Int_t max_iterations = 10000) {
-
-  std::vector<Double_t> ref_x(ref->GetN()), ref_y(ref->GetN());
-  std::vector<Double_t> gr_x(gr->GetN()), gr_y(gr->GetN());
-
-  std::cout << "Caching graph data..." << std::endl;
-  for (Int_t i = 0; i < ref->GetN(); i++) {
-    ref->GetPoint(i, ref_x[i], ref_y[i]);
-  }
-  for (Int_t i = 0; i < gr->GetN(); i++) {
-    gr->GetPoint(i, gr_x[i], gr_y[i]);
-  }
-
-  Double_t tini = 0;
-  for (size_t p = 0; p < ref_x.size(); p++) {
-    if (ref_x[p] >= overlap_tmin_s) {
-      tini = ref_x[p];
-      break;
-    }
-  }
-
-  std::cout << "Looking for timeshift between " << overlap_tmin_s << " - "
-            << overlap_tmax_s << " sec" << std::endl;
-  std::cout << "tini = " << tini << " s" << std::endl;
-
-  Int_t step = TMath::Max(1, gr->GetN() / max_iterations);
-
-  std::vector<Double_t> shifts;
-  std::vector<Double_t> inv_nsd2_vals;
-  shifts.reserve(max_iterations);
-  inv_nsd2_vals.reserve(max_iterations);
-
-  Double_t best_shift = 0;
-  Double_t max_inv_nsd2 = 0;
-
-  std::cout << "Testing " << gr->GetN() / step << " shift values..."
-            << std::endl;
-
-  for (Int_t p = 0; p < gr->GetN(); p += step) {
-    Int_t npts = 0;
-    Double_t nsd2 = 0;
-    Double_t shift = gr_x[p] - tini;
-
-    if (p % 1000 == 0)
-      std::cout << "Testing shift: " << shift << " s (" << p / step << "/"
-                << gr->GetN() / step << ")" << std::endl;
-
-    ComputeNSD2(ref_x, ref_y, gr_x, gr_y, shift, thresh_dt_us, overlap_tmin_s,
-                overlap_tmax_s, npts, nsd2);
-
-    if (npts > 10) {
-      Double_t inv_nsd2 = 1.0 / nsd2;
-      shifts.push_back(shift);
-      inv_nsd2_vals.push_back(inv_nsd2);
-
-      if (inv_nsd2 > max_inv_nsd2) {
-        best_shift = shift;
-        max_inv_nsd2 = inv_nsd2;
-      }
-    }
-  }
-
-  std::cout << "Best shift: " << best_shift << " s (1/NSD2 = " << max_inv_nsd2
-            << ")" << std::endl;
-
-  return best_shift;
-}
-
 TGraph *ExtractBeamTimingStructure(TTree *tree, UShort_t board,
                                    UShort_t channel, Double_t min_energy,
                                    Double_t max_energy, Double_t tmin_s,
-                                   Double_t tmax_s, Double_t thresh_dt_us,
-                                   Double_t timeshift_s = 0.0) {
+                                   Double_t tmax_s, Double_t thresh_dt_us) {
   UShort_t tree_board, tree_channel, tree_energy;
   ULong64_t tree_timestamp;
 
@@ -172,181 +101,261 @@ TGraph *ExtractBeamTimingStructure(TTree *tree, UShort_t board,
       timestamps.push_back(tree_timestamp);
     }
 
-    if (i % 1000000 == 0) {
-      std::cout << "Progress: " << i << "/" << n_entries << std::endl;
-    }
+    if (i % 10000000 == 0)
+      std::cout << "  Progress: " << i << "/" << n_entries << std::endl;
   }
 
-  std::cout << "Found " << timestamps.size() << " events" << std::endl;
+  std::cout << "  Found " << timestamps.size() << " events in window"
+            << std::endl;
 
   TGraph *delta_graph = new TGraph();
 
-  for (size_t i = 0; i < timestamps.size() - 1; i++) {
+  for (std::size_t i = 0; i + 1 < timestamps.size(); i++) {
     Double_t dt_us = (timestamps[i + 1] - timestamps[i]) / 1e6;
 
     if (dt_us > thresh_dt_us) {
-      Double_t time_s = (timestamps[i] / 1e12) - timeshift_s;
+      Double_t time_s = timestamps[i] / 1e12;
       delta_graph->SetPoint(delta_graph->GetN(), time_s, dt_us);
     }
   }
 
-  std::cout << "Created graph with " << delta_graph->GetN()
+  std::cout << "  Built graph with " << delta_graph->GetN()
             << " large delta-T points" << std::endl;
 
   return delta_graph;
 }
 
-void VisualizeTimeShiftQuality(TGraph *ref_graph, TGraph *shifted_graph,
-                               Double_t shift_s, UShort_t board,
-                               const TString &output_name) {
-  TCanvas *c =
-      new TCanvas(Form("c_board_%d", board),
-                  Form("Time Shift Quality - Board %d", board), 1200, 800);
-  c->Divide(2, 2);
+struct BinnedShift {
+  Double_t bin_center_s;
+  Double_t shift_s;
+  Int_t n_ref;
+  Int_t n_gr;
+  Bool_t valid;
+};
 
-  c->cd(1);
-  gPad->SetLogy();
-  ref_graph->SetMarkerStyle(20);
-  ref_graph->SetMarkerSize(0.5);
-  ref_graph->SetMarkerColor(kBlue);
-  ref_graph->SetTitle(Form(
-      "Board %d Timing Structure Overlay;Time [s];#Delta t [#mus]", board));
-  ref_graph->Draw("AP");
+std::vector<BinnedShift> FindShiftBeamBinned(TGraph *ref, TGraph *gr,
+                                             Double_t overlap_tmin_s,
+                                             Double_t overlap_tmax_s,
+                                             Double_t thresh_dt_us,
+                                             Int_t n_bins,
+                                             Double_t global_shift_s,
+                                             Double_t max_drift_s) {
+  std::vector<BinnedShift> results;
+  Double_t bin_width_s = (overlap_tmax_s - overlap_tmin_s) / n_bins;
+  Double_t step_s = 1e-6;
+  Int_t n_steps = 2 * static_cast<Int_t>(max_drift_s / step_s) + 1;
 
-  TGraph *shifted_clone = (TGraph *)shifted_graph->Clone();
-  for (Int_t i = 0; i < shifted_clone->GetN(); i++) {
-    Double_t x, y;
-    shifted_clone->GetPoint(i, x, y);
-    shifted_clone->SetPoint(i, x - shift_s, y);
+  for (Int_t b = 0; b < n_bins; b++) {
+    Double_t bin_start = overlap_tmin_s + b * bin_width_s;
+    Double_t bin_end = bin_start + bin_width_s;
+    Double_t bin_center = 0.5 * (bin_start + bin_end);
+
+    std::vector<Double_t> ref_x, ref_y, gr_x, gr_y;
+    for (Int_t i = 0; i < ref->GetN(); i++) {
+      Double_t x, y;
+      ref->GetPoint(i, x, y);
+      if (x >= bin_start && x < bin_end) {
+        ref_x.push_back(x);
+        ref_y.push_back(y);
+      }
+    }
+    for (Int_t i = 0; i < gr->GetN(); i++) {
+      Double_t x, y;
+      gr->GetPoint(i, x, y);
+      if (x >= bin_start && x < bin_end) {
+        gr_x.push_back(x);
+        gr_y.push_back(y);
+      }
+    }
+
+    BinnedShift r;
+    r.bin_center_s = bin_center;
+    r.shift_s = global_shift_s;
+    r.n_ref = static_cast<Int_t>(ref_x.size());
+    r.n_gr = static_cast<Int_t>(gr_x.size());
+    r.valid = kFALSE;
+
+    if (r.n_ref < 20 || r.n_gr < 20) {
+      results.push_back(r);
+      continue;
+    }
+
+    Double_t best_shift = global_shift_s;
+    Double_t max_inv_nsd2 = 0;
+
+    for (Int_t k = 0; k < n_steps; k++) {
+      Double_t shift = global_shift_s - max_drift_s + k * step_s;
+      Int_t npts = 0;
+      Double_t nsd2 = 0;
+      ComputeNSD2(ref_x, ref_y, gr_x, gr_y, shift, thresh_dt_us, npts, nsd2);
+      if (npts > 5) {
+        Double_t inv_nsd2 = 1.0 / nsd2;
+        if (inv_nsd2 > max_inv_nsd2) {
+          best_shift = shift;
+          max_inv_nsd2 = inv_nsd2;
+        }
+      }
+    }
+
+    r.shift_s = best_shift;
+    r.valid = (max_inv_nsd2 > 0);
+    results.push_back(r);
   }
-  shifted_clone->SetMarkerStyle(24);
-  shifted_clone->SetMarkerSize(0.5);
-  shifted_clone->SetMarkerColor(kRed);
-  shifted_clone->Draw("P SAME");
 
-  TLegend *leg1 = new TLegend(0.65, 0.75, 0.89, 0.89);
-  leg1->AddEntry(ref_graph, "Reference (Board 0)", "p");
-  leg1->AddEntry(shifted_clone, Form("Board %d (shifted)", board), "p");
-  leg1->Draw();
+  return results;
+}
 
-  c->cd(2);
+void PlotBinnedShifts(const std::vector<BinnedShift> &binned, UShort_t board,
+                      const TString &file_label) {
+  std::lock_guard<std::mutex> lock(g_plot_mutex);
+
+  TGraph *gr_valid = new TGraph();
+  TGraph *gr_invalid = new TGraph();
+  for (std::size_t i = 0; i < binned.size(); i++) {
+    if (binned[i].valid)
+      gr_valid->SetPoint(gr_valid->GetN(), binned[i].bin_center_s,
+                         binned[i].shift_s * 1e3);
+    else
+      gr_invalid->SetPoint(gr_invalid->GetN(), binned[i].bin_center_s, 0.0);
+  }
+
+  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(kFALSE);
+  PlottingUtils::ConfigureGraph(
+      gr_valid, kBlue + 1,
+      Form("Board 0-%d binned shift;Time bin center [s];Shift [ms]", board));
+  gr_valid->SetMarkerStyle(20);
+  gr_valid->SetMarkerSize(0.9);
+  gr_valid->SetMarkerColor(kBlue + 1);
+  gr_valid->Draw("AP");
+
+  if (gr_invalid->GetN() > 0) {
+    gr_invalid->SetMarkerStyle(24);
+    gr_invalid->SetMarkerSize(0.9);
+    gr_invalid->SetMarkerColor(kRed + 1);
+    gr_invalid->Draw("P SAME");
+  }
+
+  PlottingUtils::SaveFigure(canvas, Form("binned_shift_board_%d", board),
+                            "timing/" + file_label, PlotSaveOptions::kLINEAR);
+  delete canvas;
+}
+
+void PlotDeltaTTimeDistribution(TGraph *graph, UShort_t board,
+                                Double_t overlap_tmin_s,
+                                Double_t overlap_tmax_s,
+                                const TString &file_label) {
+  std::lock_guard<std::mutex> lock(g_plot_mutex);
+
+  TH1F *h = new TH1F(
+      PlottingUtils::GetRandomName(),
+      Form("Board %d large-#Delta t event times;Time [s];Counts", board), 200,
+      overlap_tmin_s, overlap_tmax_s);
+
+  for (Int_t i = 0; i < graph->GetN(); i++) {
+    Double_t x, y;
+    graph->GetPoint(i, x, y);
+    h->Fill(x);
+  }
+
+  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(kFALSE);
+  PlottingUtils::ConfigureAndDrawHistogram(h, kBlue + 1);
+  PlottingUtils::SaveFigure(canvas, Form("dt_time_dist_board_%d", board),
+                            "timing/" + file_label, PlotSaveOptions::kLINEAR);
+  delete canvas;
+}
+
+void PlotResiduals(TGraph *ref_graph, TGraph *board_graph, Double_t shift_s,
+                   UShort_t board, const TString &file_label) {
+  std::lock_guard<std::mutex> lock(g_plot_mutex);
+  TGraph *board_shifted = static_cast<TGraph *>(board_graph->Clone());
+  for (Int_t i = 0; i < board_shifted->GetN(); i++) {
+    Double_t x, y;
+    board_shifted->GetPoint(i, x, y);
+    board_shifted->SetPoint(i, x - shift_s, y);
+  }
+
   TH1D *h_residuals = new TH1D(
-      Form("h_res_board_%d", board),
-      Form("Residuals Board %d;#Delta t_{ref} - #Delta t_{board} [#mus];Counts",
+      PlottingUtils::GetRandomName(),
+      Form("Residuals Board 0-%d;#Delta t_{ref} - #Delta t_{board} [#mus];"
+           "Counts",
            board),
-      200, -50, 50);
+      200, -5, 5);
 
   for (Int_t i = 0; i < ref_graph->GetN(); i++) {
     Double_t t_ref, dt_ref;
     ref_graph->GetPoint(i, t_ref, dt_ref);
 
-    Double_t dt_board = shifted_clone->Eval(t_ref, 0, "S");
-    if (dt_board > 0) {
+    Double_t dt_board = board_shifted->Eval(t_ref, 0, "S");
+    if (dt_board > 0)
       h_residuals->Fill(dt_ref - dt_board);
-    }
   }
 
-  h_residuals->SetLineColor(kBlue);
-  h_residuals->SetFillColor(kBlue);
-  h_residuals->SetFillStyle(3004);
-  h_residuals->Draw();
+  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(kFALSE);
+  PlottingUtils::ConfigureAndDrawHistogram(h_residuals, kBlue + 1);
 
   h_residuals->Fit("gaus", "Q");
   TF1 *fit = h_residuals->GetFunction("gaus");
   if (fit) {
-    fit->SetLineColor(kRed);
-    fit->SetLineWidth(2);
-
-    TPaveText *pt = new TPaveText(0.55, 0.65, 0.89, 0.89, "NDC");
-    pt->AddText(Form("Mean: %.2f #mus", fit->GetParameter(1)));
-    pt->AddText(Form("Sigma: %.2f #mus", fit->GetParameter(2)));
-    pt->SetFillColor(kWhite);
-    pt->Draw();
+    fit->SetLineColor(kRed + 1);
+    fit->SetLineWidth(PlottingUtils::GetLineWidth());
+    PlottingUtils::AddText(Form("#mu = %.2f #mus", fit->GetParameter(1)), 0.85,
+                           0.85);
+    PlottingUtils::AddText(Form("#sigma = %.2f #mus", fit->GetParameter(2)),
+                           0.85, 0.78);
   }
 
-  c->cd(3);
-  gPad->SetLogy();
-  TGraph *gr_zoom = (TGraph *)ref_graph->Clone();
-  TGraph *shifted_zoom = (TGraph *)shifted_clone->Clone();
+  PlottingUtils::SaveFigure(canvas, Form("residuals_board_%d", board),
+                            "timing/" + file_label, PlotSaveOptions::kLINEAR);
+  delete canvas;
+  delete board_shifted;
+}
 
-  gr_zoom->SetTitle("Zoomed Overlap Region;Time [s];#Delta t [#mus]");
-  gr_zoom->GetXaxis()->SetRangeUser(1.0, 5.0);
-  gr_zoom->Draw("AP");
-  shifted_zoom->Draw("P SAME");
+void PlotCorrelation(TGraph *ref_graph, TGraph *board_graph, Double_t shift_s,
+                     UShort_t board, const TString &file_label) {
+  std::lock_guard<std::mutex> lock(g_plot_mutex);
+  TGraph *board_shifted = static_cast<TGraph *>(board_graph->Clone());
+  for (Int_t i = 0; i < board_shifted->GetN(); i++) {
+    Double_t x, y;
+    board_shifted->GetPoint(i, x, y);
+    board_shifted->SetPoint(i, x - shift_s, y);
+  }
 
-  c->cd(4);
-  TH2D *h_corr = new TH2D(Form("h_corr_board_%d", board),
-                          Form("Correlation Board %d;#Delta t_{ref} "
+  Double_t corr_max = 2200;
+  TH2D *h_corr = new TH2D(PlottingUtils::GetRandomName(),
+                          Form("Correlation Board 0-%d;#Delta t_{ref} "
                                "[#mus];#Delta t_{board %d} [#mus]",
                                board, board),
-                          100, 0, 2000, 100, 0, 2000);
+                          100, 0, corr_max, 100, 0, corr_max);
 
   for (Int_t i = 0; i < ref_graph->GetN(); i++) {
     Double_t t_ref, dt_ref;
     ref_graph->GetPoint(i, t_ref, dt_ref);
 
-    Double_t dt_board = shifted_clone->Eval(t_ref, 0, "S");
-    if (dt_board > 0 && dt_ref > 0) {
+    Double_t dt_board = board_shifted->Eval(t_ref, 0, "S");
+    if (dt_board > 0 && dt_ref > 0)
       h_corr->Fill(dt_ref, dt_board);
-    }
   }
 
-  h_corr->Draw("COLZ");
+  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(kFALSE);
+  canvas->SetLeftMargin(0.18);
+  PlottingUtils::ConfigureAndDraw2DHistogram(h_corr, canvas);
+  h_corr->GetYaxis()->SetTitleOffset(1.4);
 
-  TLine *diag = new TLine(0, 0, 2000, 2000);
-  diag->SetLineColor(kRed);
-  diag->SetLineWidth(2);
+  TLine *diag = new TLine(0, 0, corr_max, corr_max);
+  diag->SetLineColor(kRed + 1);
+  diag->SetLineWidth(PlottingUtils::GetLineWidth());
   diag->SetLineStyle(2);
   diag->Draw();
 
-  PlottingUtils::SaveFigure(
-      c, Form("timeshift_quality_board_%d_%s", board, output_name.Data()),
-      "", PlotSaveOptions::kLINEAR);
-
-  delete shifted_clone;
-  delete shifted_zoom;
-  delete c;
-}
-
-void VisualizeShiftScan(const std::vector<Double_t> &shifts,
-                        const std::vector<Double_t> &inv_nsd2_vals,
-                        Double_t best_shift, UShort_t board,
-                        const TString &output_name) {
-  TCanvas *c = new TCanvas(Form("c_scan_board_%d", board),
-                           Form("Shift Scan - Board %d", board), 800, 600);
-
-  TGraph *gr_scan = new TGraph(shifts.size());
-  for (size_t i = 0; i < shifts.size(); i++) {
-    gr_scan->SetPoint(i, shifts[i], inv_nsd2_vals[i]);
-  }
-
-  gr_scan->SetTitle(
-      Form("Time Shift Scan Board %d;Shift [s];1/NSD^{2}", board));
-  gr_scan->SetMarkerStyle(20);
-  gr_scan->SetMarkerSize(0.8);
-  gr_scan->SetMarkerColor(kBlue);
-  gr_scan->Draw("AP");
-
-  TMarker *best_marker = new TMarker(best_shift, gr_scan->Eval(best_shift), 29);
-  best_marker->SetMarkerColor(kRed);
-  best_marker->SetMarkerSize(3);
-  best_marker->Draw();
-
-  TLegend *leg = new TLegend(0.15, 0.75, 0.45, 0.89);
-  leg->AddEntry(gr_scan, "Scan points", "p");
-  leg->AddEntry(best_marker, Form("Best: %.3f s", best_shift), "p");
-  leg->Draw();
-
-  PlottingUtils::SaveFigure(
-      c, Form("shift_scan_board_%d_%s", board, output_name.Data()),
-      "", PlotSaveOptions::kLINEAR);
-  delete c;
+  PlottingUtils::SaveFigure(canvas, Form("correlation_board_%d", board),
+                            "timing/" + file_label, PlotSaveOptions::kLINEAR);
+  delete canvas;
+  delete board_shifted;
 }
 
 Double_t FindShiftBeam(TGraph *ref, TGraph *gr, Double_t overlap_tmin_s,
                        Double_t overlap_tmax_s, Double_t thresh_dt_us,
-                       UShort_t board, const TString &output_name,
-                       Int_t max_iterations = 10000) {
+                       UShort_t board, const TString &file_label) {
 
   std::vector<Double_t> ref_x(ref->GetN()), ref_y(ref->GetN());
   std::vector<Double_t> gr_x(gr->GetN()), gr_y(gr->GetN());
@@ -360,7 +369,7 @@ Double_t FindShiftBeam(TGraph *ref, TGraph *gr, Double_t overlap_tmin_s,
   }
 
   Double_t tini = 0;
-  for (size_t p = 0; p < ref_x.size(); p++) {
+  for (std::size_t p = 0; p < ref_x.size(); p++) {
     if (ref_x[p] >= overlap_tmin_s) {
       tini = ref_x[p];
       break;
@@ -370,36 +379,24 @@ Double_t FindShiftBeam(TGraph *ref, TGraph *gr, Double_t overlap_tmin_s,
   std::cout << "Looking for timeshift between " << overlap_tmin_s << " - "
             << overlap_tmax_s << " sec" << std::endl;
   std::cout << "tini = " << tini << " s" << std::endl;
-
-  Int_t step = TMath::Max(1, gr->GetN() / max_iterations);
-
-  std::vector<Double_t> shifts;
-  std::vector<Double_t> inv_nsd2_vals;
-  shifts.reserve(max_iterations);
-  inv_nsd2_vals.reserve(max_iterations);
+  std::cout << "Scanning " << gr->GetN() << " candidate shifts..." << std::endl;
 
   Double_t best_shift = 0;
   Double_t max_inv_nsd2 = 0;
 
-  std::cout << "Testing " << gr->GetN() / step << " shift values..."
-            << std::endl;
-
-  for (Int_t p = 0; p < gr->GetN(); p += step) {
+  for (Int_t p = 0; p < gr->GetN(); p++) {
     Int_t npts = 0;
     Double_t nsd2 = 0;
     Double_t shift = gr_x[p] - tini;
 
     if (p % 1000 == 0)
-      std::cout << "Testing shift: " << shift << " s (" << p / step << "/"
-                << gr->GetN() / step << ")" << std::endl;
+      std::cout << "  Testing shift: " << shift << " s (" << p << "/"
+                << gr->GetN() << ")" << std::endl;
 
-    ComputeNSD2(ref_x, ref_y, gr_x, gr_y, shift, thresh_dt_us, overlap_tmin_s,
-                overlap_tmax_s, npts, nsd2);
+    ComputeNSD2(ref_x, ref_y, gr_x, gr_y, shift, thresh_dt_us, npts, nsd2);
 
     if (npts > 10) {
       Double_t inv_nsd2 = 1.0 / nsd2;
-      shifts.push_back(shift);
-      inv_nsd2_vals.push_back(inv_nsd2);
 
       if (inv_nsd2 > max_inv_nsd2) {
         best_shift = shift;
@@ -408,21 +405,28 @@ Double_t FindShiftBeam(TGraph *ref, TGraph *gr, Double_t overlap_tmin_s,
     }
   }
 
+  Int_t npts0 = 0;
+  Double_t nsd2_0 = 0;
+  ComputeNSD2(ref_x, ref_y, gr_x, gr_y, 0.0, thresh_dt_us, npts0, nsd2_0);
+  Double_t inv_nsd2_zero = (npts0 > 10) ? 1.0 / nsd2_0 : 0.0;
+
   std::cout << "Best shift: " << best_shift << " s (1/NSD2 = " << max_inv_nsd2
             << ")" << std::endl;
-
-  VisualizeShiftScan(shifts, inv_nsd2_vals, best_shift, board, output_name);
+  std::cout << "No-shift   : 0 s         (1/NSD2 = " << inv_nsd2_zero
+            << ", npts=" << npts0 << ")" << std::endl;
+  if (inv_nsd2_zero > 0)
+    std::cout << "  Improvement vs no-shift: "
+              << max_inv_nsd2 / inv_nsd2_zero << "x" << std::endl;
 
   return best_shift;
 }
 
 std::vector<TimeShiftResult> CalcTimeShiftsBeamMethod(
-    std::vector<TString> input_filepaths, UShort_t ref_board = 0,
-    UShort_t ref_channel = 0,
-    std::vector<UShort_t> board_channels = {0, 0, 0, 0},
-    Double_t min_energy = 2000, Double_t max_energy = 20000,
-    Double_t overlap_tmin_s = 1.0, Double_t overlap_tmax_s = 10.0,
-    Double_t thresh_dt_us = 200.0, Bool_t reprocess = kTRUE) {
+    std::vector<TString> input_filepaths, std::vector<TString> file_labels,
+    UShort_t ref_board, UShort_t ref_channel,
+    std::vector<UShort_t> board_channels, Double_t min_energy,
+    Double_t max_energy, Double_t overlap_margin_s, Double_t thresh_dt_us,
+    Bool_t reprocess) {
 
   std::vector<TimeShiftResult> results;
 
@@ -435,10 +439,10 @@ std::vector<TimeShiftResult> CalcTimeShiftsBeamMethod(
 
   for (Int_t i = 0; i < n_files; i++) {
     TString input_filepath = input_filepaths[i];
-    TString file_label = Form("run37_%d", i);
+    TString file_label = file_labels[i];
     std::cout << "Processing: " << input_filepath << std::endl;
 
-    TFile *input_file = new TFile(input_filepath, "READ");
+    TFile *input_file = IO::OpenForReading(input_filepath);
     if (!input_file || input_file->IsZombie()) {
       std::cerr << "Error opening file" << std::endl;
       continue;
@@ -452,26 +456,36 @@ std::vector<TimeShiftResult> CalcTimeShiftsBeamMethod(
     }
     tree->LoadBaskets();
 
+    Double_t file_tmin_s = tree->GetMinimum("Timestamp") / 1e12;
+    Double_t file_tmax_s = tree->GetMaximum("Timestamp") / 1e12;
+    Double_t overlap_tmin_s = file_tmin_s + overlap_margin_s;
+    Double_t overlap_tmax_s = file_tmax_s - overlap_margin_s;
+    std::cout << "File span [" << file_tmin_s << ", " << file_tmax_s
+              << "] s, using overlap [" << overlap_tmin_s << ", "
+              << overlap_tmax_s << "] s" << std::endl;
+
     std::cout << "Extracting reference board" << std::endl;
     TGraph *ref_graph = ExtractBeamTimingStructure(
         tree, ref_board, ref_channel, min_energy, max_energy, overlap_tmin_s,
-        overlap_tmax_s, thresh_dt_us, 0.0);
+        overlap_tmax_s, thresh_dt_us);
+    PlotDeltaTTimeDistribution(ref_graph, ref_board, overlap_tmin_s,
+                               overlap_tmax_s, file_label);
 
     TimeShiftResult result;
-    result.board_0_1_average = 0;
-    result.board_0_1_stddev = 0;
-    result.board_0_2_average = 0;
-    result.board_0_2_stddev = 0;
-    result.board_0_3_average = 0;
-    result.board_0_3_stddev = 0;
+    result.board_shifts.assign(Constants::N_BOARDS, 0);
 
-    for (UShort_t board = 1; board < 4; board++) {
+    for (UShort_t board = 0; board < Constants::N_BOARDS; board++) {
+      if (board == ref_board)
+        continue;
+
       std::cout << "Processing Board " << board << " Channel "
                 << board_channels[board] << std::endl;
 
       TGraph *board_graph = ExtractBeamTimingStructure(
           tree, board, board_channels[board], min_energy, max_energy,
-          overlap_tmin_s, overlap_tmax_s, thresh_dt_us, 0.0);
+          overlap_tmin_s, overlap_tmax_s, thresh_dt_us);
+      PlotDeltaTTimeDistribution(board_graph, board, overlap_tmin_s,
+                                 overlap_tmax_s, file_label);
 
       if (board_graph->GetN() < 10) {
         std::cout << "WARNING: Not enough data points for Board " << board
@@ -486,38 +500,33 @@ std::vector<TimeShiftResult> CalcTimeShiftsBeamMethod(
           overlap_tmax_s - 0.1 * (overlap_tmax_s - overlap_tmin_s),
           thresh_dt_us, board, file_label);
 
-      VisualizeTimeShiftQuality(ref_graph, board_graph, shift_s, board,
-                                file_label);
+      PlotResiduals(ref_graph, board_graph, shift_s, board, file_label);
+      PlotCorrelation(ref_graph, board_graph, shift_s, board, file_label);
+
+      std::vector<BinnedShift> binned = FindShiftBeamBinned(
+          ref_graph, board_graph, overlap_tmin_s, overlap_tmax_s, thresh_dt_us,
+          Constants::N_TIME_BINS, shift_s, Constants::MAX_BIN_DRIFT_S);
+      PlotBinnedShifts(binned, board, file_label);
 
       Long64_t shift_ps = static_cast<Long64_t>(shift_s * 1e12);
+      result.board_shifts[board] = -shift_ps;
 
-      switch (board) {
-      case 1:
-        result.board_0_1_average = -shift_ps;
-        break;
-      case 2:
-        result.board_0_2_average = -shift_ps;
-        break;
-      case 3:
-        result.board_0_3_average = -shift_ps;
-        break;
-      }
-
-      std::cout << "Board 0-" << board << " shift: " << shift_s << " s ("
-                << shift_ps << " ps)" << std::endl;
+      std::cout << "Board " << ref_board << "-" << board
+                << " shift: " << shift_s << " s (" << shift_ps << " ps)"
+                << std::endl;
 
       delete board_graph;
     }
 
     results.push_back(result);
 
-    std::cout << "RESULTS" << std::endl;
-    std::cout << "Board 0-1: " << result.board_0_1_average * 1e-12 << " s"
-              << std::endl;
-    std::cout << "Board 0-2: " << result.board_0_2_average * 1e-12 << " s"
-              << std::endl;
-    std::cout << "Board 0-3: " << result.board_0_3_average * 1e-12 << " s"
-              << std::endl;
+    std::cout << "RESULTS (ref board = " << ref_board << ")" << std::endl;
+    for (UShort_t board = 0; board < Constants::N_BOARDS; board++) {
+      if (board == ref_board)
+        continue;
+      std::cout << "  Board " << ref_board << "-" << board << ": "
+                << result.board_shifts[board] * 1e-12 << " s" << std::endl;
+    }
 
     delete ref_graph;
     input_file->Close();
@@ -526,6 +535,7 @@ std::vector<TimeShiftResult> CalcTimeShiftsBeamMethod(
 
   return results;
 }
+
 void ApplyTimeShift(std::vector<TString> input_filepaths,
                     std::vector<TimeShiftResult> results, Bool_t reprocess) {
   if (!reprocess)
@@ -536,12 +546,7 @@ void ApplyTimeShift(std::vector<TString> input_filepaths,
     TString input_filepath = input_filepaths[i];
     TimeShiftResult res = results[i];
 
-    Long64_t mean_0_1, mean_0_2, mean_0_3;
-    mean_0_1 = res.board_0_1_average;
-    mean_0_2 = res.board_0_2_average;
-    mean_0_3 = res.board_0_3_average;
-
-    TFile *input_output_file = new TFile(input_filepath, "UPDATE");
+    TFile *input_output_file = IO::OpenForWriting(input_filepath, "UPDATE");
 
     TTree *input_tree = static_cast<TTree *>(input_output_file->Get("Data_R"));
     if (!input_tree) {
@@ -566,26 +571,13 @@ void ApplyTimeShift(std::vector<TString> input_filepaths,
                          "ShiftedTimestamp/l");
     }
 
-    Long64_t shifted_timestamp_calc;
-
     Int_t n_entries = input_tree->GetEntries();
     input_tree->LoadBaskets();
     for (Int_t j = 0; j < n_entries; j++) {
       input_tree->GetEntry(j);
-      switch (board) {
-      case 0:
-        shifted_timestamp_calc = timestamp;
-        break;
-      case 1:
-        shifted_timestamp_calc = timestamp + mean_0_1;
-        break;
-      case 2:
-        shifted_timestamp_calc = timestamp + mean_0_2;
-        break;
-      case 3:
-        shifted_timestamp_calc = timestamp + mean_0_3;
-        break;
-      }
+      Long64_t shifted_timestamp_calc = timestamp;
+      if (board < res.board_shifts.size())
+        shifted_timestamp_calc = timestamp + res.board_shifts[board];
       shifted_timestamp = shifted_timestamp_calc;
 
       if (existing_branch) {
@@ -615,8 +607,8 @@ void TimesortData(std::vector<TString> input_filepaths,
 
     TString input_filepath = input_filepaths[i];
 
-    TFile *input_file = new TFile(input_filepath, "READ");
-    TTree *input_tree = (TTree *)input_file->Get("Data_R");
+    TFile *input_file = IO::OpenForReading(input_filepath);
+    TTree *input_tree = static_cast<TTree *>(input_file->Get("Data_R"));
 
     Long64_t n_entries = input_tree->GetEntries();
     std::cout << "Total entries: " << n_entries << std::endl;
@@ -630,7 +622,7 @@ void TimesortData(std::vector<TString> input_filepaths,
     std::cout << "Reading timestamps" << std::endl;
     for (Long64_t j = 0; j < n_entries; j++) {
       input_tree->GetEntry(j);
-      timestamp_index.push_back({shifted_timestamp, j});
+      timestamp_index.push_back(std::make_pair(shifted_timestamp, j));
 
       if (j % 10000000 == 0) {
         std::cout << "Progress: " << j << "/" << n_entries << std::endl;
@@ -643,7 +635,9 @@ void TimesortData(std::vector<TString> input_filepaths,
     std::cout << "Writing sorted tree" << std::endl;
 
     TString output_name = output_names[i];
-    TString output_filepath = "root_files/" + output_name + ".root";
+    TString output_filepath =
+        IO::GetRootFilesBaseDir() + "/" + output_name + ".root";
+    gSystem->mkdir(gSystem->DirName(output_filepath), kTRUE);
     TFile *output_file = new TFile(output_filepath, "RECREATE", "", 0);
 
     TTree *output_tree = input_tree->CloneTree(0);
@@ -673,36 +667,25 @@ void Timing() {
   Bool_t reprocess_calculation = kTRUE;
   Bool_t reprocess_sorting = kTRUE;
 
-  InitUtils::SetROOTPreferences();
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                TString(gSystem->pwd()) + "/plots",
+                                TString(gSystem->pwd()) + "/root_files");
 
-  std::vector<TString> filepaths, sorted_output_names;
+  std::vector<TString> filepaths, sorted_output_names, file_labels;
 
-  TString path_prefix = "./root_files/";
-  for (Int_t i = 0; i < Constants::N_FILES; i++) {
-    filepaths.push_back(Form("%sDataR_run_37_%d.root", path_prefix.Data(), i));
-    std::cout << "Will process: " << filepaths[i] << std::endl;
-    sorted_output_names.push_back(Form("Sorted_Run37_%d", i));
+  std::vector<FileSpec> specs = BuildFileSpecs();
+  for (std::size_t k = 0; k < specs.size(); k++) {
+    filepaths.push_back(RawRootName(specs[k]));
+    std::cout << "Will process: " << filepaths.back() << std::endl;
+    sorted_output_names.push_back(SortedName(specs[k]));
+    file_labels.push_back(FileLabel(specs[k]));
   }
 
-  std::vector<UShort_t> channels_to_use = {
-      8, // Board 0: L1
-      0, // Board 1: L3
-      0, // Board 2: R4
-      0  // Board 3: L5
-  };
-  UShort_t ref_board = 0;
-  UShort_t ref_channel = channels_to_use[0];
-
-  Double_t min_energy = 0;
-  Double_t max_energy = 20000;
-  Double_t overlap_tmin_s = 1;
-  Double_t overlap_tmax_s = 75.0;
-  Double_t thresh_dt_us = 150.0;
-
   std::vector<TimeShiftResult> results = CalcTimeShiftsBeamMethod(
-      filepaths, ref_board, ref_channel, channels_to_use, min_energy,
-      max_energy, overlap_tmin_s, overlap_tmax_s, thresh_dt_us,
-      reprocess_calculation);
+      filepaths, file_labels, Constants::REF_BOARD,
+      Constants::BOARD_CHANNELS[Constants::REF_BOARD], Constants::BOARD_CHANNELS,
+      Constants::MIN_ENERGY, Constants::MAX_ENERGY, Constants::OVERLAP_MARGIN_S,
+      Constants::THRESH_DT_US, reprocess_calculation);
   ApplyTimeShift(filepaths, results, reprocess_calculation);
 
   TimesortData(filepaths, sorted_output_names, reprocess_sorting);

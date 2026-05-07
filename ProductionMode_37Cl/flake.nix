@@ -3,9 +3,13 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    agenix = {
+      url = "github:ryantm/agenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     utils = {
       inputs.nixpkgs.follows = "nixpkgs";
-      url = "github:ewtodd/Analysis-Utilities";
+      url = "/home/e-work/Software/Analysis-Utilities";
     };
   };
   outputs =
@@ -13,6 +17,7 @@
       self,
       nixpkgs,
       flake-utils,
+      agenix,
       utils,
     }:
     flake-utils.lib.eachDefaultSystem (
@@ -20,6 +25,7 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         analysis-utils = utils.packages.${system}.default;
+        agenixPkg = agenix.packages.${system}.default;
       in
       {
         devShells.default = pkgs.mkShell {
@@ -28,16 +34,34 @@
             gnumake
             clang-tools
           ];
-          buildInputs = with pkgs; [
+          buildInputs = [
             analysis-utils
-            root
-            bash
+            pkgs.root
+            pkgs.bash
+            agenixPkg
           ];
           shellHook = ''
             echo "Analysis-Utilities version: ${analysis-utils.version}"
-            export CPLUS_INCLUDE_PATH="$PWD/include''${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}"
-            export ROOT_INCLUDE_PATH="$PWD/include''${ROOT_INCLUDE_PATH:+:$ROOT_INCLUDE_PATH}"
-            export LD_LIBRARY_PATH="$PWD/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            flake_root="$PWD"
+            git_root="$(git -C "$flake_root" rev-parse --show-toplevel)"
+
+            mkdir -p "$flake_root/.claude"
+            (
+              cd "$git_root/secrets"
+              ${agenixPkg}/bin/agenix -d settings.json.age \
+                -i "$HOME/.ssh/id_ed25519"
+            ) > "$flake_root/.claude/settings.json"
+            chmod 644 "$flake_root/.claude/settings.json"
+
+            find "$flake_root" -type d \
+              \( -name .git -o -name .claude -o -name result -o -name node_modules -o -name .direnv -o -name plots -o -name root_files \) -prune \
+              -o -type d -not -path "$flake_root" -print \
+            | while read -r dir; do
+                if [ ! -e "$dir/.claude" ]; then
+                  ln -s "$flake_root/.claude" "$dir/.claude"
+                fi
+              done
+            cd macros
           '';
         };
       }

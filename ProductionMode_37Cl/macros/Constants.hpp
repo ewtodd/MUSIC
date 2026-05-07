@@ -4,15 +4,35 @@
 #include <TROOT.h>
 #include <map>
 #include <utility>
+#include <vector>
 
 namespace Constants {
 
-const Int_t N_FILES = 1;
+inline const std::vector<Int_t> RUN_NUMBERS = {12, 13, 14, 16, 17,
+                                               18, 19, 20, 37};
+const Int_t N_FILES = 2;
 
 const Int_t N_BOARDS = 4;
 const Int_t N_CHANNELS = 16;
 
 const Int_t TRIGGER_THRESHOLD = 500;
+
+const Bool_t SILENT_PIPELINE = kFALSE;
+
+const UShort_t REF_BOARD = 1;
+inline const std::vector<UShort_t> BOARD_CHANNELS = {12, 0, 0, 0};
+
+const Double_t MIN_ENERGY = 300;
+const Double_t MAX_ENERGY = 1500;
+const Double_t OVERLAP_MARGIN_S = 1.0;
+const Double_t THRESH_DT_US = 175.0;
+const Int_t N_TIME_BINS = 8;
+
+const Double_t MAX_BIN_DRIFT_S = 0.05;
+
+const Int_t MAX_TRACE_SAVES = 20;
+const Bool_t SAVE_LR_TRACES = kFALSE;
+const Bool_t PER_STRIP_TRACE_LIMIT = kTRUE;
 
 inline const std::map<std::pair<Int_t, Int_t>, TString> channelMap = {
     {{0, 0}, "Cathode"}, {{0, 1}, ""},         {{0, 2}, "L2"},

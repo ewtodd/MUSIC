@@ -1,3 +1,5 @@
+#include "FittingUtils.hpp"
+#include "IOUtils.hpp"
 #include "InitUtils.hpp"
 #include "PlottingUtils.hpp"
 #include <TCanvas.h>
@@ -15,41 +17,27 @@
 
 void SiCalibration() {
 
-  InitUtils::SetROOTPreferences();
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                TString(gSystem->pwd()) + "/plots",
+                                TString(gSystem->pwd()) + "/root_files");
 
   std::vector<std::string> filepaths = {
-      "/home/e-work/LABDATA/MUSIC/37Cl/SiCalibration/run_21/ROOT/"
-      "DataR_run_21.root",
-      "/home/e-work/LABDATA/MUSIC/37Cl/SiCalibration/run_22/ROOT/"
-      "DataR_run_22.root",
-      "/home/e-work/LABDATA/MUSIC/37Cl/SiCalibration/run_23/ROOT/"
-      "DataR_run_23.root",
-      "/home/e-work/LABDATA/MUSIC/37Cl/SiCalibration/run_24/ROOT/"
-      "DataR_run_24.root",
-      "/home/e-work/LABDATA/MUSIC/37Cl/SiCalibration/run_25/ROOT/"
-      "DataR_run_25.root",
-      "/home/e-work/LABDATA/MUSIC/37Cl/SiCalibration/run_26/ROOT/"
-      "DataR_run_26.root",
-      "/home/e-work/LABDATA/MUSIC/37Cl/SiCalibration/run_27/ROOT/"
-      "DataR_run_27.root",
-      "/home/e-work/LABDATA/MUSIC/37Cl/SiCalibration/run_28/ROOT/"
-      "DataR_run_28.root",
-      "/home/e-work/LABDATA/MUSIC/37Cl/SiCalibration/run_29/ROOT/"
-      "DataR_run_29.root",
-      "/home/e-work/LABDATA/MUSIC/37Cl/SiCalibration/run_30/ROOT/"
-      "DataR_run_30.root",
-      "/home/e-work/LABDATA/MUSIC/37Cl/SiCalibration/run_31/ROOT/"
-      "DataR_run_31.root",
-      "/home/e-work/LABDATA/MUSIC/37Cl/SiCalibration/run_32/ROOT/"
-      "DataR_run_32.root",
-      "/home/e-work/LABDATA/MUSIC/37Cl/SiCalibration/run_33/ROOT/"
-      "DataR_run_33.root",
-      "/home/e-work/LABDATA/MUSIC/37Cl/SiCalibration/run_34/ROOT/"
-      "DataR_run_34.root",
-      "/home/e-work/LABDATA/MUSIC/37Cl/SiCalibration/run_35/ROOT/"
-      "DataR_run_35.root",
-      "/home/e-work/LABDATA/MUSIC/37Cl/SiCalibration/run_36/ROOT/"
-      "DataR_run_36.root"};
+      "/home/e-work/LabData/MUSIC/37Cl/SiCalibration/run_21/ROOT/DataR_run_21.root",
+      "/home/e-work/LabData/MUSIC/37Cl/SiCalibration/run_22/ROOT/DataR_run_22.root",
+      "/home/e-work/LabData/MUSIC/37Cl/SiCalibration/run_23/ROOT/DataR_run_23.root",
+      "/home/e-work/LabData/MUSIC/37Cl/SiCalibration/run_24/ROOT/DataR_run_24.root",
+      "/home/e-work/LabData/MUSIC/37Cl/SiCalibration/run_25/ROOT/DataR_run_25.root",
+      "/home/e-work/LabData/MUSIC/37Cl/SiCalibration/run_26/ROOT/DataR_run_26.root",
+      "/home/e-work/LabData/MUSIC/37Cl/SiCalibration/run_27/ROOT/DataR_run_27.root",
+      "/home/e-work/LabData/MUSIC/37Cl/SiCalibration/run_28/ROOT/DataR_run_28.root",
+      "/home/e-work/LabData/MUSIC/37Cl/SiCalibration/run_29/ROOT/DataR_run_29.root",
+      "/home/e-work/LabData/MUSIC/37Cl/SiCalibration/run_30/ROOT/DataR_run_30.root",
+      "/home/e-work/LabData/MUSIC/37Cl/SiCalibration/run_31/ROOT/DataR_run_31.root",
+      "/home/e-work/LabData/MUSIC/37Cl/SiCalibration/run_32/ROOT/DataR_run_32.root",
+      "/home/e-work/LabData/MUSIC/37Cl/SiCalibration/run_33/ROOT/DataR_run_33.root",
+      "/home/e-work/LabData/MUSIC/37Cl/SiCalibration/run_34/ROOT/DataR_run_34.root",
+      "/home/e-work/LabData/MUSIC/37Cl/SiCalibration/run_35/ROOT/DataR_run_35.root",
+      "/home/e-work/LabData/MUSIC/37Cl/SiCalibration/run_36/ROOT/DataR_run_36.root"};
 
   std::map<int, double> mu_guesses;
   mu_guesses[21] = 15300;
@@ -76,21 +64,15 @@ void SiCalibration() {
   std::vector<Double_t> energy_values;
   std::vector<Double_t> energy_errors;
 
-  Bool_t logy = kTRUE;
-
-  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(logy);
-
-  if (gSystem->AccessPathName("plots")) {
-    gSystem->mkdir("plots", kTRUE);
-  }
-  // First pass: get mu values for all runs
+  // First pass: get mu values for all runs via FittingUtils::FitSinglePeak.
+  // Plots are written by FittingUtils to plots/fits/<peak>_Run_<run>.{png,pdf}.
   Double_t mu_21 = 0, mu_22 = 0;
   Double_t mu_21_err = 0, mu_22_err = 0;
 
   for (int run = 21; run <= 36; run++) {
     int idx = run - 21;
 
-    TFile *file = new TFile(filepaths[idx].c_str(), "READ");
+    TFile *file = IO::OpenForReading(filepaths[idx].c_str());
     if (!file || file->IsZombie()) {
       std::cerr << "Error opening file for run " << run << std::endl;
       continue;
@@ -123,58 +105,56 @@ void SiCalibration() {
     Double_t fit_min = TMath::Max(0.0, mu_guess - 2000);
     Double_t fit_max = TMath::Min(16384.0, mu_guess + 2000);
 
-    TF1 *gaus_fit = new TF1(Form("gaus_fit_%d", run), "gaus", fit_min, fit_max);
-    gaus_fit->SetParameter(1, mu_guess);
-    gaus_fit->SetParameter(2, 200);
-    hist->Fit(Form("gaus_fit_%d", run), "RQ");
+    FittingUtils fitter(hist, fit_min, fit_max,
+                        /*use_flat_background=*/kTRUE);
 
-    Double_t mu = gaus_fit->GetParameter(1);
-    Double_t sigma = gaus_fit->GetParameter(2);
-    Double_t mu_err = gaus_fit->GetParError(1);
-    Double_t sigma_err = gaus_fit->GetParError(2);
+    FitResult fit_result = fitter.FitSinglePeak(Form("Run_%d", run), "alpha");
 
-    mu_values.push_back(mu);
-    sigma_values.push_back(sigma);
-    mu_errors.push_back(mu_err);
-    sigma_errors.push_back(sigma_err);
+    if (!fit_result.peaks.empty() && fit_result.peaks[0].mu > 0) {
+      mu_values.push_back(fit_result.peaks[0].mu);
+      sigma_values.push_back(fit_result.peaks[0].sigma);
+      mu_errors.push_back(fit_result.peaks[0].mu_error);
+      sigma_errors.push_back(fit_result.peaks[0].sigma_error);
+    } else {
+      std::cerr << "WARNING: FitSinglePeak failed for run " << run << std::endl;
+      mu_values.push_back(mu_guess);
+      sigma_values.push_back(200);
+      mu_errors.push_back(0);
+      sigma_errors.push_back(0);
+    }
 
     if (run == 21) {
-      mu_21 = mu;
-      mu_21_err = mu_err;
+      mu_21 = mu_values.back();
+      mu_21_err = mu_errors.back();
     }
     if (run == 22) {
-      mu_22 = mu;
-      mu_22_err = mu_err;
+      mu_22 = mu_values.back();
+      mu_22_err = mu_errors.back();
     }
 
     delete hist;
     delete file;
   }
 
-  Double_t cal_x[3] = {0, mu_21, mu_22};
-  Double_t cal_y[3] = {0, 91.87, 71.35};
+  Double_t cal_x[2] = {mu_21, mu_22};
+  Double_t cal_y[2] = {91.87, 71.35};
 
-  TGraph *cal_graph = new TGraph(3, cal_x, cal_y);
+  TGraph *cal_graph = new TGraph(2, cal_x, cal_y);
   cal_graph->SetTitle(";ADC Channel;TOF Energy (MeV)");
   cal_graph->SetMarkerStyle(20);
   cal_graph->SetMarkerSize(1.5);
   cal_graph->SetMarkerColor(kBlue);
 
-  TF1 *cal_fit = new TF1("cal_fit", "[0] + [1]*x + [2]*x**2", 0, 16384);
+  TF1 *cal_fit = new TF1("cal_fit", "[0] + [1]*x", 0, 16384);
   cal_fit->SetParameter(0, 0);
-  cal_fit->SetParLimits(0, -10, 10);
-  cal_fit->SetParameter(1, 0.006);
-  cal_graph->Fit("cal_fit", "Q");
+  cal_graph->Fit("cal_fit", "QRL+");
   cal_fit->SetRange(0, 16384);
 
   Double_t p0 = cal_fit->GetParameter(0);
   Double_t p1 = cal_fit->GetParameter(1);
-  Double_t p2 = cal_fit->GetParameter(2);
   Double_t p0_err = cal_fit->GetParError(0);
   Double_t p1_err = cal_fit->GetParError(1);
-  Double_t p2_err = cal_fit->GetParError(2);
 
-  // Plot calibration curve
   TCanvas *cal_canvas = PlottingUtils::GetConfiguredCanvas();
 
   cal_graph->Draw("AP");
@@ -189,10 +169,7 @@ void SiCalibration() {
   cal_graph->GetXaxis()->SetLabelSize(0.045);
   cal_graph->GetYaxis()->SetLabelSize(0.045);
 
-  TLegend *cal_legend = new TLegend(0.15, 0.65, 0.60, 0.9);
-  cal_legend->SetTextFont(42);
-  cal_legend->SetTextSize(0.035);
-  cal_legend->SetBorderSize(1);
+  TLegend *cal_legend = PlottingUtils::AddLegend(0.15, 0.60, 0.65, 0.9);
   cal_legend->AddEntry(cal_graph, "Calibration points", "p");
   cal_legend->AddEntry(cal_fit, Form("Fit: E = p_{0} + p_{1}x + p_{2}x^2"),
                        "l");
@@ -200,15 +177,14 @@ void SiCalibration() {
                        "");
   cal_legend->AddEntry((TObject *)0, Form("p_{1} = %.5f #pm %.6f", p1, p1_err),
                        "");
-  cal_legend->AddEntry((TObject *)0, Form("p_{2} = %.7f #pm %.8f", p2, p2_err),
-                       "");
   cal_legend->Draw();
 
   cal_canvas->Update();
-  cal_canvas->SaveAs("plots/Energy_Calibration.png");
+  PlottingUtils::SaveFigure(cal_canvas, "Energy_Calibration", "",
+                            PlotSaveOptions::kLINEAR);
   for (size_t i = 0; i < mu_values.size(); i++) {
     Double_t adc = mu_values[i];
-    Double_t energy_MeV = p0 + p1 * adc + p2 * adc * adc;
+    Double_t energy_MeV = p0 + p1 * adc;
 
     Double_t energy_err_MeV =
         TMath::Sqrt(TMath::Power(p0_err, 2) + TMath::Power(adc * p1_err, 2) +
@@ -231,7 +207,6 @@ void SiCalibration() {
   gas_pressure[35] = 200;
   gas_pressure[36] = 220;
 
-  // Calculate dE values and errors for all runs
   Double_t beam_energy = 92.00;    // MeV
   Double_t beam_energy_err = 0.05; // MeV
   std::vector<Double_t> dE_values;
@@ -245,10 +220,13 @@ void SiCalibration() {
     dE_errors.push_back(dE_err);
   }
 
+  Bool_t logy = kTRUE;
+  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(logy);
+
   for (int run = 21; run <= 36; run++) {
     int idx = run - 21;
 
-    TFile *file = new TFile(filepaths[idx].c_str(), "READ");
+    TFile *file = IO::OpenForReading(filepaths[idx].c_str());
     if (!file || file->IsZombie())
       continue;
 
@@ -263,8 +241,8 @@ void SiCalibration() {
     tree->SetBranchAddress("Energy", &energy);
 
     TH1F *hist =
-        new TH1F(Form("Run_%d", run), Form("Run %d ; ADC Channel; Counts", run),
-                 600, 0, 16384);
+        new TH1F(Form("Run_%d_annot", run),
+                 Form("Run %d ; ADC Channel; Counts", run), 600, 0, 16384);
 
     Int_t number_samples = tree->GetEntries();
     for (int i = 0; i < number_samples; i++) {
@@ -273,26 +251,14 @@ void SiCalibration() {
         hist->Fill(energy);
       }
     }
-    PlottingUtils::ConfigureHistogram(hist, kBlue, Form("Run %d", run));
-
-    Double_t mu_guess = mu_guesses[run];
-    Double_t fit_min = TMath::Max(0.0, mu_guess - 2000);
-    Double_t fit_max = TMath::Min(16384.0, mu_guess + 2000);
-
-    TF1 *gaus_fit = new TF1(Form("gaus_fit_%d", run), "gaus", fit_min, fit_max);
-    gaus_fit->SetParameter(1, mu_guess);
-    gaus_fit->SetParameter(2, 200);
-    hist->Fit(Form("gaus_fit_%d", run), "RQ");
 
     canvas->cd();
-    hist->Draw();
+    PlottingUtils::ConfigureAndDrawHistogram(hist, kBlue, Form("Run %d", run));
     hist->SetStats(0);
 
-    TLegend *legend = new TLegend(0.60, 0.70, 0.93, 0.88);
-    legend->SetTextFont(42);
-    legend->SetTextSize(0.035);
-    legend->SetBorderSize(1);
-    legend->SetFillStyle(1001);
+    TLegend *legend = run <= 28
+                          ? PlottingUtils::AddLegend(0.2, 0.475, 0.70, 0.88)
+                          : PlottingUtils::AddLegend(0.625, 0.9, 0.70, 0.88);
     legend->AddEntry(
         (TObject *)0,
         Form("E = %.2f #pm %.2f MeV", energy_values[idx], energy_errors[idx]),
@@ -310,14 +276,13 @@ void SiCalibration() {
                      Form("#sigma = %.1f #pm %.1f ADC", sigma_values[idx],
                           sigma_errors[idx]),
                      "");
+    legend->SetMargin(0.05);
     legend->Draw();
 
     canvas->Update();
-    if (logy) {
-      canvas->SaveAs(Form("plots/Run_%d_log.png", run));
-    } else {
-      canvas->SaveAs(Form("plots/Run_%d.png", run));
-    }
+    PlottingUtils::SaveFigure(canvas, Form("Run_%d", run), "",
+                              PlotSaveOptions::kLOG);
+    delete hist;
     delete file;
   }
   std::vector<Double_t> pressure_vec;
@@ -355,7 +320,8 @@ void SiCalibration() {
   dE_vs_pressure->GetYaxis()->SetTitleOffset(1.3);
 
   dE_canvas->Update();
-  dE_canvas->SaveAs("plots/dE_vs_Pressure.png");
+  PlottingUtils::SaveFigure(dE_canvas, "dE_vs_Pressure", "",
+                            PlotSaveOptions::kLINEAR);
 
   std::vector<Double_t> run_numbers;
   std::vector<Double_t> resolution_percent;
@@ -393,11 +359,7 @@ void SiCalibration() {
   resolution_vs_run->SetMarkerColor(kRed);
   resolution_vs_run->SetLineColor(kRed);
 
-  TCanvas *res_canvas =
-      new TCanvas("res_canvas", "Resolution vs Run", 1200, 800);
-  res_canvas->SetGridx(1);
-  res_canvas->SetGridy(1);
-  res_canvas->SetTicks(1, 1);
+  TCanvas *res_canvas = PlottingUtils::GetConfiguredCanvas();
 
   resolution_vs_run->Draw("AP");
   resolution_vs_run->GetXaxis()->SetTitleSize(0.05);
@@ -409,11 +371,10 @@ void SiCalibration() {
   resolution_vs_run->GetXaxis()->SetNdivisions(516);
 
   res_canvas->Update();
-  res_canvas->SaveAs("plots/Resolution_vs_Run.png");
+  PlottingUtils::SaveFigure(res_canvas, "Resolution_vs_Run", "",
+                            PlotSaveOptions::kLINEAR);
 
-  TString output_path = "root_files/SiCalibration_Results.root";
-
-  TFile *outFile = new TFile(output_path, "RECREATE");
+  TFile *outFile = IO::OpenForWriting("SiCalibration_Results.root");
 
   TTree *results =
       new TTree("CalibrationResults", "Silicon Detector Calibration Results");

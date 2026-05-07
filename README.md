@@ -16,4 +16,3 @@ Install it by following the instructions [here](https://nixos.org/download/).
 Ensure [flakes are enabled](https://nixos.wiki/wiki/Flakes#Enable_flakes_permanently) in your Nix configuration.
 All directories contain their own Nix flake, which can be used to re-run code with the exact same environment as I did.
 If projects reference a local version of Analysis-Utilities in the flake, they are not yet finished.
-Contact me for access to data.

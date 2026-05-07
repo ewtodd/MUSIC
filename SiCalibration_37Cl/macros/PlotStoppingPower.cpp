@@ -1,4 +1,6 @@
+#include "IOUtils.hpp"
 #include "InitUtils.hpp"
+#include "PlottingUtils.hpp"
 #include <TCanvas.h>
 #include <TF1.h>
 #include <TFile.h>
@@ -16,9 +18,11 @@
 #include <vector>
 
 void PlotStoppingPower() {
-  InitUtils::SetROOTPreferences();
-  TString input_filepath = "root_files/SiCalibration_Results.root";
-  TFile *inFile = new TFile(input_filepath, "READ");
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                TString(gSystem->pwd()) + "/plots",
+                                TString(gSystem->pwd()) + "/root_files");
+  TString input_filepath = "SiCalibration_Results.root";
+  TFile *inFile = IO::OpenForReading(input_filepath);
   TTree *calibration_results =
       static_cast<TTree *>(inFile->Get("CalibrationResults"));
 
@@ -210,7 +214,8 @@ void PlotStoppingPower() {
 
   canvas->Update();
 
-  canvas->SaveAs("plots/DeltaE_vs_Pressure_Comparison.png");
+  PlottingUtils::SaveFigure(canvas, "DeltaE_vs_Pressure_Comparison", "",
+                            PlotSaveOptions::kLINEAR);
 
   std::cout << "Plot saved!" << std::endl;
 
