@@ -65,8 +65,6 @@ void BuildTraces(std::vector<TString> input_output_filenames,
     std::cout << "Building traces from " << n_entries << " entries..."
               << std::endl;
 
-    TDirectory *trace_dir = input_output_file->mkdir("traces", "traces", kTRUE);
-
     TH2D *h2_TotalE_vs_StripE =
         new TH2D("h2_TotalE_vs_StripE",
                  Form("Sum of Strips 3-4 vs Sum of Strips 1-2 (Four "
@@ -119,27 +117,23 @@ void BuildTraces(std::vector<TString> input_output_filenames,
         }
       }
 
-      TGraph *TraceLeft = new TGraph(nPoints, strip_index, leftdE);
-      TGraph *TraceRight = new TGraph(nPoints, strip_index, rightdE);
-      TGraph *TraceTotal = new TGraph(nPoints, strip_index, totaldE);
+      if (save_event && save_plots) {
+        TGraph *TraceLeft = new TGraph(nPoints, strip_index, leftdE);
+        TGraph *TraceRight = new TGraph(nPoints, strip_index, rightdE);
+        TGraph *TraceTotal = new TGraph(nPoints, strip_index, totaldE);
 
-      if (save_event) {
-
-        TraceLeft->SetName(Form("TraceLeft_e%lld", j));
         PlottingUtils::ConfigureGraph(
             TraceLeft, kBlue + 1,
             Form("Left dE Event %lld;Strip Index;Left dE [ADC]", j));
         TraceLeft->SetMarkerColor(kBlue + 1);
         TraceLeft->GetYaxis()->SetRangeUser(0, 3000);
 
-        TraceRight->SetName(Form("TraceRight_e%lld", j));
         PlottingUtils::ConfigureGraph(
             TraceRight, kRed + 1,
             Form("Right dE Event %lld;Strip Index;Right dE [ADC]", j));
         TraceRight->SetMarkerColor(kRed + 1);
         TraceRight->GetYaxis()->SetRangeUser(0, 3000);
 
-        TraceTotal->SetName(Form("TraceTotal_e%lld", j));
         PlottingUtils::ConfigureGraph(
             TraceTotal, kBlack,
             Form("Total dE Event %lld;Strip Index;Total dE [ADC]", j));
@@ -149,44 +143,37 @@ void BuildTraces(std::vector<TString> input_output_filenames,
         {
           std::lock_guard<std::mutex> lock(g_plot_mutex);
 
-          trace_dir->cd();
-          TraceLeft->Write("", TObject::kOverwrite);
-          TraceRight->Write("", TObject::kOverwrite);
-          TraceTotal->Write("", TObject::kOverwrite);
+          TString trace_subdir = "traces/" + file_label;
+          TString trace_tag = Form("strip%d_event%lld", triggerStrip, j);
 
-          if (save_plots) {
-            TString trace_subdir = "traces/" + file_label;
-            TString trace_tag = Form("strip%d_event%lld", triggerStrip, j);
-
-            TCanvas *c_left = PlottingUtils::GetConfiguredCanvas(kFALSE);
-            TraceLeft->Draw("ALP");
-            if (Constants::SAVE_LR_TRACES)
-              PlottingUtils::SaveFigure(c_left, "trace_left_" + trace_tag,
-                                        trace_subdir, PlotSaveOptions::kLINEAR);
-            delete c_left;
-
-            TCanvas *c_right = PlottingUtils::GetConfiguredCanvas(kFALSE);
-            TraceRight->Draw("ALP");
-            if (Constants::SAVE_LR_TRACES)
-              PlottingUtils::SaveFigure(c_right, "trace_right_" + trace_tag,
-                                        trace_subdir,
-                                        PlotSaveOptions::kLINEAR);
-            delete c_right;
-
-            TCanvas *c_total = PlottingUtils::GetConfiguredCanvas(kFALSE);
-            TraceTotal->Draw("ALP");
-            PlottingUtils::SaveFigure(c_total, "trace_total_" + trace_tag,
+          TCanvas *c_left = PlottingUtils::GetConfiguredCanvas(kFALSE);
+          TraceLeft->Draw("ALP");
+          if (Constants::SAVE_LR_TRACES)
+            PlottingUtils::SaveFigure(c_left, "trace_left_" + trace_tag,
                                       trace_subdir, PlotSaveOptions::kLINEAR);
-            delete c_total;
+          delete c_left;
 
-            std::cout << "Saved event from strip " << triggerStrip << " (entry "
-                      << j << ") under " << trace_subdir << std::endl;
-          }
+          TCanvas *c_right = PlottingUtils::GetConfiguredCanvas(kFALSE);
+          TraceRight->Draw("ALP");
+          if (Constants::SAVE_LR_TRACES)
+            PlottingUtils::SaveFigure(c_right, "trace_right_" + trace_tag,
+                                      trace_subdir, PlotSaveOptions::kLINEAR);
+          delete c_right;
+
+          TCanvas *c_total = PlottingUtils::GetConfiguredCanvas(kFALSE);
+          TraceTotal->Draw("ALP");
+          PlottingUtils::SaveFigure(c_total, "trace_total_" + trace_tag,
+                                    trace_subdir, PlotSaveOptions::kLINEAR);
+          delete c_total;
+
+          std::cout << "Saved event from strip " << triggerStrip << " (entry "
+                    << j << ") under " << trace_subdir << std::endl;
         }
+
+        delete TraceLeft;
+        delete TraceRight;
+        delete TraceTotal;
       }
-      delete TraceLeft;
-      delete TraceRight;
-      delete TraceTotal;
 
       if ((j + 1) % 100000 == 0) {
         std::cout << "Processed " << j + 1 << " / " << n_entries

@@ -5,14 +5,15 @@
 #include "PlottingUtils.hpp"
 #include <TFile.h>
 #include <TGraph.h>
-#include <TH1D.h>
-#include <TH1F.h>
-#include <TH2D.h>
+#include <TH2F.h>
+#include <TLine.h>
+#include <TMath.h>
 #include <TROOT.h>
 #include <TSystem.h>
 #include <TTree.h>
 #include <algorithm>
 #include <cstddef>
+#include <map>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -71,291 +72,182 @@ void ComputeNSD2(const std::vector<Double_t> &ref_x,
   }
 }
 
-TGraph *ExtractBeamTimingStructure(TTree *tree, UShort_t board,
-                                   UShort_t channel, Double_t min_energy,
-                                   Double_t max_energy, Double_t tmin_s,
-                                   Double_t tmax_s, Double_t thresh_dt_us) {
+struct LongChan {
+  UShort_t board;
+  UShort_t channel;
+  TString name;
+};
+
+Bool_t IsLongChannel(const TString &name) {
+  if (name == "Strip0" || name == "Strip17")
+    return kTRUE;
+  if (name.Length() < 2)
+    return kFALSE;
+  Char_t side = name[0];
+  if (side != 'L' && side != 'R')
+    return kFALSE;
+  TString num = name;
+  num.Remove(0, 1);
+  if (!num.IsDigit())
+    return kFALSE;
+  Int_t n = num.Atoi();
+  if (side == 'L' && (n % 2 == 1))
+    return kTRUE;
+  if (side == 'R' && (n % 2 == 0))
+    return kTRUE;
+  return kFALSE;
+}
+
+bool LongChanOrder(const LongChan &a, const LongChan &b) {
+  if (a.board != b.board)
+    return a.board < b.board;
+  return a.channel < b.channel;
+}
+
+std::vector<LongChan> BuildLongChannelList() {
+  std::vector<LongChan> list;
+  std::map<std::pair<Int_t, Int_t>, TString>::const_iterator it;
+  for (it = Constants::channelMap.begin(); it != Constants::channelMap.end();
+       ++it) {
+    if (!IsLongChannel(it->second))
+      continue;
+    LongChan lc;
+    lc.board = static_cast<UShort_t>(it->first.first);
+    lc.channel = static_cast<UShort_t>(it->first.second);
+    lc.name = it->second;
+    list.push_back(lc);
+  }
+  std::sort(list.begin(), list.end(), LongChanOrder);
+  return list;
+}
+
+std::vector<TGraph *> ExtractAllChannelsTimingStructure(
+    TTree *tree, const std::vector<LongChan> &channels, Double_t min_energy,
+    Double_t max_energy, Double_t tmin_s, Double_t tmax_s,
+    Double_t thresh_dt_us) {
+
+  std::map<std::pair<Int_t, Int_t>, std::size_t> chan_to_idx;
+  for (std::size_t i = 0; i < channels.size(); i++) {
+    chan_to_idx[std::pair<Int_t, Int_t>(channels[i].board,
+                                        channels[i].channel)] = i;
+  }
+
   UShort_t tree_board, tree_channel, tree_energy;
   ULong64_t tree_timestamp;
-
   tree->SetBranchAddress("Board", &tree_board);
   tree->SetBranchAddress("Channel", &tree_channel);
   tree->SetBranchAddress("Energy", &tree_energy);
   tree->SetBranchAddress("Timestamp", &tree_timestamp);
 
-  std::vector<ULong64_t> timestamps;
-  timestamps.reserve(10000);
+  std::vector<std::vector<ULong64_t>> per_chan_ts(channels.size());
+  for (std::size_t i = 0; i < channels.size(); i++) {
+    per_chan_ts[i].reserve(10000);
+  }
 
   Long64_t n_entries = tree->GetEntries();
-  std::cout << "Extracting timing structure for Board " << board << " Channel "
-            << channel << std::endl;
+  std::cout << "Single-pass extraction across " << channels.size()
+            << " long channels..." << std::endl;
 
   for (Long64_t i = 0; i < n_entries; i++) {
     tree->GetEntry(i);
 
+    if (tree_energy < min_energy || tree_energy > max_energy)
+      continue;
     Double_t time_s = tree_timestamp / 1e12;
+    if (time_s < tmin_s || time_s > tmax_s)
+      continue;
 
-    if (tree_board == board && tree_channel == channel &&
-        tree_energy >= min_energy && tree_energy <= max_energy &&
-        time_s >= tmin_s && time_s <= tmax_s) {
-      timestamps.push_back(tree_timestamp);
-    }
+    std::map<std::pair<Int_t, Int_t>, std::size_t>::const_iterator it =
+        chan_to_idx.find(std::pair<Int_t, Int_t>(tree_board, tree_channel));
+    if (it == chan_to_idx.end())
+      continue;
+
+    per_chan_ts[it->second].push_back(tree_timestamp);
 
     if (i % 10000000 == 0)
       std::cout << "  Progress: " << i << "/" << n_entries << std::endl;
   }
 
-  std::cout << "  Found " << timestamps.size() << " events in window"
-            << std::endl;
-
-  TGraph *delta_graph = new TGraph();
-
-  for (std::size_t i = 0; i + 1 < timestamps.size(); i++) {
-    Double_t dt_us = (timestamps[i + 1] - timestamps[i]) / 1e6;
-
-    if (dt_us > thresh_dt_us) {
-      Double_t time_s = timestamps[i] / 1e12;
-      delta_graph->SetPoint(delta_graph->GetN(), time_s, dt_us);
+  std::vector<TGraph *> graphs;
+  graphs.reserve(channels.size());
+  for (std::size_t c = 0; c < channels.size(); c++) {
+    TGraph *g = new TGraph();
+    const std::vector<ULong64_t> &ts = per_chan_ts[c];
+    for (std::size_t i = 0; i + 1 < ts.size(); i++) {
+      Double_t dt_us = (ts[i + 1] - ts[i]) / 1e6;
+      if (dt_us > thresh_dt_us) {
+        Double_t time_s = ts[i] / 1e12;
+        g->SetPoint(g->GetN(), time_s, dt_us);
+      }
     }
+    std::cout << "  " << channels[c].name << " (B" << channels[c].board << "C"
+              << channels[c].channel << "): " << ts.size() << " hits, "
+              << g->GetN() << " extreme events" << std::endl;
+    graphs.push_back(g);
   }
 
-  std::cout << "  Built graph with " << delta_graph->GetN()
-            << " large delta-T points" << std::endl;
-
-  return delta_graph;
+  return graphs;
 }
 
-struct BinnedShift {
-  Double_t bin_center_s;
-  Double_t shift_s;
-  Int_t n_ref;
-  Int_t n_gr;
-  Bool_t valid;
-};
+void PlotExtremeEvents2D(TH2F *h_before, TH2F *h_after,
+                         const TString &file_label) {
+  std::lock_guard<std::mutex> lock(g_plot_mutex);
+  TString subdir = "timing/" + file_label;
 
-std::vector<BinnedShift> FindShiftBeamBinned(TGraph *ref, TGraph *gr,
-                                             Double_t overlap_tmin_s,
-                                             Double_t overlap_tmax_s,
-                                             Double_t thresh_dt_us,
-                                             Int_t n_bins,
-                                             Double_t global_shift_s,
-                                             Double_t max_drift_s) {
-  std::vector<BinnedShift> results;
-  Double_t bin_width_s = (overlap_tmax_s - overlap_tmin_s) / n_bins;
-  Double_t step_s = 1e-6;
-  Int_t n_steps = 2 * static_cast<Int_t>(max_drift_s / step_s) + 1;
+  TCanvas *c_before = PlottingUtils::GetConfiguredCanvas(kFALSE);
+  PlottingUtils::ConfigureAndDraw2DHistogram(h_before, c_before);
+  c_before->SetLogz(kFALSE);
+  PlottingUtils::SaveFigure(c_before, "extreme_events_before", subdir,
+                            PlotSaveOptions::kLINEAR);
+  delete c_before;
 
-  for (Int_t b = 0; b < n_bins; b++) {
-    Double_t bin_start = overlap_tmin_s + b * bin_width_s;
-    Double_t bin_end = bin_start + bin_width_s;
-    Double_t bin_center = 0.5 * (bin_start + bin_end);
-
-    std::vector<Double_t> ref_x, ref_y, gr_x, gr_y;
-    for (Int_t i = 0; i < ref->GetN(); i++) {
-      Double_t x, y;
-      ref->GetPoint(i, x, y);
-      if (x >= bin_start && x < bin_end) {
-        ref_x.push_back(x);
-        ref_y.push_back(y);
-      }
-    }
-    for (Int_t i = 0; i < gr->GetN(); i++) {
-      Double_t x, y;
-      gr->GetPoint(i, x, y);
-      if (x >= bin_start && x < bin_end) {
-        gr_x.push_back(x);
-        gr_y.push_back(y);
-      }
-    }
-
-    BinnedShift r;
-    r.bin_center_s = bin_center;
-    r.shift_s = global_shift_s;
-    r.n_ref = static_cast<Int_t>(ref_x.size());
-    r.n_gr = static_cast<Int_t>(gr_x.size());
-    r.valid = kFALSE;
-
-    if (r.n_ref < 20 || r.n_gr < 20) {
-      results.push_back(r);
-      continue;
-    }
-
-    Double_t best_shift = global_shift_s;
-    Double_t max_inv_nsd2 = 0;
-
-    for (Int_t k = 0; k < n_steps; k++) {
-      Double_t shift = global_shift_s - max_drift_s + k * step_s;
-      Int_t npts = 0;
-      Double_t nsd2 = 0;
-      ComputeNSD2(ref_x, ref_y, gr_x, gr_y, shift, thresh_dt_us, npts, nsd2);
-      if (npts > 5) {
-        Double_t inv_nsd2 = 1.0 / nsd2;
-        if (inv_nsd2 > max_inv_nsd2) {
-          best_shift = shift;
-          max_inv_nsd2 = inv_nsd2;
-        }
-      }
-    }
-
-    r.shift_s = best_shift;
-    r.valid = (max_inv_nsd2 > 0);
-    results.push_back(r);
-  }
-
-  return results;
+  TCanvas *c_after = PlottingUtils::GetConfiguredCanvas(kFALSE);
+  PlottingUtils::ConfigureAndDraw2DHistogram(h_after, c_after);
+  c_after->SetLogz(kFALSE);
+  PlottingUtils::SaveFigure(c_after, "extreme_events_after", subdir,
+                            PlotSaveOptions::kLINEAR);
+  delete c_after;
 }
 
-void PlotBinnedShifts(const std::vector<BinnedShift> &binned, UShort_t board,
-                      const TString &file_label) {
+void PlotCostLandscape(const std::vector<Double_t> &shifts,
+                       const std::vector<Double_t> &inv_nsd2_values,
+                       Double_t best_shift, UShort_t ref_board, UShort_t board,
+                       const TString &file_label) {
   std::lock_guard<std::mutex> lock(g_plot_mutex);
 
-  TGraph *gr_valid = new TGraph();
-  TGraph *gr_invalid = new TGraph();
-  for (std::size_t i = 0; i < binned.size(); i++) {
-    if (binned[i].valid)
-      gr_valid->SetPoint(gr_valid->GetN(), binned[i].bin_center_s,
-                         binned[i].shift_s * 1e3);
-    else
-      gr_invalid->SetPoint(gr_invalid->GetN(), binned[i].bin_center_s, 0.0);
+  TGraph *g = new TGraph();
+  Double_t y_max = 0;
+  for (std::size_t i = 0; i < shifts.size(); i++) {
+    g->SetPoint(g->GetN(), shifts[i], inv_nsd2_values[i]);
+    if (inv_nsd2_values[i] > y_max)
+      y_max = inv_nsd2_values[i];
   }
 
   TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(kFALSE);
   PlottingUtils::ConfigureGraph(
-      gr_valid, kBlue + 1,
-      Form("Board 0-%d binned shift;Time bin center [s];Shift [ms]", board));
-  gr_valid->SetMarkerStyle(20);
-  gr_valid->SetMarkerSize(0.9);
-  gr_valid->SetMarkerColor(kBlue + 1);
-  gr_valid->Draw("AP");
+      g, kBlue + 1,
+      Form("Cost landscape Board %d-%d;Candidate shift [s];1/NSD^{2}",
+           ref_board, board));
+  g->SetLineWidth(PlottingUtils::GetLineWidth());
+  g->Draw("AL");
 
-  if (gr_invalid->GetN() > 0) {
-    gr_invalid->SetMarkerStyle(24);
-    gr_invalid->SetMarkerSize(0.9);
-    gr_invalid->SetMarkerColor(kRed + 1);
-    gr_invalid->Draw("P SAME");
-  }
+  TLine *best = new TLine(best_shift, 0, best_shift, 1.05 * y_max);
+  best->SetLineColor(kRed + 1);
+  best->SetLineStyle(2);
+  best->SetLineWidth(PlottingUtils::GetLineWidth());
+  best->Draw();
 
-  PlottingUtils::SaveFigure(canvas, Form("binned_shift_board_%d", board),
+  PlottingUtils::AddText(Form("best shift = %.6f s", best_shift), 0.85, 0.85);
+
+  PlottingUtils::SaveFigure(canvas, Form("cost_landscape_board_%d", board),
                             "timing/" + file_label, PlotSaveOptions::kLINEAR);
   delete canvas;
-}
-
-void PlotDeltaTTimeDistribution(TGraph *graph, UShort_t board,
-                                Double_t overlap_tmin_s,
-                                Double_t overlap_tmax_s,
-                                const TString &file_label) {
-  std::lock_guard<std::mutex> lock(g_plot_mutex);
-
-  TH1F *h = new TH1F(
-      PlottingUtils::GetRandomName(),
-      Form("Board %d large-#Delta t event times;Time [s];Counts", board), 200,
-      overlap_tmin_s, overlap_tmax_s);
-
-  for (Int_t i = 0; i < graph->GetN(); i++) {
-    Double_t x, y;
-    graph->GetPoint(i, x, y);
-    h->Fill(x);
-  }
-
-  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(kFALSE);
-  PlottingUtils::ConfigureAndDrawHistogram(h, kBlue + 1);
-  PlottingUtils::SaveFigure(canvas, Form("dt_time_dist_board_%d", board),
-                            "timing/" + file_label, PlotSaveOptions::kLINEAR);
-  delete canvas;
-}
-
-void PlotResiduals(TGraph *ref_graph, TGraph *board_graph, Double_t shift_s,
-                   UShort_t board, const TString &file_label) {
-  std::lock_guard<std::mutex> lock(g_plot_mutex);
-  TGraph *board_shifted = static_cast<TGraph *>(board_graph->Clone());
-  for (Int_t i = 0; i < board_shifted->GetN(); i++) {
-    Double_t x, y;
-    board_shifted->GetPoint(i, x, y);
-    board_shifted->SetPoint(i, x - shift_s, y);
-  }
-
-  TH1D *h_residuals = new TH1D(
-      PlottingUtils::GetRandomName(),
-      Form("Residuals Board 0-%d;#Delta t_{ref} - #Delta t_{board} [#mus];"
-           "Counts",
-           board),
-      200, -5, 5);
-
-  for (Int_t i = 0; i < ref_graph->GetN(); i++) {
-    Double_t t_ref, dt_ref;
-    ref_graph->GetPoint(i, t_ref, dt_ref);
-
-    Double_t dt_board = board_shifted->Eval(t_ref, 0, "S");
-    if (dt_board > 0)
-      h_residuals->Fill(dt_ref - dt_board);
-  }
-
-  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(kFALSE);
-  PlottingUtils::ConfigureAndDrawHistogram(h_residuals, kBlue + 1);
-
-  h_residuals->Fit("gaus", "Q");
-  TF1 *fit = h_residuals->GetFunction("gaus");
-  if (fit) {
-    fit->SetLineColor(kRed + 1);
-    fit->SetLineWidth(PlottingUtils::GetLineWidth());
-    PlottingUtils::AddText(Form("#mu = %.2f #mus", fit->GetParameter(1)), 0.85,
-                           0.85);
-    PlottingUtils::AddText(Form("#sigma = %.2f #mus", fit->GetParameter(2)),
-                           0.85, 0.78);
-  }
-
-  PlottingUtils::SaveFigure(canvas, Form("residuals_board_%d", board),
-                            "timing/" + file_label, PlotSaveOptions::kLINEAR);
-  delete canvas;
-  delete board_shifted;
-}
-
-void PlotCorrelation(TGraph *ref_graph, TGraph *board_graph, Double_t shift_s,
-                     UShort_t board, const TString &file_label) {
-  std::lock_guard<std::mutex> lock(g_plot_mutex);
-  TGraph *board_shifted = static_cast<TGraph *>(board_graph->Clone());
-  for (Int_t i = 0; i < board_shifted->GetN(); i++) {
-    Double_t x, y;
-    board_shifted->GetPoint(i, x, y);
-    board_shifted->SetPoint(i, x - shift_s, y);
-  }
-
-  Double_t corr_max = 2200;
-  TH2D *h_corr = new TH2D(PlottingUtils::GetRandomName(),
-                          Form("Correlation Board 0-%d;#Delta t_{ref} "
-                               "[#mus];#Delta t_{board %d} [#mus]",
-                               board, board),
-                          100, 0, corr_max, 100, 0, corr_max);
-
-  for (Int_t i = 0; i < ref_graph->GetN(); i++) {
-    Double_t t_ref, dt_ref;
-    ref_graph->GetPoint(i, t_ref, dt_ref);
-
-    Double_t dt_board = board_shifted->Eval(t_ref, 0, "S");
-    if (dt_board > 0 && dt_ref > 0)
-      h_corr->Fill(dt_ref, dt_board);
-  }
-
-  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(kFALSE);
-  canvas->SetLeftMargin(0.18);
-  PlottingUtils::ConfigureAndDraw2DHistogram(h_corr, canvas);
-  h_corr->GetYaxis()->SetTitleOffset(1.4);
-
-  TLine *diag = new TLine(0, 0, corr_max, corr_max);
-  diag->SetLineColor(kRed + 1);
-  diag->SetLineWidth(PlottingUtils::GetLineWidth());
-  diag->SetLineStyle(2);
-  diag->Draw();
-
-  PlottingUtils::SaveFigure(canvas, Form("correlation_board_%d", board),
-                            "timing/" + file_label, PlotSaveOptions::kLINEAR);
-  delete canvas;
-  delete board_shifted;
 }
 
 Double_t FindShiftBeam(TGraph *ref, TGraph *gr, Double_t overlap_tmin_s,
                        Double_t overlap_tmax_s, Double_t thresh_dt_us,
-                       UShort_t board, const TString &file_label) {
+                       UShort_t ref_board, UShort_t board,
+                       const TString &file_label) {
 
   std::vector<Double_t> ref_x(ref->GetN()), ref_y(ref->GetN());
   std::vector<Double_t> gr_x(gr->GetN()), gr_y(gr->GetN());
@@ -384,6 +276,11 @@ Double_t FindShiftBeam(TGraph *ref, TGraph *gr, Double_t overlap_tmin_s,
   Double_t best_shift = 0;
   Double_t max_inv_nsd2 = 0;
 
+  std::vector<Double_t> scan_shifts;
+  std::vector<Double_t> scan_inv_nsd2;
+  scan_shifts.reserve(gr->GetN());
+  scan_inv_nsd2.reserve(gr->GetN());
+
   for (Int_t p = 0; p < gr->GetN(); p++) {
     Int_t npts = 0;
     Double_t nsd2 = 0;
@@ -397,6 +294,8 @@ Double_t FindShiftBeam(TGraph *ref, TGraph *gr, Double_t overlap_tmin_s,
 
     if (npts > 10) {
       Double_t inv_nsd2 = 1.0 / nsd2;
+      scan_shifts.push_back(shift);
+      scan_inv_nsd2.push_back(inv_nsd2);
 
       if (inv_nsd2 > max_inv_nsd2) {
         best_shift = shift;
@@ -415,18 +314,20 @@ Double_t FindShiftBeam(TGraph *ref, TGraph *gr, Double_t overlap_tmin_s,
   std::cout << "No-shift   : 0 s         (1/NSD2 = " << inv_nsd2_zero
             << ", npts=" << npts0 << ")" << std::endl;
   if (inv_nsd2_zero > 0)
-    std::cout << "  Improvement vs no-shift: "
-              << max_inv_nsd2 / inv_nsd2_zero << "x" << std::endl;
+    std::cout << "  Improvement vs no-shift: " << max_inv_nsd2 / inv_nsd2_zero
+              << "x" << std::endl;
+
+  PlotCostLandscape(scan_shifts, scan_inv_nsd2, best_shift, ref_board, board,
+                    file_label);
 
   return best_shift;
 }
 
 std::vector<TimeShiftResult> CalcTimeShiftsBeamMethod(
     std::vector<TString> input_filepaths, std::vector<TString> file_labels,
-    UShort_t ref_board, UShort_t ref_channel,
-    std::vector<UShort_t> board_channels, Double_t min_energy,
-    Double_t max_energy, Double_t overlap_margin_s, Double_t thresh_dt_us,
-    Bool_t reprocess) {
+    UShort_t ref_board, std::vector<UShort_t> board_channels,
+    Double_t min_energy, Double_t max_energy, Double_t overlap_margin_s,
+    Double_t thresh_dt_us, Bool_t reprocess) {
 
   std::vector<TimeShiftResult> results;
 
@@ -464,13 +365,31 @@ std::vector<TimeShiftResult> CalcTimeShiftsBeamMethod(
               << "] s, using overlap [" << overlap_tmin_s << ", "
               << overlap_tmax_s << "] s" << std::endl;
 
-    std::cout << "Extracting reference board" << std::endl;
-    TGraph *ref_graph = ExtractBeamTimingStructure(
-        tree, ref_board, ref_channel, min_energy, max_energy, overlap_tmin_s,
+    std::vector<LongChan> long_channels = BuildLongChannelList();
+    std::vector<TGraph *> long_graphs = ExtractAllChannelsTimingStructure(
+        tree, long_channels, min_energy, max_energy, overlap_tmin_s,
         overlap_tmax_s, thresh_dt_us);
-    PlotDeltaTTimeDistribution(ref_graph, ref_board, overlap_tmin_s,
-                               overlap_tmax_s, file_label);
 
+    std::map<UShort_t, std::size_t> board_to_ref_idx;
+    for (std::size_t i = 0; i < long_channels.size(); i++) {
+      if (long_channels[i].channel == board_channels[long_channels[i].board])
+        board_to_ref_idx[long_channels[i].board] = i;
+    }
+
+    std::map<UShort_t, std::size_t>::const_iterator ref_it =
+        board_to_ref_idx.find(ref_board);
+    if (ref_it == board_to_ref_idx.end()) {
+      std::cerr << "Reference board " << ref_board
+                << " ref channel is not in long-channel list" << std::endl;
+      for (std::size_t k = 0; k < long_graphs.size(); k++)
+        delete long_graphs[k];
+      input_file->Close();
+      delete input_file;
+      continue;
+    }
+    TGraph *ref_graph = long_graphs[ref_it->second];
+
+    std::vector<Double_t> board_shifts_s(Constants::N_BOARDS, 0.0);
     TimeShiftResult result;
     result.board_shifts.assign(Constants::N_BOARDS, 0);
 
@@ -478,45 +397,69 @@ std::vector<TimeShiftResult> CalcTimeShiftsBeamMethod(
       if (board == ref_board)
         continue;
 
-      std::cout << "Processing Board " << board << " Channel "
-                << board_channels[board] << std::endl;
+      std::map<UShort_t, std::size_t>::const_iterator it =
+          board_to_ref_idx.find(board);
+      if (it == board_to_ref_idx.end()) {
+        std::cout << "WARNING: Board " << board
+                  << " ref channel not in long-channel list" << std::endl;
+        continue;
+      }
 
-      TGraph *board_graph = ExtractBeamTimingStructure(
-          tree, board, board_channels[board], min_energy, max_energy,
-          overlap_tmin_s, overlap_tmax_s, thresh_dt_us);
-      PlotDeltaTTimeDistribution(board_graph, board, overlap_tmin_s,
-                                 overlap_tmax_s, file_label);
-
+      TGraph *board_graph = long_graphs[it->second];
       if (board_graph->GetN() < 10) {
         std::cout << "WARNING: Not enough data points for Board " << board
                   << std::endl;
-        delete board_graph;
         continue;
       }
+
+      std::cout << "Processing Board " << board << " Channel "
+                << board_channels[board] << std::endl;
 
       Double_t shift_s = FindShiftBeam(
           ref_graph, board_graph,
           overlap_tmin_s + 0.1 * (overlap_tmax_s - overlap_tmin_s),
           overlap_tmax_s - 0.1 * (overlap_tmax_s - overlap_tmin_s),
-          thresh_dt_us, board, file_label);
+          thresh_dt_us, ref_board, board, file_label);
 
-      PlotResiduals(ref_graph, board_graph, shift_s, board, file_label);
-      PlotCorrelation(ref_graph, board_graph, shift_s, board, file_label);
-
-      std::vector<BinnedShift> binned = FindShiftBeamBinned(
-          ref_graph, board_graph, overlap_tmin_s, overlap_tmax_s, thresh_dt_us,
-          Constants::N_TIME_BINS, shift_s, Constants::MAX_BIN_DRIFT_S);
-      PlotBinnedShifts(binned, board, file_label);
-
+      board_shifts_s[board] = shift_s;
       Long64_t shift_ps = static_cast<Long64_t>(shift_s * 1e12);
       result.board_shifts[board] = -shift_ps;
 
       std::cout << "Board " << ref_board << "-" << board
                 << " shift: " << shift_s << " s (" << shift_ps << " ps)"
                 << std::endl;
-
-      delete board_graph;
     }
+
+    Int_t time_bins = TMath::Min(
+        500, TMath::Max(
+                 100, static_cast<Int_t>((file_tmax_s - file_tmin_s) * 50.0)));
+    Int_t n_y = static_cast<Int_t>(long_channels.size());
+    TH2F *h_extreme_before =
+        new TH2F("hExtremeBefore", ";Time [s];", time_bins, file_tmin_s,
+                 file_tmax_s, n_y, -0.5, n_y - 0.5);
+    TH2F *h_extreme_after =
+        new TH2F("hExtremeAfter", ";Time [s];", time_bins, file_tmin_s,
+                 file_tmax_s, n_y, -0.5, n_y - 0.5);
+
+    for (Int_t b = 0; b < n_y; b++) {
+      TString label =
+          Form("B%d %s", long_channels[b].board, long_channels[b].name.Data());
+      h_extreme_before->GetYaxis()->SetBinLabel(b + 1, label);
+      h_extreme_after->GetYaxis()->SetBinLabel(b + 1, label);
+    }
+
+    for (std::size_t c = 0; c < long_channels.size(); c++) {
+      TGraph *g = long_graphs[c];
+      Double_t shift_s = board_shifts_s[long_channels[c].board];
+      for (Int_t k = 0; k < g->GetN(); k++) {
+        Double_t x, y;
+        g->GetPoint(k, x, y);
+        h_extreme_before->Fill(x, Double_t(c));
+        h_extreme_after->Fill(x - shift_s, Double_t(c));
+      }
+    }
+
+    PlotExtremeEvents2D(h_extreme_before, h_extreme_after, file_label);
 
     results.push_back(result);
 
@@ -528,7 +471,10 @@ std::vector<TimeShiftResult> CalcTimeShiftsBeamMethod(
                 << result.board_shifts[board] * 1e-12 << " s" << std::endl;
     }
 
-    delete ref_graph;
+    delete h_extreme_before;
+    delete h_extreme_after;
+    for (std::size_t k = 0; k < long_graphs.size(); k++)
+      delete long_graphs[k];
     input_file->Close();
     delete input_file;
   }
@@ -546,52 +492,67 @@ void ApplyTimeShift(std::vector<TString> input_filepaths,
     TString input_filepath = input_filepaths[i];
     TimeShiftResult res = results[i];
 
-    TFile *input_output_file = IO::OpenForWriting(input_filepath, "UPDATE");
+    TFile *src_file = IO::OpenForReading(input_filepath);
+    if (!src_file || src_file->IsZombie()) {
+      std::cerr << "Error opening file: " << input_filepath << std::endl;
+      continue;
+    }
+    TString src_full(src_file->GetName());
 
-    TTree *input_tree = static_cast<TTree *>(input_output_file->Get("Data_R"));
-    if (!input_tree) {
+    TTree *src_tree = static_cast<TTree *>(src_file->Get("Data_R"));
+    if (!src_tree) {
       std::cerr << "Error getting tree for filepath " << input_filepath
                 << std::endl;
-      input_output_file->Close();
+      src_file->Close();
       continue;
     }
 
-    UShort_t board;
-    ULong64_t timestamp, shifted_timestamp;
-    input_tree->SetBranchAddress("Board", &board);
-    input_tree->SetBranchAddress("Timestamp", &timestamp);
-
-    TBranch *existing_branch = input_tree->GetBranch("ShiftedTimestamp");
-    if (existing_branch) {
-      std::cout << "ShiftedTimestamp branch already exists, will overwrite"
+    if (src_tree->GetBranch("ShiftedTimestamp")) {
+      std::cout << "ShiftedTimestamp branch already present; will be replaced"
                 << std::endl;
-      input_tree->SetBranchAddress("ShiftedTimestamp", &shifted_timestamp);
-    } else {
-      input_tree->Branch("ShiftedTimestamp", &shifted_timestamp,
-                         "ShiftedTimestamp/l");
+      src_tree->SetBranchStatus("ShiftedTimestamp", 0);
     }
 
-    Int_t n_entries = input_tree->GetEntries();
-    input_tree->LoadBaskets();
-    for (Int_t j = 0; j < n_entries; j++) {
-      input_tree->GetEntry(j);
-      Long64_t shifted_timestamp_calc = timestamp;
-      if (board < res.board_shifts.size())
-        shifted_timestamp_calc = timestamp + res.board_shifts[board];
-      shifted_timestamp = shifted_timestamp_calc;
+    TString tmp_subpath = input_filepath + ".tmp";
+    TFile *dst_file = IO::OpenForWriting(tmp_subpath, "RECREATE");
+    TString dst_full(dst_file->GetName());
 
-      if (existing_branch) {
-        input_tree->GetBranch("ShiftedTimestamp")->Fill();
-      }
+    dst_file->cd();
+    TTree *dst_tree = src_tree->CloneTree(0);
+
+    UShort_t board;
+    ULong64_t timestamp, shifted_timestamp;
+    src_tree->SetBranchAddress("Board", &board);
+    src_tree->SetBranchAddress("Timestamp", &timestamp);
+    dst_tree->SetBranchAddress("Board", &board);
+    dst_tree->SetBranchAddress("Timestamp", &timestamp);
+    dst_tree->Branch("ShiftedTimestamp", &shifted_timestamp,
+                     "ShiftedTimestamp/l");
+
+    Long64_t n_entries = src_tree->GetEntries();
+    src_tree->LoadBaskets();
+    for (Long64_t j = 0; j < n_entries; j++) {
+      src_tree->GetEntry(j);
+      shifted_timestamp = (board < res.board_shifts.size())
+                              ? timestamp + res.board_shifts[board]
+                              : timestamp;
+      dst_tree->Fill();
 
       if (j % 1000000 == 0) {
         std::cout << "Applying shifts: " << j << "/" << n_entries << std::endl;
       }
     }
 
-    input_output_file->cd();
-    input_tree->Write("", TObject::kOverwrite);
-    input_output_file->Close();
+    dst_file->cd();
+    dst_tree->Write("", TObject::kOverwrite);
+    dst_file->Close();
+    src_file->Close();
+
+    if (gSystem->Rename(dst_full.Data(), src_full.Data()) != 0) {
+      std::cerr << "Error renaming " << dst_full << " -> " << src_full
+                << std::endl;
+      continue;
+    }
 
     std::cout << "Applied time shifts to: " << input_filepath << std::endl;
   }
@@ -682,8 +643,7 @@ void Timing() {
   }
 
   std::vector<TimeShiftResult> results = CalcTimeShiftsBeamMethod(
-      filepaths, file_labels, Constants::REF_BOARD,
-      Constants::BOARD_CHANNELS[Constants::REF_BOARD], Constants::BOARD_CHANNELS,
+      filepaths, file_labels, Constants::REF_BOARD, Constants::BOARD_CHANNELS,
       Constants::MIN_ENERGY, Constants::MAX_ENERGY, Constants::OVERLAP_MARGIN_S,
       Constants::THRESH_DT_US, reprocess_calculation);
   ApplyTimeShift(filepaths, results, reprocess_calculation);

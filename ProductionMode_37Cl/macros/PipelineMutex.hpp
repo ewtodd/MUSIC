@@ -45,11 +45,16 @@ inline TString RawRootName(const FileSpec &s) {
 inline TString SortedName(const FileSpec &s) {
   return Form("Sorted_Run%d%s", s.run, s.suffix.Data());
 }
-inline TString EventsName(const FileSpec &s) {
-  return Form("Events_Run%d%s", s.run, s.suffix.Data());
+inline TString EventsClassicName(const FileSpec &s) {
+  return Form("EventsClassic_Run%d%s", s.run, s.suffix.Data());
 }
-inline TString TimeDiffName(const FileSpec &s) {
-  return Form("TimeDiff_Run%d%s", s.run, s.suffix.Data());
+inline TString EventsNearestName(const FileSpec &s) {
+  return Form("EventsNearest_Run%d%s", s.run, s.suffix.Data());
+}
+inline TString EventsName(const FileSpec &s) {
+  if (Constants::EVENT_BUILDER_MODE == Constants::EVENT_BUILDER_NEAREST_GRID)
+    return EventsNearestName(s);
+  return EventsClassicName(s);
 }
 inline TString FileLabel(const FileSpec &s) {
   return Form("run%d%s", s.run, s.suffix.Data());

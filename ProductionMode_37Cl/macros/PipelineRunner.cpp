@@ -1,5 +1,6 @@
 #include "Constants.hpp"
-#include "EventBuilder.cpp"
+#include "EventBuilderClassic.cpp"
+#include "EventBuilderNearestGrid.cpp"
 #include "InitUtils.hpp"
 #include "PipelineMutex.hpp"
 #include "Timing.cpp"
@@ -27,13 +28,18 @@ Bool_t RunPipelineOneFile(FileSpec spec) {
 
   std::vector<TimeShiftResult> results = CalcTimeShiftsBeamMethod(
       raw_filepath, file_labels, Constants::REF_BOARD,
-      Constants::BOARD_CHANNELS[Constants::REF_BOARD], Constants::BOARD_CHANNELS,
-      Constants::MIN_ENERGY, Constants::MAX_ENERGY, Constants::OVERLAP_MARGIN_S,
-      Constants::THRESH_DT_US, kTRUE);
+      Constants::BOARD_CHANNELS, Constants::MIN_ENERGY, Constants::MAX_ENERGY,
+      Constants::OVERLAP_MARGIN_S, Constants::THRESH_DT_US, kTRUE);
   ApplyTimeShift(raw_filepath, results, kTRUE);
   TimesortData(raw_filepath, sorted_name, kTRUE);
 
-  BuildEvents(sorted_name, events_name, kTRUE);
+  if (Constants::EVENT_BUILDER_MODE == Constants::EVENT_BUILDER_NEAREST_GRID) {
+    std::vector<TString> nearest_name = {EventsNearestName(spec)};
+    BuildEventsNearestGrid(sorted_name, nearest_name, file_labels, kTRUE);
+  } else {
+    std::vector<TString> classic_name = {EventsClassicName(spec)};
+    BuildEvents(sorted_name, classic_name, file_labels, kTRUE);
+  }
 
   BuildTraces(events_name, file_labels, kFALSE, kTRUE);
 

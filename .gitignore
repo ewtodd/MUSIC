@@ -1,4 +1,5 @@
 *.log
+CLAUDE.md
 .claude
 .claude/settings.json
 secrets/settings.json
