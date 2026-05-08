@@ -1,7 +1,7 @@
 #include "Constants.hpp"
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
-#include "PipelineMutex.hpp"
+#include "Pipeline.hpp"
 #include "PlottingUtils.hpp"
 #include <TFile.h>
 #include <TH1F.h>
@@ -10,7 +10,6 @@
 #include <TSystem.h>
 #include <TTree.h>
 #include <algorithm>
-#include <cstddef>
 #include <iostream>
 #include <map>
 #include <utility>
@@ -55,7 +54,7 @@ void DiagnoseOneFile(TString input_filename, TString file_label) {
                                          "R2",     "R4", "R6", "R8"};
 
   std::map<std::pair<Int_t, Int_t>, TString> required_lookup;
-  for (std::size_t i = 0; i < required_names.size(); i++) {
+  for (Int_t i = 0; i < Int_t(required_names.size()); i++) {
     std::pair<Int_t, Int_t> bc = FindBoardChannel(required_names[i]);
     if (bc.first < 0) {
       std::cerr << "WARNING: " << required_names[i]
@@ -68,7 +67,7 @@ void DiagnoseOneFile(TString input_filename, TString file_label) {
   std::pair<Int_t, Int_t> grid_bc = FindBoardChannel("Grid");
 
   std::map<TString, std::vector<ULong64_t>> per_channel_ts;
-  for (std::size_t i = 0; i < required_names.size(); i++) {
+  for (Int_t i = 0; i < Int_t(required_names.size()); i++) {
     per_channel_ts[required_names[i]] = std::vector<ULong64_t>();
     per_channel_ts[required_names[i]].reserve(3000000);
   }
@@ -95,14 +94,13 @@ void DiagnoseOneFile(TString input_filename, TString file_label) {
       std::cout << "  Progress: " << j << "/" << n_entries << std::endl;
   }
 
-  std::cout << std::endl << "Collected:" << std::endl;
+  std::cout << "Collected:" << std::endl;
   std::cout << "  Grid: " << grid_ts.size() << " hits" << std::endl;
-  for (std::size_t i = 0; i < required_names.size(); i++) {
+  for (Int_t i = 0; i < Int_t(required_names.size()); i++) {
     std::cout << "  " << required_names[i] << ": "
               << per_channel_ts[required_names[i]].size() << " hits"
               << std::endl;
   }
-  std::cout << std::endl;
 
   if (grid_ts.empty()) {
     std::cerr << "No grid hits, abort" << std::endl;
@@ -113,7 +111,7 @@ void DiagnoseOneFile(TString input_filename, TString file_label) {
   std::cout << "Per-channel hits-per-window summary" << std::endl;
   std::cout << "channel    P(0)     P(1)     P(2)     P(3+)" << std::endl;
 
-  for (std::size_t i = 0; i < required_names.size(); i++) {
+  for (Int_t i = 0; i < Int_t(required_names.size()); i++) {
     TString ch_name = required_names[i];
     const std::vector<ULong64_t> &ch_ts = per_channel_ts[ch_name];
 
@@ -129,14 +127,15 @@ void DiagnoseOneFile(TString input_filename, TString file_label) {
                                       "Counts",
                             8, 0, 8);
 
-    std::size_t grid_idx = 0;
-    for (std::size_t k = 0; k < ch_ts.size(); k++) {
+    Int_t grid_idx = 0;
+    for (Int_t k = 0; k < Int_t(ch_ts.size()); k++) {
       ULong64_t ts = ch_ts[k];
-      while (grid_idx + 1 < grid_ts.size() && grid_ts[grid_idx + 1] <= ts)
+      while (grid_idx + 1 < Int_t(grid_ts.size()) &&
+             grid_ts[grid_idx + 1] <= ts)
         grid_idx++;
 
       ULong64_t g_left = grid_ts[grid_idx];
-      ULong64_t g_right = (grid_idx + 1 < grid_ts.size())
+      ULong64_t g_right = (grid_idx + 1 < Int_t(grid_ts.size()))
                               ? grid_ts[grid_idx + 1]
                               : ULong64_t(0);
 
@@ -150,19 +149,19 @@ void DiagnoseOneFile(TString input_filename, TString file_label) {
       h_dt->Fill(dt_us);
     }
 
-    std::size_t ch_idx = 0;
+    Int_t ch_idx = 0;
     Long64_t n_total_windows = 0;
     Long64_t n0 = 0, n1 = 0, n2 = 0, n3plus = 0;
-    for (std::size_t g = 0; g + 1 < grid_ts.size(); g++) {
+    for (Int_t g = 0; g + 1 < Int_t(grid_ts.size()); g++) {
       ULong64_t g_ts = grid_ts[g];
       ULong64_t g_next = grid_ts[g + 1];
 
-      while (ch_idx < ch_ts.size() && ch_ts[ch_idx] < g_ts)
+      while (ch_idx < Int_t(ch_ts.size()) && ch_ts[ch_idx] < g_ts)
         ch_idx++;
 
       Int_t hits = 0;
-      std::size_t kk = ch_idx;
-      while (kk < ch_ts.size() && ch_ts[kk] < g_next) {
+      Int_t kk = ch_idx;
+      while (kk < Int_t(ch_ts.size()) && ch_ts[kk] < g_next) {
         hits++;
         kk++;
       }
@@ -201,18 +200,17 @@ void DiagnoseOneFile(TString input_filename, TString file_label) {
   }
 
   input_file->Close();
-  std::cout << std::endl
-            << "Diagnostic plots saved under plots/diagnostics/" << file_label
+  std::cout << "Diagnostic plots saved under plots/diagnostics/" << file_label
             << std::endl;
 }
 
-void EventDiagnostic() {
+void DiagnoseEvents() {
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
                                 TString(gSystem->pwd()) + "/plots",
                                 TString(gSystem->pwd()) + "/root_files");
 
   std::vector<FileSpec> specs = BuildFileSpecs();
-  for (std::size_t k = 0; k < specs.size(); k++) {
+  for (Int_t k = 0; k < Int_t(specs.size()); k++) {
     TString name = SortedName(specs[k]);
     TString file_label = FileLabel(specs[k]);
     std::cout << "Diagnosing: " << name << std::endl;

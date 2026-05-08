@@ -1,7 +1,7 @@
 #include "Constants.hpp"
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
-#include "PipelineMutex.hpp"
+#include "Pipeline.hpp"
 #include "PlottingUtils.hpp"
 #include <TFile.h>
 #include <TGraph.h>
@@ -12,7 +12,6 @@
 #include <TSystem.h>
 #include <TTree.h>
 #include <algorithm>
-#include <cstddef>
 #include <map>
 #include <mutex>
 #include <utility>
@@ -38,9 +37,9 @@ void ComputeNSD2(const std::vector<Double_t> &ref_x,
   Double_t tmin = TMath::Max(tmin_ref, tmin_gr);
   Double_t tmax = TMath::Min(tmax_ref, tmax_gr);
 
-  std::size_t gr_idx = 0;
+  Int_t gr_idx = 0;
 
-  for (std::size_t p = 0; p < ref_x.size(); p++) {
+  for (Int_t p = 0; p < Int_t(ref_x.size()); p++) {
     Double_t tref = ref_x[p];
     Double_t dtref = ref_y[p];
 
@@ -49,10 +48,10 @@ void ComputeNSD2(const std::vector<Double_t> &ref_x,
 
     Double_t tref_shifted = tref + shift;
 
-    while (gr_idx < gr_x.size() - 1 && gr_x[gr_idx + 1] < tref_shifted)
+    while (gr_idx < Int_t(gr_x.size()) - 1 && gr_x[gr_idx + 1] < tref_shifted)
       gr_idx++;
 
-    if (gr_idx >= gr_x.size() - 1)
+    if (gr_idx >= Int_t(gr_x.size()) - 1)
       continue;
 
     Double_t x0 = gr_x[gr_idx];
@@ -98,7 +97,7 @@ Bool_t IsLongChannel(const TString &name) {
   return kFALSE;
 }
 
-bool LongChanOrder(const LongChan &a, const LongChan &b) {
+Bool_t LongChanOrder(const LongChan &a, const LongChan &b) {
   if (a.board != b.board)
     return a.board < b.board;
   return a.channel < b.channel;
@@ -126,8 +125,8 @@ std::vector<TGraph *> ExtractAllChannelsTimingStructure(
     Double_t max_energy, Double_t tmin_s, Double_t tmax_s,
     Double_t thresh_dt_us) {
 
-  std::map<std::pair<Int_t, Int_t>, std::size_t> chan_to_idx;
-  for (std::size_t i = 0; i < channels.size(); i++) {
+  std::map<std::pair<Int_t, Int_t>, Int_t> chan_to_idx;
+  for (Int_t i = 0; i < Int_t(channels.size()); i++) {
     chan_to_idx[std::pair<Int_t, Int_t>(channels[i].board,
                                         channels[i].channel)] = i;
   }
@@ -140,7 +139,7 @@ std::vector<TGraph *> ExtractAllChannelsTimingStructure(
   tree->SetBranchAddress("Timestamp", &tree_timestamp);
 
   std::vector<std::vector<ULong64_t>> per_chan_ts(channels.size());
-  for (std::size_t i = 0; i < channels.size(); i++) {
+  for (Int_t i = 0; i < Int_t(channels.size()); i++) {
     per_chan_ts[i].reserve(10000);
   }
 
@@ -157,7 +156,7 @@ std::vector<TGraph *> ExtractAllChannelsTimingStructure(
     if (time_s < tmin_s || time_s > tmax_s)
       continue;
 
-    std::map<std::pair<Int_t, Int_t>, std::size_t>::const_iterator it =
+    std::map<std::pair<Int_t, Int_t>, Int_t>::const_iterator it =
         chan_to_idx.find(std::pair<Int_t, Int_t>(tree_board, tree_channel));
     if (it == chan_to_idx.end())
       continue;
@@ -170,10 +169,10 @@ std::vector<TGraph *> ExtractAllChannelsTimingStructure(
 
   std::vector<TGraph *> graphs;
   graphs.reserve(channels.size());
-  for (std::size_t c = 0; c < channels.size(); c++) {
+  for (Int_t c = 0; c < Int_t(channels.size()); c++) {
     TGraph *g = new TGraph();
     const std::vector<ULong64_t> &ts = per_chan_ts[c];
-    for (std::size_t i = 0; i + 1 < ts.size(); i++) {
+    for (Int_t i = 0; i + 1 < Int_t(ts.size()); i++) {
       Double_t dt_us = (ts[i + 1] - ts[i]) / 1e6;
       if (dt_us > thresh_dt_us) {
         Double_t time_s = ts[i] / 1e12;
@@ -217,7 +216,7 @@ void PlotCostLandscape(const std::vector<Double_t> &shifts,
 
   TGraph *g = new TGraph();
   Double_t y_max = 0;
-  for (std::size_t i = 0; i < shifts.size(); i++) {
+  for (Int_t i = 0; i < Int_t(shifts.size()); i++) {
     g->SetPoint(g->GetN(), shifts[i], inv_nsd2_values[i]);
     if (inv_nsd2_values[i] > y_max)
       y_max = inv_nsd2_values[i];
@@ -261,7 +260,7 @@ Double_t FindShiftBeam(TGraph *ref, TGraph *gr, Double_t overlap_tmin_s,
   }
 
   Double_t tini = 0;
-  for (std::size_t p = 0; p < ref_x.size(); p++) {
+  for (Int_t p = 0; p < Int_t(ref_x.size()); p++) {
     if (ref_x[p] >= overlap_tmin_s) {
       tini = ref_x[p];
       break;
@@ -370,18 +369,18 @@ std::vector<TimeShiftResult> CalcTimeShiftsBeamMethod(
         tree, long_channels, min_energy, max_energy, overlap_tmin_s,
         overlap_tmax_s, thresh_dt_us);
 
-    std::map<UShort_t, std::size_t> board_to_ref_idx;
-    for (std::size_t i = 0; i < long_channels.size(); i++) {
+    std::map<UShort_t, Int_t> board_to_ref_idx;
+    for (Int_t i = 0; i < Int_t(long_channels.size()); i++) {
       if (long_channels[i].channel == board_channels[long_channels[i].board])
         board_to_ref_idx[long_channels[i].board] = i;
     }
 
-    std::map<UShort_t, std::size_t>::const_iterator ref_it =
+    std::map<UShort_t, Int_t>::const_iterator ref_it =
         board_to_ref_idx.find(ref_board);
     if (ref_it == board_to_ref_idx.end()) {
       std::cerr << "Reference board " << ref_board
                 << " ref channel is not in long-channel list" << std::endl;
-      for (std::size_t k = 0; k < long_graphs.size(); k++)
+      for (Int_t k = 0; k < Int_t(long_graphs.size()); k++)
         delete long_graphs[k];
       input_file->Close();
       delete input_file;
@@ -397,7 +396,7 @@ std::vector<TimeShiftResult> CalcTimeShiftsBeamMethod(
       if (board == ref_board)
         continue;
 
-      std::map<UShort_t, std::size_t>::const_iterator it =
+      std::map<UShort_t, Int_t>::const_iterator it =
           board_to_ref_idx.find(board);
       if (it == board_to_ref_idx.end()) {
         std::cout << "WARNING: Board " << board
@@ -448,7 +447,7 @@ std::vector<TimeShiftResult> CalcTimeShiftsBeamMethod(
       h_extreme_after->GetYaxis()->SetBinLabel(b + 1, label);
     }
 
-    for (std::size_t c = 0; c < long_channels.size(); c++) {
+    for (Int_t c = 0; c < Int_t(long_channels.size()); c++) {
       TGraph *g = long_graphs[c];
       Double_t shift_s = board_shifts_s[long_channels[c].board];
       for (Int_t k = 0; k < g->GetN(); k++) {
@@ -473,7 +472,7 @@ std::vector<TimeShiftResult> CalcTimeShiftsBeamMethod(
 
     delete h_extreme_before;
     delete h_extreme_after;
-    for (std::size_t k = 0; k < long_graphs.size(); k++)
+    for (Int_t k = 0; k < Int_t(long_graphs.size()); k++)
       delete long_graphs[k];
     input_file->Close();
     delete input_file;
@@ -533,7 +532,7 @@ void ApplyTimeShift(std::vector<TString> input_filepaths,
     src_tree->LoadBaskets();
     for (Long64_t j = 0; j < n_entries; j++) {
       src_tree->GetEntry(j);
-      shifted_timestamp = (board < res.board_shifts.size())
+      shifted_timestamp = (board < UShort_t(res.board_shifts.size()))
                               ? timestamp + res.board_shifts[board]
                               : timestamp;
       dst_tree->Fill();
@@ -635,7 +634,7 @@ void Timing() {
   std::vector<TString> filepaths, sorted_output_names, file_labels;
 
   std::vector<FileSpec> specs = BuildFileSpecs();
-  for (std::size_t k = 0; k < specs.size(); k++) {
+  for (Int_t k = 0; k < Int_t(specs.size()); k++) {
     filepaths.push_back(RawRootName(specs[k]));
     std::cout << "Will process: " << filepaths.back() << std::endl;
     sorted_output_names.push_back(SortedName(specs[k]));

@@ -1,15 +1,15 @@
+#include "BaselineNormalization.cpp"
 #include "Constants.hpp"
 #include "EventBuilderClassic.cpp"
 #include "EventBuilderNearestGrid.cpp"
 #include "InitUtils.hpp"
-#include "PipelineMutex.hpp"
+#include "Pipeline.hpp"
 #include "Timing.cpp"
 #include "TraceCreator.cpp"
 #include <TError.h>
 #include <TMath.h>
 #include <TROOT.h>
 #include <TSystem.h>
-#include <cstddef>
 #include <fstream>
 #include <future>
 #include <iostream>
@@ -41,6 +41,7 @@ Bool_t RunPipelineOneFile(FileSpec spec) {
     BuildEvents(sorted_name, classic_name, file_labels, kTRUE);
   }
 
+  BuildBaselineNormalization(events_name, file_labels, kTRUE);
   BuildTraces(events_name, file_labels, kFALSE, kTRUE);
 
   {
@@ -80,7 +81,7 @@ void PipelineRunner() {
           std::async(std::launch::async, RunPipelineOneFile, specs[k]));
     }
 
-    for (size_t k = 0; k < futures.size(); ++k) {
+    for (Int_t k = 0; k < Int_t(futures.size()); ++k) {
       Bool_t result = futures[k].get();
       if (!result) {
         std::cerr << "FAILED: " << FileLabel(specs[i + k]) << std::endl;

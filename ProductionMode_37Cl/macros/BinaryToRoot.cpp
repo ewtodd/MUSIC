@@ -2,13 +2,12 @@
 #include "Constants.hpp"
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
-#include "PipelineMutex.hpp"
+#include "Pipeline.hpp"
 #include <TFile.h>
 #include <TMath.h>
 #include <TROOT.h>
 #include <TSystem.h>
 #include <TTree.h>
-#include <cstddef>
 #include <future>
 #include <iostream>
 #include <map>
@@ -22,7 +21,7 @@ static std::mutex bintoroot_print_mutex;
 
 struct FlagSpec {
   UInt_t mask;
-  const char *name;
+  TString name;
 };
 
 static const FlagSpec kFlagSpecs[] = {
@@ -120,7 +119,7 @@ void BinaryToRoot() {
   std::vector<Job> remaining_jobs;
 
   std::vector<FileSpec> specs = BuildFileSpecs();
-  for (std::size_t k = 0; k < specs.size(); k++) {
+  for (Int_t k = 0; k < Int_t(specs.size()); k++) {
     const FileSpec &s = specs[k];
     TString raw_dir = base_path + Form("run_%d/RAW/", s.run);
     Job j;
@@ -135,7 +134,7 @@ void BinaryToRoot() {
   }
 
   std::map<Int_t, UShort_t> run_headers;
-  for (std::size_t k = 0; k < file0_jobs.size(); k++) {
+  for (Int_t k = 0; k < Int_t(file0_jobs.size()); k++) {
     const Job &j = file0_jobs[k];
     UShort_t header =
         InitUtils::ConvertCoMPASSBinToROOT(j.filepath, j.output_name, 0);
@@ -168,7 +167,7 @@ void BinaryToRoot() {
                                    run_headers[j.run]));
     }
 
-    for (size_t k = 0; k < futures.size(); ++k) {
+    for (Int_t k = 0; k < Int_t(futures.size()); ++k) {
       Bool_t result = futures[k].get();
       if (!result) {
         std::cerr << "FAILED: " << remaining_jobs[i + k].output_name

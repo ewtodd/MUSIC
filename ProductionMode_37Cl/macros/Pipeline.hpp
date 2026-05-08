@@ -1,9 +1,8 @@
-#ifndef PIPELINE_MUTEX_HPP
-#define PIPELINE_MUTEX_HPP
+#ifndef PIPELINE_HPP
+#define PIPELINE_HPP
 
 #include "Constants.hpp"
 #include <TString.h>
-#include <cstddef>
 #include <mutex>
 #include <vector>
 
@@ -21,7 +20,7 @@ struct FileSpec {
 // {_0, _1, ..., _<N_FILES-1>, ""}).
 inline std::vector<FileSpec> BuildFileSpecs() {
   std::vector<FileSpec> specs;
-  for (std::size_t r = 0; r < Constants::RUN_NUMBERS.size(); r++) {
+  for (Int_t r = 0; r < Int_t(Constants::RUN_NUMBERS.size()); r++) {
     Int_t run = Constants::RUN_NUMBERS[r];
     for (Int_t i = 1; i < Constants::N_FILES; i++) {
       FileSpec s;
@@ -58,6 +57,31 @@ inline TString EventsName(const FileSpec &s) {
 }
 inline TString FileLabel(const FileSpec &s) {
   return Form("run%d%s", s.run, s.suffix.Data());
+}
+
+// Resolves a user-supplied label ("16", "37", "run16", "Run_16",
+// "EventsNearest_Run16.root", ...) to a FileSpec. Returns spec with
+// run = -1 if no integer can be parsed out.
+inline FileSpec ResolveFileSpec(const TString &file_label) {
+  for (Int_t k = 0; k < Int_t(BuildFileSpecs().size()); k++) {
+    FileSpec s = BuildFileSpecs()[k];
+    if (FileLabel(s) == file_label)
+      return s;
+  }
+  FileSpec s;
+  s.run = -1;
+  s.suffix = "";
+  Int_t i = 0;
+  while (i < file_label.Length() &&
+         !(file_label[i] >= '0' && file_label[i] <= '9'))
+    i++;
+  Int_t j = i;
+  while (j < file_label.Length() &&
+         (file_label[j] >= '0' && file_label[j] <= '9'))
+    j++;
+  if (j > i)
+    s.run = TString(file_label(i, j - i)).Atoi();
+  return s;
 }
 
 #endif

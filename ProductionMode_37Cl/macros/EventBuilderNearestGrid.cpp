@@ -2,7 +2,7 @@
 #include "Constants.hpp"
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
-#include "PipelineMutex.hpp"
+#include "Pipeline.hpp"
 #include "PlottingUtils.hpp"
 #include <TCanvas.h>
 #include <TFile.h>
@@ -11,7 +11,6 @@
 #include <TROOT.h>
 #include <TSystem.h>
 #include <TTree.h>
-#include <cstddef>
 #include <cstdlib>
 #include <iostream>
 #include <map>
@@ -267,7 +266,7 @@ void BuildEventsNearestGrid(std::vector<TString> input_filenames,
       }
     }
 
-    std::size_t n_grids = grid_ts.size();
+    Int_t n_grids = Int_t(grid_ts.size());
     std::cout << "Found " << n_grids << " grid hits." << std::endl;
 
     if (n_grids == 0) {
@@ -279,7 +278,7 @@ void BuildEventsNearestGrid(std::vector<TString> input_filenames,
 
     std::vector<ULong64_t> midpoints;
     midpoints.reserve(n_grids - 1);
-    for (std::size_t g = 0; g + 1 < n_grids; g++) {
+    for (Int_t g = 0; g + 1 < n_grids; g++) {
       midpoints.push_back((grid_ts[g] + grid_ts[g + 1]) / 2);
     }
 
@@ -298,7 +297,7 @@ void BuildEventsNearestGrid(std::vector<TString> input_filenames,
     Long64_t events_with_cathode = 0;
     Bool_t cur_event_has_cathode = kFALSE;
 
-    std::size_t cur_event = 0;
+    Int_t cur_event = 0;
     NearestGrid::InitEvent(leftdE, rightdE, totaldE, all_timestamps, all_flags,
                            hits, cathode, grid, grid_ts[0], grid_energy[0],
                            grid_flags[0]);
@@ -320,7 +319,7 @@ void BuildEventsNearestGrid(std::vector<TString> input_filenames,
         continue;
       }
 
-      while (cur_event < midpoints.size() && timestamp > midpoints[cur_event]) {
+      while (cur_event < Int_t(midpoints.size()) && timestamp > midpoints[cur_event]) {
         if (cur_event_has_cathode)
           events_with_cathode++;
         NearestGrid::FinalizeEvent(
@@ -474,7 +473,7 @@ void BuildEventsNearestGrid(std::vector<TString> input_filenames,
     }
 
     if (complete_events > 0) {
-      std::cout << "\nComplete events with rejection-quality flags:"
+      std::cout << "Complete events with rejection-quality flags:"
                 << std::endl;
       std::cout << "  Fake events: " << complete_with_fake << " ("
                 << (100.0 * complete_with_fake / complete_events) << "%)"
@@ -488,7 +487,7 @@ void BuildEventsNearestGrid(std::vector<TString> input_filenames,
     }
 
     if (incomplete_events > 0) {
-      std::cout << "\nIncomplete events with rejection-quality flags:"
+      std::cout << "Incomplete events with rejection-quality flags:"
                 << std::endl;
       std::cout << "  Fake events: " << incomplete_with_fake << " ("
                 << (100.0 * incomplete_with_fake / incomplete_events) << "%)"
@@ -511,10 +510,9 @@ void EventBuilderNearestGrid() {
   std::vector<TString> filenames, output_names, file_labels;
 
   std::vector<FileSpec> specs = BuildFileSpecs();
-  for (std::size_t k = 0; k < specs.size(); k++) {
+  for (Int_t k = 0; k < Int_t(specs.size()); k++) {
     filenames.push_back(SortedName(specs[k]));
-    std::cout << "Processing file: " << std::endl;
-    std::cout << filenames.back() << std::endl;
+    std::cout << "Processing file: " << filenames.back() << std::endl;
     output_names.push_back(EventsNearestName(specs[k]));
     file_labels.push_back(FileLabel(specs[k]));
   }

@@ -1,14 +1,13 @@
 #include "Constants.hpp"
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
-#include "PipelineMutex.hpp"
+#include "Pipeline.hpp"
 #include "PlottingUtils.hpp"
 #include <TFile.h>
 #include <TH1F.h>
 #include <TROOT.h>
 #include <TSystem.h>
 #include <TTree.h>
-#include <cstddef>
 #include <iostream>
 #include <map>
 #include <utility>
@@ -63,7 +62,7 @@ void ExploreOneFile(TString input_filename) {
   Double_t span_s = (ts_max - ts_min) / 1e12;
   std::cout << "Time span: " << span_s << " s" << std::endl;
 
-  std::cout << std::endl << "Per-channel hit counts and rates" << std::endl;
+  std::cout << "Per-channel hit counts and rates" << std::endl;
   std::cout << "Board  Chan  Name                 Count        Rate (Hz)"
             << std::endl;
   for (std::map<std::pair<Int_t, Int_t>, Long64_t>::const_iterator it =
@@ -81,7 +80,6 @@ void ExploreOneFile(TString input_filename) {
               << TString::Format("%-20s", name.Data()) << " " << n << "    "
               << rate << std::endl;
   }
-  std::cout << std::endl;
 
   std::vector<std::pair<Int_t, Int_t>> candidates = {
       {0, 0},  // Cathode
@@ -95,7 +93,7 @@ void ExploreOneFile(TString input_filename) {
   std::map<std::pair<Int_t, Int_t>, TH1F *> hE;
   std::map<std::pair<Int_t, Int_t>, TH1F *> hDT;
   std::map<std::pair<Int_t, Int_t>, ULong64_t> last_ts;
-  for (std::size_t k = 0; k < candidates.size(); k++) {
+  for (Int_t k = 0; k < Int_t(candidates.size()); k++) {
     std::pair<Int_t, Int_t> bc = candidates[k];
     TString tag = TString::Format("B%d_Ch%d", bc.first, bc.second);
     hE[bc] = new TH1F(PlottingUtils::GetRandomName(),
@@ -121,10 +119,9 @@ void ExploreOneFile(TString input_filename) {
       std::cout << "  Pass 2: " << j << "/" << n_entries << std::endl;
   }
 
-  std::cout << std::endl
-            << "Per-candidate summary (energy + delta-T quantiles)"
+  std::cout << "Per-candidate summary (energy + delta-T quantiles)"
             << std::endl;
-  for (std::size_t k = 0; k < candidates.size(); k++) {
+  for (Int_t k = 0; k < Int_t(candidates.size()); k++) {
     std::pair<Int_t, Int_t> bc = candidates[k];
     TString tag = TString::Format("B%d_Ch%d", bc.first, bc.second);
     TString name;
@@ -157,7 +154,7 @@ void ExploreOneFile(TString input_filename) {
               << "  q99.99=" << qD[4] << std::endl;
   }
 
-  for (std::size_t k = 0; k < candidates.size(); k++) {
+  for (Int_t k = 0; k < Int_t(candidates.size()); k++) {
     std::pair<Int_t, Int_t> bc = candidates[k];
     TString tag = TString::Format("B%d_Ch%d", bc.first, bc.second);
 
@@ -180,13 +177,13 @@ void ExploreOneFile(TString input_filename) {
   std::cout << "Plots saved under plots/explore/" << std::endl;
 }
 
-void ExploreTiming() {
+void DiagnoseTiming() {
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
                                 TString(gSystem->pwd()) + "/plots",
                                 TString(gSystem->pwd()) + "/root_files");
 
   std::vector<FileSpec> specs = BuildFileSpecs();
-  for (std::size_t k = 0; k < specs.size(); k++) {
+  for (Int_t k = 0; k < Int_t(specs.size()); k++) {
     TString name = RawRootName(specs[k]);
     if (name.EndsWith(".root"))
       name.Remove(name.Length() - 5, 5);

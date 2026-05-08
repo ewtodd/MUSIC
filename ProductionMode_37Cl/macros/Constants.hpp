@@ -15,8 +15,6 @@ const Int_t N_FILES = 1;
 const Int_t N_BOARDS = 4;
 const Int_t N_CHANNELS = 16;
 
-const Int_t TRIGGER_THRESHOLD = 1000;
-
 const UShort_t REF_BOARD = 1;
 inline const std::vector<UShort_t> BOARD_CHANNELS = {12, 0, 0, 0};
 
@@ -25,15 +23,19 @@ const Double_t MAX_ENERGY = 1500;
 const Double_t OVERLAP_MARGIN_S = 1.0;
 const Double_t THRESH_DT_US = 175.0;
 
-const Int_t MAX_TRACE_SAVES = 20;
-const Bool_t SAVE_LR_TRACES = kFALSE;
-const Bool_t PER_STRIP_TRACE_LIMIT = kTRUE;
+const Int_t MAX_TRACE_SAVES = 10;
 
 const Int_t EVENT_BUILDER_BETWEEN_GRIDS = 0;
 const Int_t EVENT_BUILDER_NEAREST_GRID = 1;
 const Int_t EVENT_BUILDER_MODE = EVENT_BUILDER_NEAREST_GRID;
 
 const Bool_t REJECT_FLAGGED_EVENTS = kFALSE;
+
+const Long64_t BASELINE_MIN_ENTRIES = 500;
+const Int_t BASELINE_HIST_BINS = 4096;
+const Double_t BASELINE_HIST_MAX_ADC = 16384.0;
+
+const Long64_t REGION_TRACES_MAX_INDIV = 10000;
 
 inline const std::map<std::pair<Int_t, Int_t>, TString> channelMap = {
     {{0, 0}, "Cathode"}, {{0, 1}, ""},         {{0, 2}, "L2"},

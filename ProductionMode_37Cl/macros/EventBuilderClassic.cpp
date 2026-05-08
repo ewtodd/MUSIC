@@ -2,7 +2,7 @@
 #include "Constants.hpp"
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
-#include "PipelineMutex.hpp"
+#include "Pipeline.hpp"
 #include "PlottingUtils.hpp"
 #include <TCanvas.h>
 #include <TFile.h>
@@ -11,7 +11,6 @@
 #include <TROOT.h>
 #include <TSystem.h>
 #include <TTree.h>
-#include <cstddef>
 #include <cstdlib>
 #include <iostream>
 #include <map>
@@ -441,7 +440,7 @@ void BuildEvents(std::vector<TString> input_filenames,
     }
 
     if (complete_events > 0) {
-      std::cout << "\nComplete events with rejection-quality flags:"
+      std::cout << "Complete events with rejection-quality flags:"
                 << std::endl;
       std::cout << "  Fake events: " << complete_with_fake << " ("
                 << (100.0 * complete_with_fake / complete_events) << "%)"
@@ -455,7 +454,7 @@ void BuildEvents(std::vector<TString> input_filenames,
     }
 
     if (incomplete_events > 0) {
-      std::cout << "\nIncomplete events with rejection-quality flags:"
+      std::cout << "Incomplete events with rejection-quality flags:"
                 << std::endl;
       std::cout << "  Fake events: " << incomplete_with_fake << " ("
                 << (100.0 * incomplete_with_fake / incomplete_events) << "%)"
@@ -478,10 +477,9 @@ void EventBuilderClassic() {
   std::vector<TString> filenames, output_names, file_labels;
 
   std::vector<FileSpec> specs = BuildFileSpecs();
-  for (std::size_t k = 0; k < specs.size(); k++) {
+  for (Int_t k = 0; k < Int_t(specs.size()); k++) {
     filenames.push_back(SortedName(specs[k]));
-    std::cout << "Processing file: " << std::endl;
-    std::cout << filenames.back() << std::endl;
+    std::cout << "Processing file: " << filenames.back() << std::endl;
     output_names.push_back(EventsClassicName(specs[k]));
     file_labels.push_back(FileLabel(specs[k]));
   }
