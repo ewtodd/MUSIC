@@ -179,13 +179,13 @@
         ]
       },
       "locked": {
-        "lastModified": 1778121509,
-        "narHash": "sha256-zNnqt+/++gJRRaGh33VeXKTlI3TOtfT7io+GL3CKpYc=",
-        "path": "/home/e-work/Software/Analysis-Utilities",
+        "lastModified": 1778511594,
+        "narHash": "sha256-6ar+jXoNm2DhBit3XL8KftKdGfsO7Oc2ZSUFdJWyBYE=",
+        "path": "/home/e-work/Analysis-Utilities",
         "type": "path"
       },
       "original": {
-        "path": "/home/e-work/Software/Analysis-Utilities",
+        "path": "/home/e-work/Analysis-Utilities",
         "type": "path"
       }
     }

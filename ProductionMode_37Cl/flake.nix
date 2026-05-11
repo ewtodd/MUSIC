@@ -9,7 +9,7 @@
     };
     utils = {
       inputs.nixpkgs.follows = "nixpkgs";
-      url = "/home/e-work/Software/Analysis-Utilities";
+      url = "/home/e-work/Analysis-Utilities";
     };
   };
   outputs =
