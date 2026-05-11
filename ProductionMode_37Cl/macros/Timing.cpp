@@ -519,11 +519,13 @@ void ApplyTimeShift(std::vector<TString> input_filepaths,
     dst_file->cd();
     TTree *dst_tree = src_tree->CloneTree(0);
 
-    UShort_t board;
+    UShort_t board, channel;
     ULong64_t timestamp, shifted_timestamp;
     src_tree->SetBranchAddress("Board", &board);
+    src_tree->SetBranchAddress("Channel", &channel);
     src_tree->SetBranchAddress("Timestamp", &timestamp);
     dst_tree->SetBranchAddress("Board", &board);
+    dst_tree->SetBranchAddress("Channel", &channel);
     dst_tree->SetBranchAddress("Timestamp", &timestamp);
     dst_tree->Branch("ShiftedTimestamp", &shifted_timestamp,
                      "ShiftedTimestamp/l");
@@ -532,9 +534,11 @@ void ApplyTimeShift(std::vector<TString> input_filepaths,
     src_tree->LoadBaskets();
     for (Long64_t j = 0; j < n_entries; j++) {
       src_tree->GetEntry(j);
-      shifted_timestamp = (board < UShort_t(res.board_shifts.size()))
-                              ? timestamp + res.board_shifts[board]
-                              : timestamp;
+      Long64_t board_shift = (board < UShort_t(res.board_shifts.size()))
+                                 ? res.board_shifts[board]
+                                 : 0;
+      Long64_t ttf_offset = Constants::LookupTTFOffsetPs(board, channel);
+      shifted_timestamp = timestamp + board_shift - ttf_offset;
       dst_tree->Fill();
 
       if (j % 1000000 == 0) {
@@ -627,9 +631,10 @@ void Timing() {
   Bool_t reprocess_calculation = kTRUE;
   Bool_t reprocess_sorting = kTRUE;
 
+  const TString project_root = Paths::ProjectRootOf(__FILE__);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                TString(gSystem->pwd()) + "/plots",
-                                TString(gSystem->pwd()) + "/root_files");
+                                project_root + "/plots",
+                                project_root + "/root_files");
 
   std::vector<TString> filepaths, sorted_output_names, file_labels;
 

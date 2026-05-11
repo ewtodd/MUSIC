@@ -5,6 +5,7 @@
 #include <TROOT.h>
 #include <TString.h>
 #include <TTree.h>
+#include <cstdio>
 
 struct Baseline {
   Float_t scale[18];
@@ -47,6 +48,13 @@ inline CutXY ComputeCutXY(const TString &hist_name,
                             hist_name.Length());
     out.x = normalized[num.Atoi()];
     out.y = event_total;
+  } else if (hist_name.BeginsWith("h2_sum_s")) {
+    Int_t sX, sY, sI, sJ;
+    if (std::sscanf(hist_name.Data(), "h2_sum_s%d_s%d_vs_s%d_s%d", &sX, &sY,
+                    &sI, &sJ) == 4) {
+      out.x = normalized[sI] + normalized[sJ];
+      out.y = normalized[sX] + normalized[sY];
+    }
   }
   return out;
 }

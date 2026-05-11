@@ -53,11 +53,12 @@ Bool_t RunPipelineOneFile(FileSpec spec) {
 
 void PipelineRunner() {
   ROOT::EnableThreadSafety();
+  const TString project_root = Paths::ProjectRootOf(__FILE__);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                TString(gSystem->pwd()) + "/plots",
-                                TString(gSystem->pwd()) + "/root_files");
+                                project_root + "/plots",
+                                project_root + "/root_files");
 
-  TString log_path = TString(gSystem->pwd()) + "/pipeline.log";
+  TString log_path = project_root + "/pipeline.log";
   std::ofstream log_file(log_path.Data());
   std::streambuf *saved_cout = std::cout.rdbuf(log_file.rdbuf());
   std::streambuf *saved_cerr = std::cerr.rdbuf(log_file.rdbuf());

@@ -205,9 +205,10 @@ void DiagnoseOneFile(TString input_filename, TString file_label) {
 }
 
 void DiagnoseEvents() {
+  const TString project_root = Paths::ProjectRootOf(__FILE__);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                TString(gSystem->pwd()) + "/plots",
-                                TString(gSystem->pwd()) + "/root_files");
+                                project_root + "/plots",
+                                project_root + "/root_files");
 
   std::vector<FileSpec> specs = BuildFileSpecs();
   for (Int_t k = 0; k < Int_t(specs.size()); k++) {

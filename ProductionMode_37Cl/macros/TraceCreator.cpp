@@ -214,8 +214,9 @@ void TraceCreator() {
     file_labels.push_back(FileLabel(specs[k]));
   }
 
+  const TString project_root = Paths::ProjectRootOf(__FILE__);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                TString(gSystem->pwd()) + "/plots",
-                                TString(gSystem->pwd()) + "/root_files");
+                                project_root + "/plots",
+                                project_root + "/root_files");
   BuildTraces(input_output_filenames, file_labels, kTRUE, reprocess_initial);
 }

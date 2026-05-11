@@ -195,15 +195,29 @@ void BuildBaselineNormalization(std::vector<TString> input_filenames,
         long_count++;
       }
     }
-    if (long_count > 0 && peak[0] > 0) {
+    if (long_count > 0) {
       Double_t avg_long = long_sum / long_count;
-      scale[0] = Float_t(avg_long / peak[0]);
       std::cout << "Avg long-strip peak = " << avg_long << " ADC ("
                 << long_count << " strips)" << std::endl;
-      std::cout << "  Strip0 peak=" << peak[0] << " => scale=" << scale[0]
-                << std::endl;
+      if (peak[0] > 0) {
+        scale[0] = Float_t(avg_long / peak[0]);
+        std::cout << "  Strip0 peak=" << peak[0] << " => scale=" << scale[0]
+                  << std::endl;
+      } else {
+        std::cout << "  Skipping Strip0 gain match (missing peak)"
+                  << std::endl;
+      }
+      if (peak[17] > 0) {
+        scale[17] = Float_t(avg_long / peak[17]);
+        std::cout << "  Strip17 peak=" << peak[17] << " => scale=" << scale[17]
+                  << std::endl;
+      } else {
+        std::cout << "  Skipping Strip17 gain match (missing peak)"
+                  << std::endl;
+      }
     } else {
-      std::cout << "Skipping Strip0 gain match (missing peaks)" << std::endl;
+      std::cout << "Skipping end-strip gain match (no long-strip peaks)"
+                << std::endl;
     }
 
     file->cd();
@@ -230,8 +244,9 @@ void BaselineNormalization() {
     input_filenames.push_back(EventsName(specs[k]));
     file_labels.push_back(FileLabel(specs[k]));
   }
+  const TString project_root = Paths::ProjectRootOf(__FILE__);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                TString(gSystem->pwd()) + "/plots",
-                                TString(gSystem->pwd()) + "/root_files");
+                                project_root + "/plots",
+                                project_root + "/root_files");
   BuildBaselineNormalization(input_filenames, file_labels, kTRUE);
 }

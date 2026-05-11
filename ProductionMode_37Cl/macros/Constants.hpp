@@ -2,15 +2,26 @@
 #define CONSTANTS_HPP
 
 #include <TROOT.h>
+#include <TString.h>
+#include <TSystem.h>
 #include <map>
 #include <utility>
 #include <vector>
+
+namespace Paths {
+inline TString ProjectRootOf(const char *file) {
+  TString path = file;
+  path.ReplaceAll("/./", "/");
+  TString macros_dir = gSystem->DirName(path);
+  return gSystem->DirName(macros_dir);
+}
+} // namespace Paths
 
 namespace Constants {
 
 inline const std::vector<Int_t> RUN_NUMBERS = {
     37}; // {12, 13, 14, 16, 17, 18, 19, 20, 37};
-const Int_t N_FILES = 1;
+const Int_t N_FILES = 10;
 
 const Int_t N_BOARDS = 4;
 const Int_t N_CHANNELS = 16;
@@ -65,6 +76,24 @@ inline const std::map<std::pair<Int_t, Int_t>, TString> channelMap = {
     {{3, 9}, ""},        {{3, 10}, "R11"},     {{3, 11}, "SidE"},
     {{3, 12}, "R16"},    {{3, 13}, "R15"},     {{3, 14}, ""},
     {{3, 15}, "Strip17"}};
+
+// Per-channel CoMPASS TTF (trapezoidal trigger filter) delay relative to the
+// 896 ns baseline used by most channels. Subtract this from a channel's raw
+// Timestamp to put every channel on the same timing baseline. The board-level
+// beam-pattern shift is computed at second-scale resolution and does not see
+// these ns-scale offsets, so this correction is independent and complementary.
+// Pattern (from CoMPASS settings.xml across all runs): every named board-2
+// channel runs at TTF=992 ns; every other named channel runs at TTF=896 ns.
+inline const std::map<std::pair<Int_t, Int_t>, Long64_t> ttfOffsetPs = {
+    {{2, 0}, 96000},  {{2, 2}, 96000}, {{2, 4}, 96000},  {{2, 5}, 96000},
+    {{2, 6}, 96000},  {{2, 8}, 96000}, {{2, 10}, 96000}, {{2, 12}, 96000},
+    {{2, 13}, 96000}, {{2, 15}, 96000}};
+
+inline Long64_t LookupTTFOffsetPs(Int_t board, Int_t channel) {
+  std::map<std::pair<Int_t, Int_t>, Long64_t>::const_iterator it =
+      ttfOffsetPs.find(std::pair<Int_t, Int_t>(board, channel));
+  return (it == ttfOffsetPs.end()) ? 0 : it->second;
+}
 } // namespace Constants
 
 #endif

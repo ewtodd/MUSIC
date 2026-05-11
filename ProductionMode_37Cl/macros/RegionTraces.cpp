@@ -33,8 +33,8 @@ void RegionTracesOneFile(const TString &cut_name, const FileSpec &spec) {
 
   TDirectory *cuts_dir = file->GetDirectory("cuts");
   if (!cuts_dir) {
-    std::cerr << "[" << file_label << "] No cuts/ directory in "
-              << events_path << std::endl;
+    std::cerr << "[" << file_label << "] No cuts/ directory in " << events_path
+              << std::endl;
     file->Close();
     return;
   }
@@ -83,8 +83,8 @@ void RegionTracesOneFile(const TString &cut_name, const FileSpec &spec) {
       states.push_back(s);
     }
     if (states.empty()) {
-      std::cerr << "[" << file_label << "] No TCutG objects in "
-                << events_path << ":/cuts/" << std::endl;
+      std::cerr << "[" << file_label << "] No TCutG objects in " << events_path
+                << ":/cuts/" << std::endl;
       file->Close();
       return;
     }
@@ -164,9 +164,10 @@ void RegionTracesOneFile(const TString &cut_name, const FileSpec &spec) {
       std::cout << "  " << (j + 1) << "/" << n_entries << std::endl;
   }
 
+  const TString project_root = Paths::ProjectRootOf(__FILE__);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                TString(gSystem->pwd()) + "/plots",
-                                TString(gSystem->pwd()) + "/root_files");
+                                project_root + "/plots",
+                                project_root + "/root_files");
   TString out_subdir = "region_traces/" + file_label;
 
   for (Int_t i = 0; i < Int_t(states.size()); i++) {
@@ -197,7 +198,7 @@ void RegionTracesOneFile(const TString &cut_name, const FileSpec &spec) {
                          st.name.Data(), st.n_passed));
 
     TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
-    st.mg->GetYaxis()->SetRangeUser(0, 2000);
+    st.mg->GetYaxis()->SetRangeUser(0, 3000);
     st.mg->Draw("A");
     avg->Draw("L SAME");
     PlottingUtils::SaveFigure(c, "region_" + st.name, out_subdir,

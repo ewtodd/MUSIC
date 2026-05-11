@@ -103,9 +103,10 @@ Bool_t ConvertOneFile(TString filepath, TString output_name,
 
 void BinaryToRoot() {
   ROOT::EnableThreadSafety();
+  const TString project_root = Paths::ProjectRootOf(__FILE__);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                TString(gSystem->pwd()) + "/plots",
-                                TString(gSystem->pwd()) + "/root_files");
+                                project_root + "/plots",
+                                project_root + "/root_files");
 
   TString base_path = "/home/e-work/LabData/MUSIC/37Cl/";
 

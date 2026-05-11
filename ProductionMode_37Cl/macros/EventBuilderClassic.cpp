@@ -484,8 +484,9 @@ void EventBuilderClassic() {
     file_labels.push_back(FileLabel(specs[k]));
   }
 
+  const TString project_root = Paths::ProjectRootOf(__FILE__);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                TString(gSystem->pwd()) + "/plots",
-                                TString(gSystem->pwd()) + "/root_files");
+                                project_root + "/plots",
+                                project_root + "/root_files");
   BuildEvents(filenames, output_names, file_labels, reprocess_initial);
 }
