@@ -8,7 +8,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     utils = {
-      inputs.nixpkgs.follows = "nixpkgs";
       url = "/home/e-work/Analysis-Utilities";
     };
   };

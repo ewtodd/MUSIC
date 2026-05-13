@@ -8,7 +8,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     utils = {
-      inputs.nixpkgs.follows = "nixpkgs";
       url = "/home/e-work/Analysis-Utilities";
     };
   };
@@ -25,6 +24,7 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         analysis-utils = utils.packages.${system}.default;
+        root = utils.packages.${system}.root;
         agenixPkg = agenix.packages.${system}.default;
       in
       {
@@ -36,7 +36,7 @@
           ];
           buildInputs = [
             analysis-utils
-            pkgs.root
+            root
             pkgs.bash
             agenixPkg
           ];
