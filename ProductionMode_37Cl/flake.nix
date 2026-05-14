@@ -60,6 +60,7 @@
                   ln -s "$flake_root/.claude" "$dir/.claude"
                 fi
               done
+            alias clean-aclic='rm -f *_C.so *_C.d *_C_ACLiC_dict_rdict.pcm *_cpp.so *_cpp.d *_cpp_ACLiC_dict_rdict.pcm *_cxx.so *_cxx.d *_cxx_ACLiC_dict_rdict.pcm AutoDict_*'
             cd macros
           '';
         };
