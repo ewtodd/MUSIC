@@ -1,4 +1,4 @@
-#include "MulginCalibration.hpp"
+#include "Calibration.hpp"
 #include "Constants.hpp"
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
@@ -9,12 +9,12 @@
 #include <TFile.h>
 #include <TGraphErrors.h>
 #include <TLegend.h>
+#include <TMath.h>
 #include <TMinuit.h>
 #include <TROOT.h>
 #include <TString.h>
 #include <TSystem.h>
 #include <TTree.h>
-#include <TMath.h>
 #include <cstdio>
 #include <iostream>
 
@@ -29,45 +29,26 @@ struct RunConfig {
 };
 
 const Int_t kNRuns = 5;
-const Int_t kNPar = 5;
+const Int_t kNPar = 4; // B_A, C_A, B_B, C_B
 
 static Double_t g_E_true[kNRuns];
 static Double_t g_P_meas[kNRuns];
 static Double_t g_P_sig[kNRuns];
 static Int_t g_group[kNRuns];
 
+// par[0] = B_A, par[1] = C_A, par[2] = B_B, par[3] = C_B.
 static void MulginFcn(Int_t & /*npar*/, Double_t * /*gin*/, Double_t &f,
                       Double_t *par, Int_t /*iflag*/) {
   Double_t B_A = par[0];
   Double_t C_A = par[1];
   Double_t B_B = par[2];
   Double_t C_B = par[3];
-  Double_t gamma = par[4];
 
   Double_t chi2 = 0.0;
   for (Int_t i = 0; i < kNRuns; i++) {
     Double_t B = (g_group[i] == 0) ? B_A : B_B;
     Double_t C = (g_group[i] == 0) ? C_A : C_B;
-    Double_t P_pred = MulginPredictChannel(g_E_true[i], B, C, gamma);
-    Double_t r = (g_P_meas[i] - P_pred) / g_P_sig[i];
-    chi2 += r * r;
-  }
-  f = chi2;
-}
-
-// Constrained FCN: C_A == C_B (one shared pedestal). par layout is
-//   par[0] = B_A, par[1] = C (shared), par[2] = B_B, par[3] = gamma.
-static void MulginFcnSharedC(Int_t & /*npar*/, Double_t * /*gin*/, Double_t &f,
-                             Double_t *par, Int_t /*iflag*/) {
-  Double_t B_A = par[0];
-  Double_t C = par[1];
-  Double_t B_B = par[2];
-  Double_t gamma = par[3];
-
-  Double_t chi2 = 0.0;
-  for (Int_t i = 0; i < kNRuns; i++) {
-    Double_t B = (g_group[i] == 0) ? B_A : B_B;
-    Double_t P_pred = MulginPredictChannel(g_E_true[i], B, C, gamma);
+    Double_t P_pred = MulginPredictChannel(g_E_true[i], B, C);
     Double_t r = (g_P_meas[i] - P_pred) / g_P_sig[i];
     chi2 += r * r;
   }
@@ -109,15 +90,12 @@ static Double_t ComputeETrue(const RunConfig &cfg, Bool_t use_ppac,
   return E;
 }
 
-// Fit one PPAC hypothesis, print a compact report, render the plot, and write
-// the parameters + per-run inferred energies into the output ROOT file.
 static void RunOneHypothesis(Bool_t use_ppac, const RunConfig *runs,
                              const TString &mylar_file, const TString &ti_file,
                              TFile *out_file) {
   const TString hypo_tag = use_ppac ? "PPAC_IN" : "PPAC_OUT";
   const TString hypo_pretty = use_ppac ? "PPAC IN" : "PPAC OUT";
 
-  // Populate FCN globals.
   for (Int_t i = 0; i < kNRuns; i++) {
     g_E_true[i] = ComputeETrue(runs[i], use_ppac, mylar_file, ti_file);
     g_P_meas[i] = runs[i].adc_centroid;
@@ -125,7 +103,6 @@ static void RunOneHypothesis(Bool_t use_ppac, const RunConfig *runs,
     g_group[i] = runs[i].group;
   }
 
-  // Seed slopes/intercepts from a 2-point line per group, ignoring PHD.
   Double_t dEA = g_E_true[0] - g_E_true[1];
   Double_t slopeA = (dEA != 0.0) ? (g_P_meas[0] - g_P_meas[1]) / dEA : 160.0;
   Double_t intA = g_P_meas[0] - slopeA * g_E_true[0];
@@ -139,9 +116,9 @@ static void RunOneHypothesis(Bool_t use_ppac, const RunConfig *runs,
   Int_t ierflg = 0;
   Double_t arglist[10];
 
-  arglist[0] = 1.0; // chi-square errordef
+  arglist[0] = 1.0;
   minuit->mnexcm("SET ERR", arglist, 1, ierflg);
-  arglist[0] = -1.0; // quieter Minuit
+  arglist[0] = -1.0;
   minuit->mnexcm("SET PRI", arglist, 1, ierflg);
   arglist[0] = 0.0;
   minuit->mnexcm("SET NOW", arglist, 0, ierflg);
@@ -150,7 +127,6 @@ static void RunOneHypothesis(Bool_t use_ppac, const RunConfig *runs,
   minuit->mnparm(1, "C_A", intA, 50.0, 0.0, 0.0, ierflg);
   minuit->mnparm(2, "B_B", slopeB, 1.0, 0.0, 0.0, ierflg);
   minuit->mnparm(3, "C_B", intB, 50.0, 0.0, 0.0, ierflg);
-  minuit->mnparm(4, "gamma", 0.01, 0.001, -0.5, 0.5, ierflg);
 
   arglist[0] = 10000.0;
   arglist[1] = 0.01;
@@ -172,10 +148,10 @@ static void RunOneHypothesis(Bool_t use_ppac, const RunConfig *runs,
   minuit->mnstat(fmin, fedm, errdef, npari, nparx, istat);
   Int_t ndf = kNRuns - kNPar;
 
-  const char *pname[kNPar] = {"B_A", "C_A", "B_B", "C_B", "gamma"};
+  const char *pname[kNPar] = {"B_A", "C_A", "B_B", "C_B"};
   std::printf("Mulgin fit, %s:\n", hypo_pretty.Data());
   for (Int_t i = 0; i < kNPar; i++) {
-    std::printf("  %-6s = %14.6f  +/-  %12.6f\n", pname[i], par[i], err[i]);
+    std::printf("  %-5s = %14.6f  +/-  %12.6f\n", pname[i], par[i], err[i]);
   }
   if (ndf > 0) {
     std::printf("  chi2/ndf = %.4f / %d = %.4f\n", fmin, ndf, fmin / ndf);
@@ -188,88 +164,28 @@ static void RunOneHypothesis(Bool_t use_ppac, const RunConfig *runs,
   for (Int_t i = 0; i < kNRuns; i++) {
     Double_t B = (g_group[i] == 0) ? par[0] : par[2];
     Double_t C = (g_group[i] == 0) ? par[1] : par[3];
-    Double_t P_pred = MulginPredictChannel(g_E_true[i], B, C, par[4]);
+    Double_t P_pred = MulginPredictChannel(g_E_true[i], B, C);
     Double_t resid_sigma = (g_P_meas[i] - P_pred) / g_P_sig[i];
     std::printf("  %3d  %11.4f  %10.2f  %10.2f  %+7.3f\n", runs[i].run,
                 g_E_true[i], g_P_meas[i], P_pred, resid_sigma);
   }
 
-  // Cross-check: project run 25 onto group A's gain via numerical inverse.
-  Double_t E_25_on_A = MulginInverseEnergy(g_P_meas[4], par[0], par[1], par[4]);
+  Double_t E_25_on_A = MulginInverseEnergy(g_P_meas[4], par[0], par[1]);
   std::printf("  run 25 on group-A gain: inferred E = %.4f MeV (true E = "
               "%.4f)\n",
               E_25_on_A, g_E_true[4]);
 
-  // ── Diagnostic: B↔C correlation within each gain group ──────────────────
-  // Strong anti-correlation here means the apparent C_A vs C_B "tension"
-  // could be absorbed by trading slope against intercept along the
-  // degeneracy direction.
   Double_t emat[kNPar * kNPar];
   minuit->mnemat(emat, kNPar);
   Double_t den_A = TMath::Sqrt(emat[0 * kNPar + 0] * emat[1 * kNPar + 1]);
   Double_t den_B = TMath::Sqrt(emat[2 * kNPar + 2] * emat[3 * kNPar + 3]);
   Double_t rho_BA_CA = (den_A > 0.0) ? emat[0 * kNPar + 1] / den_A : 0.0;
   Double_t rho_BB_CB = (den_B > 0.0) ? emat[2 * kNPar + 3] / den_B : 0.0;
-  std::printf("  corr(B_A, C_A) = %+.4f   corr(B_B, C_B) = %+.4f\n",
-              rho_BA_CA, rho_BB_CB);
-  std::printf("  C_A - C_B = %+.4f  (err %.4f)\n",
-              par[1] - par[3], TMath::Sqrt(err[1] * err[1] + err[3] * err[3]));
+  std::printf("  corr(B_A, C_A) = %+.4f   corr(B_B, C_B) = %+.4f\n", rho_BA_CA,
+              rho_BB_CB);
+  std::printf("  C_A - C_B = %+.4f  (err %.4f)\n\n", par[1] - par[3],
+              TMath::Sqrt(err[1] * err[1] + err[3] * err[3]));
 
-  // ── Constrained fit: C_A == C_B (one shared pedestal) ───────────────────
-  const Int_t kNParShared = 4;
-  TMinuit *minuit2 = new TMinuit(kNParShared);
-  minuit2->SetFCN(MulginFcnSharedC);
-  Int_t ierflg2 = 0;
-  Double_t arglist2[10];
-  arglist2[0] = 1.0;
-  minuit2->mnexcm("SET ERR", arglist2, 1, ierflg2);
-  arglist2[0] = -1.0;
-  minuit2->mnexcm("SET PRI", arglist2, 1, ierflg2);
-  arglist2[0] = 0.0;
-  minuit2->mnexcm("SET NOW", arglist2, 0, ierflg2);
-
-  Double_t C_seed = 0.5 * (par[1] + par[3]);
-  minuit2->mnparm(0, "B_A", par[0], 1.0, 0.0, 0.0, ierflg2);
-  minuit2->mnparm(1, "C", C_seed, 50.0, 0.0, 0.0, ierflg2);
-  minuit2->mnparm(2, "B_B", par[2], 1.0, 0.0, 0.0, ierflg2);
-  minuit2->mnparm(3, "gamma", par[4], 0.001, -0.5, 0.5, ierflg2);
-
-  arglist2[0] = 10000.0;
-  arglist2[1] = 0.01;
-  minuit2->mnexcm("MIGRAD", arglist2, 2, ierflg2);
-  minuit2->mnexcm("HESSE", arglist2, 1, ierflg2);
-
-  Double_t par_s[kNParShared];
-  Double_t err_s[kNParShared];
-  for (Int_t i = 0; i < kNParShared; i++) {
-    minuit2->GetParameter(i, par_s[i], err_s[i]);
-  }
-  Double_t fmin_s = 0.0;
-  Double_t fedm_s = 0.0;
-  Double_t errdef_s = 0.0;
-  Int_t npari_s = 0;
-  Int_t nparx_s = 0;
-  Int_t istat_s = 0;
-  minuit2->mnstat(fmin_s, fedm_s, errdef_s, npari_s, nparx_s, istat_s);
-  Int_t ndf_s = kNRuns - kNParShared;
-
-  const char *pname_s[kNParShared] = {"B_A", "C", "B_B", "gamma"};
-  std::printf("  Constrained fit (C_A = C_B):\n");
-  for (Int_t i = 0; i < kNParShared; i++) {
-    std::printf("    %-5s = %14.6f  +/-  %12.6f\n", pname_s[i], par_s[i],
-                err_s[i]);
-  }
-  if (ndf_s > 0) {
-    std::printf("    chi2/ndf = %.4f / %d = %.4f\n", fmin_s, ndf_s,
-                fmin_s / ndf_s);
-  } else {
-    std::printf("    chi2 = %.4g (ndf = 0)\n", fmin_s);
-  }
-  std::printf("    Delta chi2 vs free fit = %+.4f (1 extra constraint)\n\n",
-              fmin_s - fmin);
-  delete minuit2;
-
-  // ── Persist parameters to ROOT file ──────────────────────────────────────
   out_file->cd();
   const TString tree_name = TString("MulginFit_") + hypo_tag;
   TTree *fit_tree = new TTree(tree_name, tree_name);
@@ -278,7 +194,6 @@ static void RunOneHypothesis(Bool_t use_ppac, const RunConfig *runs,
   Double_t C_A = par[1], C_A_err = err[1];
   Double_t B_B = par[2], B_B_err = err[2];
   Double_t C_B = par[3], C_B_err = err[3];
-  Double_t gamma = par[4], gamma_err = err[4];
   Double_t chi2 = fmin;
   Int_t ndf_out = ndf;
   fit_tree->Branch("IncludePPAC", &include_ppac, "IncludePPAC/O");
@@ -290,14 +205,11 @@ static void RunOneHypothesis(Bool_t use_ppac, const RunConfig *runs,
   fit_tree->Branch("B_B_err", &B_B_err, "B_B_err/D");
   fit_tree->Branch("C_B", &C_B, "C_B/D");
   fit_tree->Branch("C_B_err", &C_B_err, "C_B_err/D");
-  fit_tree->Branch("Gamma", &gamma, "Gamma/D");
-  fit_tree->Branch("Gamma_err", &gamma_err, "Gamma_err/D");
   fit_tree->Branch("Chi2", &chi2, "Chi2/D");
   fit_tree->Branch("Ndf", &ndf_out, "Ndf/I");
   fit_tree->Fill();
   fit_tree->Write(tree_name, TObject::kOverwrite);
 
-  // ── Plot ─────────────────────────────────────────────────────────────────
   Int_t nA = 0;
   Int_t nB = 0;
   for (Int_t i = 0; i < kNRuns; i++) {
@@ -349,8 +261,7 @@ static void RunOneHypothesis(Bool_t use_ppac, const RunConfig *runs,
   gA->Draw("AP");
   gB->Draw("P SAME");
 
-  TString formula =
-      Form("[0]*(x - 0.55*x/(1.0 + 0.37568*x) - %.10f*x) + [1]", par[4]);
+  TString formula = "[0]*(x - 0.55*x/(1.0 + 0.37568*x)) + [1]";
   TF1 *fA = new TF1(Form("fA_%s", hypo_tag.Data()), formula, xlo, xhi);
   fA->SetParameter(0, par[0]);
   fA->SetParameter(1, par[1]);
@@ -378,7 +289,8 @@ static void RunOneHypothesis(Bool_t use_ppac, const RunConfig *runs,
     leg->AddEntry((TObject *)0,
                   Form("%s = %.4f #pm %.4f", pname[i], par[i], err[i]), "");
   }
-  leg->AddEntry((TObject *)0, Form("Gain X = %.3f ", C_A / C_B), "");
+  Double_t gain_X = (par[2] != 0.0) ? par[0] / par[2] : 0.0;
+  leg->AddEntry((TObject *)0, Form("Gain X = %.3f ", gain_X), "");
   leg->Draw();
 
   cal_canvas->Update();
@@ -388,7 +300,7 @@ static void RunOneHypothesis(Bool_t use_ppac, const RunConfig *runs,
   delete minuit;
 }
 
-void MulginCalibration() {
+void Calibration() {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
                                 project_root + "/root_files");

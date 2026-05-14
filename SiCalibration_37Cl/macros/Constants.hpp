@@ -18,7 +18,7 @@ inline TString ProjectRootOf(const char *file) {
 
 namespace Constants {
 
-const Bool_t INCLUDE_PPAC = kTRUE;
+const Bool_t INCLUDE_PPAC = kFALSE;
 
 // Energy (MeV) that the 37Cl beam has when it reaches the Si detector for
 // each zero-pressure anchor run.  PPAC_OUT = PPAC not in beam; PPAC_IN =

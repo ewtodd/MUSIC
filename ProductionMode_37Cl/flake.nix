@@ -24,7 +24,6 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         analysis-utils = utils.packages.${system}.default;
-        root = utils.packages.${system}.root;
         agenixPkg = agenix.packages.${system}.default;
       in
       {
@@ -36,7 +35,7 @@
           ];
           buildInputs = [
             analysis-utils
-            root
+            pkgs.root
             pkgs.bash
             agenixPkg
           ];

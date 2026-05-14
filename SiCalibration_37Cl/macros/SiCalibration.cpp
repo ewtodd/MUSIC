@@ -100,7 +100,6 @@ void SiCalibration() {
   }
   Double_t B_A = 0, B_A_err = 0, C_A = 0, C_A_err = 0;
   Double_t B_B = 0, B_B_err = 0, C_B = 0, C_B_err = 0;
-  Double_t gamma = 0, gamma_err = 0;
   mulgin_tree->SetBranchAddress("B_A", &B_A);
   mulgin_tree->SetBranchAddress("B_A_err", &B_A_err);
   mulgin_tree->SetBranchAddress("C_A", &C_A);
@@ -109,8 +108,6 @@ void SiCalibration() {
   mulgin_tree->SetBranchAddress("B_B_err", &B_B_err);
   mulgin_tree->SetBranchAddress("C_B", &C_B);
   mulgin_tree->SetBranchAddress("C_B_err", &C_B_err);
-  mulgin_tree->SetBranchAddress("Gamma", &gamma);
-  mulgin_tree->SetBranchAddress("Gamma_err", &gamma_err);
   mulgin_tree->GetEntry(0);
 
   std::printf("  Mulgin params (%s):\n", hypo_tag.Data());
@@ -118,7 +115,6 @@ void SiCalibration() {
               B_A_err, C_A, C_A_err);
   std::printf("    Group B: B = %.4f +/- %.4f   C = %.4f +/- %.4f\n", B_B,
               B_B_err, C_B, C_B_err);
-  std::printf("    gamma  = %.6f +/- %.6f\n", gamma, gamma_err);
 
   // ── Invert: ADC channel → energy (MeV), per gain group ───────────────────
   // mu_err is propagated through dE/d(adc); B/C/gamma errors are not folded
@@ -133,9 +129,9 @@ void SiCalibration() {
     Double_t B = group_A ? B_A : B_B;
     Double_t C = group_A ? C_A : C_B;
     Double_t adc = fits[run].mu;
-    energy_mev[run] = MulginInverseEnergy(adc, B, C, gamma);
+    energy_mev[run] = MulginInverseEnergy(adc, B, C);
     energy_err_mev[run] =
-        MulginInverseEnergyError(adc, B, C, gamma, fits[run].mu_err);
+        MulginInverseEnergyError(adc, B, C, fits[run].mu_err);
   }
 
   mulgin_file->Close();

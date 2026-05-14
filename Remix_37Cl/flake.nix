@@ -19,7 +19,6 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         analysis-utils = utils.packages.${system}.default;
-        root = utils.packages.${system}.root;
       in
       {
         devShells.default = pkgs.mkShell {
@@ -30,7 +29,7 @@
           ];
           buildInputs = [
             analysis-utils
-            root
+            pkgs.root
           ];
           shellHook = ''
             echo "Analysis-Utilities version: ${analysis-utils.version}"

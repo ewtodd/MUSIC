@@ -118,6 +118,22 @@
         "type": "github"
       }
     },
+    "nixpkgs_2": {
+      "locked": {
+        "lastModified": 1778443072,
+        "narHash": "sha256-zi7/fsqM/kFdNuED//4WOCUtezGtKKqRNORjMvfwjnA=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "da5ad661ba4e5ef59ba743f0d112cbc30e474f32",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "agenix": "agenix",
@@ -174,13 +190,11 @@
     "utils": {
       "inputs": {
         "flake-utils": "flake-utils_2",
-        "nixpkgs": [
-          "nixpkgs"
-        ]
+        "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1778521565,
-        "narHash": "sha256-PCRIKFp9Lq2HpIeAa/lNs14W36f0nnY8y3xnlq3KKwQ=",
+        "lastModified": 1778727454,
+        "narHash": "sha256-AC0q7L6k8Hjl0vMnYQ7WnuwXezarQBRRBtCzKfM9QoY=",
         "path": "/home/e-work/Analysis-Utilities",
         "type": "path"
       },
