@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Reformat staged C/C++ files with clang-format and re-stage them.
+set -e
+
+STYLE='{BasedOnStyle: LLVM, BreakStringLiterals: false}'
+
+files=$(git diff --cached --name-only --diff-filter=ACMR \
+        | grep -E '\.(c|cc|cpp|cxx|h|hpp|hxx)$' || true)
+
+[ -z "$files" ] && exit 0
+
+for f in $files; do
+    clang-format -i --style="$STYLE" "$f"
+    git add "$f"
+done

@@ -33,7 +33,8 @@ void ResetEvent(Int_t leftdE[18], Int_t rightdE[18], Int_t totaldE[18],
     all_flags[k] = 0;
     hits[k] = 0;
   }
-  cathode = grid = 0;
+  cathode = -1;
+  grid = 0;
 }
 
 Int_t GetStripNumber(TString map_name) {
@@ -212,7 +213,7 @@ void BuildEvents(std::vector<TString> input_filenames,
     Int_t cathode, grid;
     Bool_t is_complete;
 
-    TTree *output_tree = new TTree("event", "MUSIC events");
+    TTree *output_tree = new TTree("events", "MUSIC events");
     output_tree->Branch("LeftdE", leftdE, "LeftdE[18]/I");
     output_tree->Branch("RightdE", rightdE, "RightdE[18]/I");
     output_tree->Branch("TotaldE", totaldE, "TotaldE[18]/I");
@@ -335,9 +336,12 @@ void BuildEvents(std::vector<TString> input_filenames,
           hits[33]++;
 
         } else if (map_name == "Cathode") {
-          cathode += energy;
-          if (hits[34] == 0)
+          if (hits[34] == 0) {
+            cathode = energy;
             all_timestamps[34] = timestamp;
+          } else {
+            cathode += energy;
+          }
           all_flags[34] |= flags;
           hits[34]++;
           cur_event_has_cathode = kTRUE;
@@ -362,7 +366,7 @@ void BuildEvents(std::vector<TString> input_filenames,
     }
 
     output_file->cd();
-    output_tree->Write("event", TObject::kOverwrite);
+    output_tree->Write("events", TObject::kOverwrite);
     h_music->Write("", TObject::kOverwrite);
     h_music_clean->Write("", TObject::kOverwrite);
     h_music_flagged->Write("", TObject::kOverwrite);
@@ -432,16 +436,15 @@ void BuildEvents(std::vector<TString> input_filenames,
     if (Constants::REJECT_FLAGGED_EVENTS) {
       Int_t stored = complete_events - complete_rejected;
       std::cout << "Stored events (REJECT_FLAGGED_EVENTS=true): " << stored
-                << " (" << (complete_events > 0
-                                ? 100.0 * stored / complete_events
-                                : 0.0)
+                << " ("
+                << (complete_events > 0 ? 100.0 * stored / complete_events
+                                        : 0.0)
                 << "% of complete; " << complete_rejected << " rejected)"
                 << std::endl;
     }
 
     if (complete_events > 0) {
-      std::cout << "Complete events with rejection-quality flags:"
-                << std::endl;
+      std::cout << "Complete events with rejection-quality flags:" << std::endl;
       std::cout << "  Fake events: " << complete_with_fake << " ("
                 << (100.0 * complete_with_fake / complete_events) << "%)"
                 << std::endl;
@@ -485,8 +488,7 @@ void EventBuilderClassic() {
   }
 
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                project_root + "/plots",
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
                                 project_root + "/root_files");
   BuildEvents(filenames, output_names, file_labels, reprocess_initial);
 }

@@ -12,7 +12,6 @@
 #include <TTree.h>
 #include <iostream>
 #include <mutex>
-#include <ostream>
 #include <vector>
 
 void BuildTraces(std::vector<TString> input_output_filenames,
@@ -35,20 +34,21 @@ void BuildTraces(std::vector<TString> input_output_filenames,
     }
 
     TTree *input_output_tree =
-        static_cast<TTree *>(input_output_file->Get("event"));
+        static_cast<TTree *>(input_output_file->Get("event_MeV"));
     if (!input_output_tree) {
-      std::cerr << "No event tree in: " << input_output_filepath << std::endl;
+      std::cerr << "Error getting tree from: " << input_output_filepath
+                << std::endl;
       input_output_file->Close();
       continue;
     }
 
     Float_t leftdE[18], rightdE[18], totaldE[18];
-    Float_t cathode, grid;
+    Float_t cathode;
 
-    input_output_tree->SetBranchAddress("LeftdEMeV", leftdE);
-    input_output_tree->SetBranchAddress("RightdEMeV", rightdE);
-    input_output_tree->SetBranchAddress("TotaldEMeV", totaldE);
-    input_output_tree->SetBranchAddress("CathodeMeV", &cathode);
+    input_output_tree->SetBranchAddress("LeftdE", leftdE);
+    input_output_tree->SetBranchAddress("RightdE", rightdE);
+    input_output_tree->SetBranchAddress("TotaldE", totaldE);
+    input_output_tree->SetBranchAddress("Cathode", &cathode);
 
     std::cout << "Loading baskets into memory..." << std::endl;
     input_output_tree->LoadBaskets();
@@ -58,7 +58,7 @@ void BuildTraces(std::vector<TString> input_output_filenames,
               << std::endl;
 
     TH2D *h2_StripE_vs_TotalE[18];
-    for (Int_t s = 0; s < 18; s++) {
+    for (Int_t s = 0; s < Constants::N_STRIPS; s++) {
       h2_StripE_vs_TotalE[s] =
           new TH2D(Form("h2_StripE_vs_TotalE_s%d", s),
                    Form("Strip %d energy vs event total energy;"
@@ -75,22 +75,22 @@ void BuildTraces(std::vector<TString> input_output_filenames,
       input_output_tree->GetEntry(j);
 
       Double_t event_total = 0.0;
-      for (Int_t s = 0; s < 18; s++)
+      for (Int_t s = 0; s < Constants::N_STRIPS; s++)
         event_total += Double_t(totaldE[s]);
 
-      for (Int_t s = 0; s < 18; s++)
+      for (Int_t s = 0; s < Constants::N_STRIPS; s++)
         h2_StripE_vs_TotalE[s]->Fill(Double_t(totaldE[s]), event_total);
 
       if (save_plots && save_count < Constants::MAX_TRACE_SAVES) {
         save_count++;
 
-        TGraph *TraceTotal = new TGraph(18);
-        TGraph *TraceLeft = new TGraph(18);
-        TGraph *TraceRight = new TGraph(18);
-        for (Int_t k = 0; k < 18; k++) {
+        TGraph *TraceTotal = new TGraph(Constants::N_STRIPS);
+        TGraph *TraceLeft = new TGraph(Constants::N_STRIPS);
+        TGraph *TraceRight = new TGraph(Constants::N_STRIPS);
+        for (Int_t k = 0; k < Constants::N_STRIPS; k++) {
           TraceTotal->SetPoint(k, k, Double_t(totaldE[k]));
-          // Long-side-only after BeamCalibration: short side is 0; Strip0/17
-          // sit in TotaldE alone.
+          // Sim populates Left/Right only on indices 1..16; 0 and 17 are
+          // single-ended guard strips and live in TotaldE alone.
           Double_t l = (k == 0 || k == 17) ? 0.0 : Double_t(leftdE[k]);
           Double_t r = (k == 0 || k == 17) ? 0.0 : Double_t(rightdE[k]);
           TraceLeft->SetPoint(k, k, l);
@@ -140,13 +140,13 @@ void BuildTraces(std::vector<TString> input_output_filenames,
     }
 
     input_output_file->cd();
-    for (Int_t s = 0; s < 18; s++)
+    for (Int_t s = 0; s < Constants::N_STRIPS; s++)
       h2_StripE_vs_TotalE[s]->Write("", TObject::kOverwrite);
     {
       std::lock_guard<std::mutex> lock(g_plot_mutex);
       TString summary_subdir = "trace_summary/" + file_label;
 
-      for (Int_t s = 0; s < 18; s++) {
+      for (Int_t s = 0; s < Constants::N_STRIPS; s++) {
         TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
         PlottingUtils::ConfigureAndDraw2DHistogram(h2_StripE_vs_TotalE[s], c);
         h2_StripE_vs_TotalE[s]->GetYaxis()->SetTitleOffset(1.3);
@@ -155,7 +155,7 @@ void BuildTraces(std::vector<TString> input_output_filenames,
         delete c;
       }
     }
-    for (Int_t s = 0; s < 18; s++)
+    for (Int_t s = 0; s < Constants::N_STRIPS; s++)
       delete h2_StripE_vs_TotalE[s];
 
     input_output_file->Write("", TObject::kOverwrite);
@@ -171,7 +171,7 @@ void TraceCreator() {
 
   std::vector<FileSpec> specs = BuildFileSpecs();
   for (Int_t k = 0; k < Int_t(specs.size()); k++) {
-    input_output_filenames.push_back(EventsName(specs[k]));
+    input_output_filenames.push_back(TracesName(specs[k]));
     std::cout << "Processing file: " << input_output_filenames.back()
               << std::endl;
     file_labels.push_back(FileLabel(specs[k]));

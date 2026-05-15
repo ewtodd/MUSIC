@@ -21,7 +21,7 @@ namespace Constants {
 
 inline const std::vector<Int_t> RUN_NUMBERS = {
     37}; // {12, 13, 14, 16, 17, 18, 19, 20, 37};
-const Int_t N_FILES = 10;
+const Int_t N_FILES = 1;
 
 const Int_t N_BOARDS = 4;
 const Int_t N_CHANNELS = 16;
@@ -47,6 +47,13 @@ const Int_t BASELINE_HIST_BINS = 4096;
 const Double_t BASELINE_HIST_MAX_ADC = 16384.0;
 
 const Long64_t REGION_TRACES_MAX_INDIV = 10000;
+
+// TraceCreator axis ranges in MeV (post-BeamCalibration; data lives on the
+// `event_MeV` tree).
+const Double_t STRIP_E_MIN_MEV = -0.2;
+const Double_t STRIP_E_MAX_MEV = 5.0;
+const Double_t TOTAL_E_MIN_MEV = 10;
+const Double_t TOTAL_E_MAX_MEV = 60.0;
 
 inline const std::map<std::pair<Int_t, Int_t>, TString> channelMap = {
     {{0, 0}, "Cathode"}, {{0, 1}, ""},         {{0, 2}, "L2"},
