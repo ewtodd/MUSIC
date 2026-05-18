@@ -15,6 +15,7 @@ settings.json
 __pycache__
 *.pdf
 *.root
+*.header
 *.a
 *.so
 *.o

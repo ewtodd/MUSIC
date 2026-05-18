@@ -20,8 +20,12 @@ inline TString ProjectRootOf(const char *file) {
 namespace Constants {
 
 inline const std::vector<Int_t> RUN_NUMBERS = {
-    37}; // {12, 13, 14, 16, 17, 18, 19, 20, 37};
+    16}; // {12, 13, 14, 16, 17, 18, 19, 20, 37};
+
+// N_FILES = -1 for all
 const Int_t N_FILES = 1;
+
+inline const TString COMPASS_BASE_DIR = "/home/e-work/LabData/MUSIC/37Cl/";
 
 const Int_t N_BOARDS = 4;
 const Int_t N_CHANNELS = 16;
@@ -33,14 +37,39 @@ const Double_t MIN_ENERGY = 300;
 const Double_t MAX_ENERGY = 1500;
 const Double_t OVERLAP_MARGIN_S = 1.0;
 const Double_t THRESH_DT_US = 175.0;
+const Double_t TIMING_MAX_ABS_SHIFT_S = 1.5;
 
 const Int_t MAX_TRACE_SAVES = 10;
 
-const Int_t EVENT_BUILDER_BETWEEN_GRIDS = 0;
-const Int_t EVENT_BUILDER_NEAREST_GRID = 1;
-const Int_t EVENT_BUILDER_MODE = EVENT_BUILDER_NEAREST_GRID;
-
 const Bool_t REJECT_FLAGGED_EVENTS = kFALSE;
+
+// Post EventBuilder only!
+const Bool_t IGNORE_SHORT_STRIPS = kTRUE;
+
+// Fused pipeline stage controls.
+const Bool_t SKIP_EXISTING = kTRUE;
+const Bool_t RUN_BEAM_CALIBRATION = kFALSE;
+const Bool_t RUN_TRACES = kTRUE;
+
+const Int_t MAX_FUSED_WORKERS = 16;
+
+const Bool_t USE_NEAREST_TO_GRID = kTRUE;
+const Bool_t SAVE_PER_CHANNEL_TIMESTAMPS_FLAGS = kFALSE;
+
+inline Char_t LongAnodeSide(Int_t strip) {
+  if (strip < 1 || strip > 16)
+    return ' ';
+  return (strip % 2 == 1) ? 'L' : 'R';
+}
+
+inline Bool_t IsLongSide(Int_t strip, Char_t side) {
+  return strip >= 1 && strip <= 16 && side == LongAnodeSide(strip);
+}
+
+inline Bool_t IsShortSide(Int_t strip, Char_t side) {
+  return strip >= 1 && strip <= 16 && (side == 'L' || side == 'R') &&
+         side != LongAnodeSide(strip);
+}
 
 const Long64_t BASELINE_MIN_ENTRIES = 500;
 const Int_t BASELINE_HIST_BINS = 4096;
@@ -48,12 +77,15 @@ const Double_t BASELINE_HIST_MAX_ADC = 16384.0;
 
 const Long64_t REGION_TRACES_MAX_INDIV = 10000;
 
-// TraceCreator axis ranges in MeV (post-BeamCalibration; data lives on the
-// `event_MeV` tree).
 const Double_t STRIP_E_MIN_MEV = -0.2;
 const Double_t STRIP_E_MAX_MEV = 5.0;
 const Double_t TOTAL_E_MIN_MEV = 10;
 const Double_t TOTAL_E_MAX_MEV = 60.0;
+
+const Double_t STRIP_E_MIN_ADC = 0.0;
+const Double_t STRIP_E_MAX_ADC = 5500.0;
+const Double_t TOTAL_E_MIN_ADC = 0.0;
+const Double_t TOTAL_E_MAX_ADC = 60000.0;
 
 inline const std::map<std::pair<Int_t, Int_t>, TString> channelMap = {
     {{0, 0}, "Cathode"}, {{0, 1}, ""},         {{0, 2}, "L2"},

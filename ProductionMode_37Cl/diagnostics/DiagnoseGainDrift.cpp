@@ -1,3 +1,4 @@
+R__ADD_INCLUDE_PATH(../ macros)
 #include "Constants.hpp"
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
@@ -25,8 +26,6 @@ const Int_t HIST_BINS = 400;
 const Double_t HIST_MIN = 0.0;
 const Double_t HIST_MAX = 10000;
 
-// Fit windows for the lowest peak, by channel group. The skew-normal fit
-// looks for the max bin inside [lo, hi] and seeds mu there.
 const Double_t FIT_LO_S0 = 1200.0;
 const Double_t FIT_HI_S0 = 6000.0;
 const Double_t FIT_LO_LR = 500.0;
@@ -34,17 +33,6 @@ const Double_t FIT_HI_LR = 1200.0;
 const Double_t FIT_LO_S17 = 700.0;
 const Double_t FIT_HI_S17 = 1800.0;
 
-// Skew-normal + linear background.
-//   f(x) = A * exp(-z^2/2) * (1 + erf(alpha*z/sqrt(2))) + bkg_const +
-//   bkg_slope*x
-// where z = (x - xi) / omega.
-// Reduces to a Gaussian when alpha = 0; alpha controls one-sided skew.
-//   par[0] = A          (amplitude scale; peak height ~ 2*A near alpha=0)
-//   par[1] = xi         (location)
-//   par[2] = omega      (scale, > 0)
-//   par[3] = alpha      (shape; 0 = symmetric)
-//   par[4] = bkg const
-//   par[5] = bkg slope
 inline double SkewNormalPlusBkg(double *x, double *p) {
   double bkg = p[4] + p[5] * x[0];
   if (p[2] <= 0)
@@ -129,9 +117,6 @@ inline PeakFit FitLowestPeak(TH1D *h, Double_t fit_lo, Double_t fit_hi,
   return pf;
 }
 
-// Long-tap channels: side=='S' uses TotaldE (Strip0/17, single readout),
-// 'L' uses LeftdE (odd strips), 'R' uses RightdE (even strips). Matches the
-// rule in BaselineNormalization.
 struct Channel {
   TString name;
   Int_t strip;
@@ -285,9 +270,9 @@ void DriftOneFile(const TString &events_name, const TString &file_label) {
     std::cerr << "Cannot open " << filepath << std::endl;
     return;
   }
-  TTree *tree = static_cast<TTree *>(file->Get("event"));
+  TTree *tree = static_cast<TTree *>(file->Get("events"));
   if (!tree) {
-    std::cerr << "No 'event' tree in " << filepath << std::endl;
+    std::cerr << "No 'events' tree in " << filepath << std::endl;
     file->Close();
     return;
   }
@@ -373,10 +358,6 @@ void DriftOneFile(const TString &events_name, const TString &file_label) {
   std::vector<ChannelDrift> drifts = PlotDriftVsTime(
       chans, hists, chunk_t_mid, chunk_t_half, file_label, plot_subdir);
 
-  // Apply per-channel linear drift correction:
-  //   corrected = raw * mu_ref / (intercept + slope * t)
-  // with mu_ref taken at the run midpoint so corrected values stay in roughly
-  // the same range as the raw histograms.
   std::vector<std::vector<TH1D *>> corrected_hists(
       chans.size(), std::vector<TH1D *>(N_CHUNKS, nullptr));
   for (Int_t i = 0; i < Int_t(chans.size()); i++) {
@@ -385,7 +366,8 @@ void DriftOneFile(const TString &events_name, const TString &file_label) {
                            chans[i].name.Data(), c);
       TString title = Form("%s gain drift corrected (%s);#DeltaE [ADC];Counts",
                            chans[i].name.Data(), file_label.Data());
-      corrected_hists[i][c] = new TH1D(hname, title, HIST_BINS, HIST_MIN, HIST_MAX);
+      corrected_hists[i][c] =
+          new TH1D(hname, title, HIST_BINS, HIST_MIN, HIST_MAX);
     }
   }
 
@@ -436,10 +418,9 @@ void DriftOneFile(const TString &events_name, const TString &file_label) {
 
 } // namespace GainDrift
 
-void CheckGainDrift() {
+void DiagnoseGainDrift() {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                project_root + "/plots",
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
                                 project_root + "/root_files");
 
   std::vector<FileSpec> specs = BuildFileSpecs();

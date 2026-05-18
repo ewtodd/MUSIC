@@ -1,3 +1,4 @@
+R__ADD_INCLUDE_PATH(../ macros)
 #include "Constants.hpp"
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
@@ -179,8 +180,7 @@ void ExploreOneFile(TString input_filename) {
 
 void DiagnoseTiming() {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                project_root + "/plots",
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
                                 project_root + "/root_files");
 
   std::vector<FileSpec> specs = BuildFileSpecs();

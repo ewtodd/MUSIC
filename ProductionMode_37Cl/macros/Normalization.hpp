@@ -1,38 +1,74 @@
 #ifndef NORMALIZATION_HPP
 #define NORMALIZATION_HPP
 
-#include <TFile.h>
+#include "Constants.hpp"
 #include <TROOT.h>
 #include <TString.h>
 #include <TTree.h>
 #include <cstdio>
 
-struct Baseline {
-  Float_t scale[18];
-};
+struct EnergyView {
+  Bool_t is_mev;
 
-inline Bool_t LoadBaseline(TFile *file, Baseline &b) {
-  for (Int_t s = 0; s < 18; s++)
-    b.scale[s] = 1.0f;
-  TTree *cal = static_cast<TTree *>(file->Get("baseline"));
-  if (!cal || cal->GetEntries() == 0)
-    return kFALSE;
-  cal->SetBranchAddress("Scale", b.scale);
-  cal->GetEntry(0);
-  return kTRUE;
-}
+  // ADC source (from the event builder)
+  Int_t leftdE_adc[18], rightdE_adc[18], totaldE_adc[18];
+  Int_t cathode_adc;
 
-inline void ComputeNormalized(const Baseline &b, const Int_t leftdE[18],
-                              const Int_t rightdE[18],
-                              const Int_t totaldE[18],
-                              Double_t normalized[18]) {
-  for (Int_t s = 0; s < 18; s++) {
-    if (s == 0 || s == 17)
-      normalized[s] = b.scale[s] * Double_t(totaldE[s]);
-    else
-      normalized[s] = b.scale[s] * Double_t(leftdE[s] + rightdE[s]);
+  // MeV source (from BeamCalibration)
+  Float_t leftdE_mev[18], rightdE_mev[18], totaldE_mev[18];
+  Float_t cathode_mev;
+
+  // Per-event Double_t view, populated by Decode().
+  Double_t left[18], right[18], total[18];
+  Double_t cathode;
+
+  Bool_t Attach(TTree *t) {
+    is_mev = (t->GetBranch("TotaldEMeV") != nullptr);
+    if (is_mev) {
+      t->SetBranchAddress("LeftdEMeV", leftdE_mev);
+      t->SetBranchAddress("RightdEMeV", rightdE_mev);
+      t->SetBranchAddress("TotaldEMeV", totaldE_mev);
+      t->SetBranchAddress("CathodeMeV", &cathode_mev);
+    } else {
+      t->SetBranchAddress("LeftdE", leftdE_adc);
+      t->SetBranchAddress("RightdE", rightdE_adc);
+      t->SetBranchAddress("TotaldE", totaldE_adc);
+      t->SetBranchAddress("Cathode", &cathode_adc);
+    }
+    return is_mev;
   }
-}
+
+  void Decode() {
+    if (is_mev) {
+      for (Int_t s = 0; s < 18; s++) {
+        left[s] = Double_t(leftdE_mev[s]);
+        right[s] = Double_t(rightdE_mev[s]);
+        total[s] = Double_t(totaldE_mev[s]);
+      }
+      cathode = Double_t(cathode_mev);
+    } else {
+      for (Int_t s = 0; s < 18; s++) {
+        left[s] = Double_t(leftdE_adc[s]);
+        right[s] = Double_t(rightdE_adc[s]);
+        total[s] = Double_t(totaldE_adc[s]);
+      }
+      cathode = Double_t(cathode_adc);
+    }
+    if (Constants::IGNORE_SHORT_STRIPS && !is_mev) {
+      for (Int_t s = 1; s <= 16; s++) {
+        if (Constants::LongAnodeSide(s) == 'L') {
+          total[s] = left[s];
+          right[s] = 0.0;
+        } else {
+          total[s] = right[s];
+          left[s] = 0.0;
+        }
+      }
+    }
+  }
+
+  const char *Unit() const { return is_mev ? "MeV" : "ADC"; }
+};
 
 struct CutXY {
   Double_t x;
@@ -40,11 +76,10 @@ struct CutXY {
 };
 
 inline CutXY ComputeCutXY(const TString &hist_name,
-                          const Double_t normalized[18],
-                          Double_t event_total) {
+                          const Double_t normalized[18], Double_t event_total) {
   CutXY out = {0, 0};
-  if (hist_name.BeginsWith("h2_StripE_vs_TotalE_s")) {
-    TString num = hist_name(TString("h2_StripE_vs_TotalE_s").Length(),
+  if (hist_name.BeginsWith("h2_totalE_vs_stripE_s")) {
+    TString num = hist_name(TString("h2_totalE_vs_stripE_s").Length(),
                             hist_name.Length());
     out.x = normalized[num.Atoi()];
     out.y = event_total;

@@ -1,3 +1,4 @@
+R__ADD_INCLUDE_PATH(../ macros)
 #include "Constants.hpp"
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
@@ -25,8 +26,9 @@ std::pair<Int_t, Int_t> FindBoardChannel(const TString &name) {
   return std::pair<Int_t, Int_t>(-1, -1);
 }
 
-void DiagnoseOneFile(TString input_filename, TString file_label) {
-  TString input_filepath = input_filename + ".root";
+void DiagnoseOneFile(TString input_filename, TString friend_filename,
+                     TString file_label) {
+  TString input_filepath = input_filename;
   TFile *input_file = IO::OpenForReading(input_filepath);
   if (!input_file || input_file->IsZombie()) {
     std::cerr << "Error opening file: " << input_filepath << std::endl;
@@ -39,6 +41,15 @@ void DiagnoseOneFile(TString input_filename, TString file_label) {
     input_file->Close();
     return;
   }
+
+  TString friend_full = IO::GetRootFilesBaseDir() + "/" + friend_filename;
+  if (gSystem->AccessPathName(friend_full)) {
+    std::cerr << "Error: shift friend file not found: " << friend_full
+              << std::endl;
+    input_file->Close();
+    return;
+  }
+  input_tree->AddFriend("ShiftCorrection", friend_full);
 
   UShort_t board, channel, energy;
   ULong64_t timestamp;
@@ -206,15 +217,15 @@ void DiagnoseOneFile(TString input_filename, TString file_label) {
 
 void DiagnoseEvents() {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                project_root + "/plots",
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
                                 project_root + "/root_files");
 
   std::vector<FileSpec> specs = BuildFileSpecs();
   for (Int_t k = 0; k < Int_t(specs.size()); k++) {
-    TString name = SortedName(specs[k]);
+    TString name = RawRootName(specs[k]);
+    TString friend_name = ShiftFriendName(specs[k]);
     TString file_label = FileLabel(specs[k]);
     std::cout << "Diagnosing: " << name << std::endl;
-    DiagnoseOneFile(name, file_label);
+    DiagnoseOneFile(name, friend_name, file_label);
   }
 }

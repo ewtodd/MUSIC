@@ -22,8 +22,16 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
-        analysis-utils = utils.packages.${system}.default;
+        pkgs = import nixpkgs {
+          inherit system;
+          config = {
+            allowUnfree = true;
+            cudaCapabilities = [ "12.0" ];
+            cudaForwardCompat = false;
+          };
+        };
+        analysis-utils = utils.packages.${system}.cuda;
+        root = utils.packages.${system}.rootCuda;
         agenixPkg = agenix.packages.${system}.default;
       in
       {
@@ -35,12 +43,13 @@
           ];
           buildInputs = [
             analysis-utils
-            pkgs.root
+            root
             pkgs.bash
             agenixPkg
           ];
           shellHook = ''
-            echo "Analysis-Utilities version: ${analysis-utils.version}"
+            echo "Analysis-Utilities version: ${analysis-utils.version} (CUDA)"
+            export NIX_CFLAGS_COMPILE="-DAU_ROOFIT_BACKEND_CUDA=1''${NIX_CFLAGS_COMPILE:+ $NIX_CFLAGS_COMPILE}"
             flake_root="$PWD"
             git_root="$(git -C "$flake_root" rev-parse --show-toplevel)"
 

@@ -1,4 +1,6 @@
-#include "Constants.hpp"
+#ifndef DRAW_CUT_HPP
+#define DRAW_CUT_HPP
+
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
 #include "Pipeline.hpp"
@@ -9,16 +11,19 @@
 #include <TH2.h>
 #include <TROOT.h>
 #include <TString.h>
-#include <TSystem.h>
 #include <iostream>
 #include <vector>
 
 namespace DrawCutNS {
 
-void DrawCutOneFile(const TString &hist_name, const TString &cut_name,
-                    const FileSpec &spec) {
+inline void DrawCutOneFile(const TString &hist_name, const TString &cut_name,
+                           const FileSpec &spec) {
   TString events_path = EventsName(spec) + ".root";
   TString file_label = FileLabel(spec);
+
+  const TString project_root = Paths::ProjectRootOf(__FILE__);
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
+                                project_root + "/root_files");
 
   TFile *file = IO::OpenForWriting(events_path, "UPDATE");
   if (!file || file->IsZombie()) {
@@ -38,10 +43,11 @@ void DrawCutOneFile(const TString &hist_name, const TString &cut_name,
 
   TCanvas *c = new TCanvas("c_drawcut", hist->GetTitle(), 900, 700);
   hist->Draw("COLZ");
+  c->SetLogz();
   c->Update();
 
-  std::cout << "[" << file_label << "] Drawing region '" << cut_name
-            << "' on '" << hist_name << "'" << std::endl;
+  std::cout << "[" << file_label << "] Drawing region '" << cut_name << "' on '"
+            << hist_name << "'" << std::endl;
   std::cout << "Click points around the region; double-click to close."
             << std::endl;
 
@@ -68,9 +74,8 @@ void DrawCutOneFile(const TString &hist_name, const TString &cut_name,
   gPad->Modified();
   gPad->Update();
 
-  std::cout
-      << "Adjust polygon points if needed, then press ENTER to save..."
-      << std::flush;
+  std::cout << "Adjust polygon points if needed, then press ENTER to save..."
+            << std::flush;
   std::cin.get();
 
   TDirectory *cuts_dir = file->GetDirectory("cuts");
@@ -79,8 +84,8 @@ void DrawCutOneFile(const TString &hist_name, const TString &cut_name,
   cuts_dir->cd();
   cut->Write(cut_name, TObject::kOverwrite);
 
-  std::cout << "Saved cut '" << cut_name << "' to " << events_path
-            << ":/cuts/" << std::endl;
+  std::cout << "Saved cut '" << cut_name << "' to " << events_path << ":/cuts/"
+            << std::endl;
 
   delete c;
   file->Close();
@@ -88,7 +93,8 @@ void DrawCutOneFile(const TString &hist_name, const TString &cut_name,
 
 } // namespace DrawCutNS
 
-void DrawCut(TString hist_name, TString cut_name, TString file_label = "") {
+inline void DrawCut(TString hist_name, TString cut_name,
+                    TString file_label = "") {
   std::vector<FileSpec> specs;
   if (file_label.IsNull()) {
     specs = BuildFileSpecs();
@@ -109,3 +115,5 @@ void DrawCut(TString hist_name, TString cut_name, TString file_label = "") {
   for (Int_t k = 0; k < Int_t(specs.size()); k++)
     DrawCutNS::DrawCutOneFile(hist_name, cut_name, specs[k]);
 }
+
+#endif

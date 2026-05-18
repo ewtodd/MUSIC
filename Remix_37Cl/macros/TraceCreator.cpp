@@ -34,7 +34,7 @@ void BuildTraces(std::vector<TString> input_output_filenames,
     }
 
     TTree *input_output_tree =
-        static_cast<TTree *>(input_output_file->Get("event_MeV"));
+        static_cast<TTree *>(input_output_file->Get("events_MeV"));
     if (!input_output_tree) {
       std::cerr << "Error getting tree from: " << input_output_filepath
                 << std::endl;
@@ -57,16 +57,13 @@ void BuildTraces(std::vector<TString> input_output_filenames,
     std::cout << "Building traces from " << n_entries << " entries..."
               << std::endl;
 
-    TH2D *h2_StripE_vs_TotalE[18];
+    TH2D *h2_TotalE_vs_StripE[18];
     for (Int_t s = 0; s < Constants::N_STRIPS; s++) {
-      h2_StripE_vs_TotalE[s] =
-          new TH2D(Form("h2_StripE_vs_TotalE_s%d", s),
-                   Form("Strip %d energy vs event total energy;"
-                        "Strip %d #DeltaE [MeV];"
-                        "Total #DeltaE [MeV]",
-                        s, s),
-                   200, Constants::STRIP_E_MIN_MEV, Constants::STRIP_E_MAX_MEV,
-                   400, Constants::TOTAL_E_MIN_MEV, Constants::TOTAL_E_MAX_MEV);
+      h2_TotalE_vs_StripE[s] =
+          new TH2D(Form("h2_TotalE_vs_StripE_s%d", s),
+                   Form(";Strip %d #DeltaE [MeV];Total #DeltaE [MeV]", s), 200,
+                   Constants::STRIP_E_MIN_MEV, Constants::STRIP_E_MAX_MEV, 400,
+                   Constants::TOTAL_E_MIN_MEV, Constants::TOTAL_E_MAX_MEV);
     }
 
     Int_t save_count = 0;
@@ -79,7 +76,7 @@ void BuildTraces(std::vector<TString> input_output_filenames,
         event_total += Double_t(totaldE[s]);
 
       for (Int_t s = 0; s < Constants::N_STRIPS; s++)
-        h2_StripE_vs_TotalE[s]->Fill(Double_t(totaldE[s]), event_total);
+        h2_TotalE_vs_StripE[s]->Fill(Double_t(totaldE[s]), event_total);
 
       if (save_plots && save_count < Constants::MAX_TRACE_SAVES) {
         save_count++;
@@ -141,22 +138,22 @@ void BuildTraces(std::vector<TString> input_output_filenames,
 
     input_output_file->cd();
     for (Int_t s = 0; s < Constants::N_STRIPS; s++)
-      h2_StripE_vs_TotalE[s]->Write("", TObject::kOverwrite);
+      h2_TotalE_vs_StripE[s]->Write("", TObject::kOverwrite);
     {
       std::lock_guard<std::mutex> lock(g_plot_mutex);
       TString summary_subdir = "trace_summary/" + file_label;
 
       for (Int_t s = 0; s < Constants::N_STRIPS; s++) {
         TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
-        PlottingUtils::ConfigureAndDraw2DHistogram(h2_StripE_vs_TotalE[s], c);
-        h2_StripE_vs_TotalE[s]->GetYaxis()->SetTitleOffset(1.3);
-        PlottingUtils::SaveFigure(c, Form("stripE_vs_totalE_s%d", s),
+        PlottingUtils::ConfigureAndDraw2DHistogram(h2_TotalE_vs_StripE[s], c);
+        h2_TotalE_vs_StripE[s]->GetYaxis()->SetTitleOffset(1.3);
+        PlottingUtils::SaveFigure(c, Form("totalE_vs_stripE_s%d", s),
                                   summary_subdir, PlotSaveOptions::kLINEAR);
         delete c;
       }
     }
     for (Int_t s = 0; s < Constants::N_STRIPS; s++)
-      delete h2_StripE_vs_TotalE[s];
+      delete h2_TotalE_vs_StripE[s];
 
     input_output_file->Write("", TObject::kOverwrite);
     input_output_file->Close();
