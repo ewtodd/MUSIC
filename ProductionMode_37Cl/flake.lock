@@ -104,11 +104,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1777954456,
-        "narHash": "sha256-hGdgeU2Nk87RAuZyYjyDjFL6LK7dAZN5RE9+hrDTkDU=",
+        "lastModified": 1778869304,
+        "narHash": "sha256-30sZNZoA1cqF5JNO9fVX+wgiQYjB7HJqqJ4ztCDeBZE=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "549bd84d6279f9852cae6225e372cc67fb91a4c1",
+        "rev": "d233902339c02a9c334e7e593de68855ad26c4cb",
         "type": "github"
       },
       "original": {
@@ -193,8 +193,8 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1779216748,
-        "narHash": "sha256-XOryqIMD9lk2SX7+9lkvEmgn5totgdpPf1bfEHc7e1U=",
+        "lastModified": 1779223720,
+        "narHash": "sha256-3jKTYiZJE2RSc//nT1azC9j8Os/rTm97NiClGIMtD9g=",
         "path": "/home/e-work/Analysis-Utilities",
         "type": "path"
       },

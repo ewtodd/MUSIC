@@ -30,9 +30,10 @@
             cudaForwardCompat = false;
           };
         };
-        analysis-utils = utils.packages.${system}.default;
-        #utils.packages.${system}.cuda;
-        root = pkgs.root; # utils.packages.${system}.rootCuda;
+        isCUDA = false;
+        analysis-utils =
+          if !isCUDA then utils.packages.${system}.default else utils.packages.${system}.cuda;
+        root = if !isCUDA then pkgs.root else utils.packages.${system}.rootCuda;
         agenixPkg = agenix.packages.${system}.default;
         clangdConfigFile = (pkgs.formats.yaml { }).generate "dot-clangd" {
           CompileFlags.Add = [
@@ -59,19 +60,24 @@
             root
             pkgs.bash
             agenixPkg
+          ]
+          ++ pkgs.lib.optionals isCUDA [
             pkgs.cudaPackages.cuda_nvcc
             pkgs.cudaPackages.cuda_cudart
             pkgs.cudaPackages.cuda_cccl
           ];
           shellHook = ''
-            echo "Analysis-Utilities version: ${analysis-utils.version} (CUDA)"
-            export NIX_CFLAGS_COMPILE="-DAU_ROOFIT_BACKEND_CUDA=1''${NIX_CFLAGS_COMPILE:+ $NIX_CFLAGS_COMPILE}"
-            export LD_LIBRARY_PATH="/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            echo "Analysis-Utilities version: ${analysis-utils.version}${pkgs.lib.optionalString isCUDA " (CUDA)"}"
+            ${pkgs.lib.optionalString isCUDA ''
+              export NIX_CFLAGS_COMPILE="-DAU_ROOFIT_BACKEND_CUDA=1''${NIX_CFLAGS_COMPILE:+ $NIX_CFLAGS_COMPILE}"
+              export LD_LIBRARY_PATH="/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            ''}
             flake_root="$PWD"
 
-            install -m 644 ${clangdConfigFile} "$flake_root/gpu/.clangd"
-
-            export LD_LIBRARY_PATH="$flake_root/gpu''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            ${pkgs.lib.optionalString isCUDA ''
+              install -m 644 ${clangdConfigFile} "$flake_root/gpu/.clangd"
+              export LD_LIBRARY_PATH="$flake_root/gpu''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            ''}
             git_root="$(git -C "$flake_root" rev-parse --show-toplevel)"
 
             mkdir -p "$flake_root/.claude"
