@@ -43,7 +43,7 @@ FinalizeEvent(NearestGrid::EventState &e, NearestGrid::PerChannelData *pc,
               Int_t &cathode_branch, Int_t &grid_branch,
               UInt_t &flags_or_branch, Bool_t &is_complete_branch,
               TH2F *h_music, TH2F *h_music_clean, TH2F *h_music_flagged,
-              TH1F *h_mult, EventCounters &c) {
+              TH1F *h_mult, TH2F *h2_totalE_vs_stripE[18], EventCounters &c) {
   for (Int_t s = 1; s < 17; s++)
     e.totaldE[s] = e.leftdE[s] + e.rightdE[s];
 
@@ -91,12 +91,16 @@ FinalizeEvent(NearestGrid::EventState &e, NearestGrid::PerChannelData *pc,
       flags_or_branch = e.flags_or;
       output_tree->Fill();
 
+      Double_t event_total = 0.0;
+      for (Int_t s = 0; s < 18; s++)
+        event_total += Double_t(e.totaldE[s]);
       for (Int_t s = 0; s < 18; s++) {
         h_music->Fill(Double_t(s), Double_t(e.totaldE[s]));
         if (has_any_flag)
           h_music_flagged->Fill(Double_t(s), Double_t(e.totaldE[s]));
         else
           h_music_clean->Fill(Double_t(s), Double_t(e.totaldE[s]));
+        h2_totalE_vs_stripE[s]->Fill(Double_t(e.totaldE[s]), event_total);
       }
       Int_t mult = 0;
       for (Int_t k = 0; k < 36; k++)
@@ -185,6 +189,15 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
                           "Event multiplicity (complete events);"
                           "Multiplicity;Counts",
                           36, -0.5, 35.5);
+
+  TH2F *h2_totalE_vs_stripE[18];
+  for (Int_t s = 0; s < 18; s++) {
+    h2_totalE_vs_stripE[s] =
+        new TH2F(Form("h2_totalE_vs_stripE_s%d", s),
+                 Form(";Strip %d #DeltaE [ADC];Total #DeltaE [ADC]", s), 200,
+                 Constants::STRIP_E_MIN_ADC, Constants::STRIP_E_MAX_ADC, 400,
+                 Constants::TOTAL_E_MIN_ADC, Constants::TOTAL_E_MAX_ADC);
+  }
 
   Long64_t n_entries = Long64_t(hits.size());
 
@@ -295,7 +308,8 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
         FinalizeEvent(prev_event, pc_prev, write_per_channel, output_tree,
                       leftdE, rightdE, totaldE, all_timestamps, all_flags,
                       hits_arr, cathode, grid, flags_or, is_complete, h_music,
-                      h_music_clean, h_music_flagged, h_mult, cnt);
+                      h_music_clean, h_music_flagged, h_mult,
+                      h2_totalE_vs_stripE, cnt);
       } else {
         // First grid: initialise cur and flush all pending into it. Pending
         // here only contains hits with timestamps before the first grid;
@@ -344,7 +358,7 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     FinalizeEvent(cur_event, pc_cur, write_per_channel, output_tree, leftdE,
                   rightdE, totaldE, all_timestamps, all_flags, hits_arr,
                   cathode, grid, flags_or, is_complete, h_music, h_music_clean,
-                  h_music_flagged, h_mult, cnt);
+                  h_music_flagged, h_mult, h2_totalE_vs_stripE, cnt);
   }
 
   std::cout << "Found " << n_grids << " grid hits." << std::endl;
@@ -357,14 +371,13 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     delete h_music_clean;
     delete h_music_flagged;
     delete h_mult;
+    for (Int_t s = 0; s < 18; s++)
+      delete h2_totalE_vs_stripE[s];
     return kFALSE;
   }
 
   output_file->cd();
   output_tree->Write("events", TObject::kOverwrite);
-  h_music->Write("", TObject::kOverwrite);
-  h_music_clean->Write("", TObject::kOverwrite);
-  h_music_flagged->Write("", TObject::kOverwrite);
   h_mult->Write("", TObject::kOverwrite);
 
   {
@@ -377,6 +390,8 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     c_music->SetLeftMargin(0.18);
     PlottingUtils::SaveFigure(c_music, "music_strip_energies", subdir,
                               PlotSaveOptions::kLINEAR);
+    output_file->cd();
+    c_music->Write(h_music->GetName(), TObject::kOverwrite);
     delete c_music;
 
     TCanvas *c_music_clean = PlottingUtils::GetConfiguredCanvas(kFALSE);
@@ -385,6 +400,8 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     c_music_clean->SetLeftMargin(0.18);
     PlottingUtils::SaveFigure(c_music_clean, "music_strip_energies_clean",
                               subdir, PlotSaveOptions::kLINEAR);
+    output_file->cd();
+    c_music_clean->Write(h_music_clean->GetName(), TObject::kOverwrite);
     delete c_music_clean;
 
     TCanvas *c_music_flagged = PlottingUtils::GetConfiguredCanvas(kFALSE);
@@ -394,6 +411,8 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     c_music_flagged->SetLeftMargin(0.18);
     PlottingUtils::SaveFigure(c_music_flagged, "music_strip_energies_flagged",
                               subdir, PlotSaveOptions::kLINEAR);
+    output_file->cd();
+    c_music_flagged->Write(h_music_flagged->GetName(), TObject::kOverwrite);
     delete c_music_flagged;
 
     TCanvas *c_mult = PlottingUtils::GetConfiguredCanvas(kFALSE);
@@ -401,7 +420,22 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     PlottingUtils::SaveFigure(c_mult, "multiplicity", subdir,
                               PlotSaveOptions::kLOG);
     delete c_mult;
+
+    TString trace_summary_subdir = "trace_summary/" + file_label;
+    for (Int_t s = 0; s < 18; s++) {
+      TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      PlottingUtils::ConfigureAndDraw2DHistogram(h2_totalE_vs_stripE[s], c);
+      h2_totalE_vs_stripE[s]->GetYaxis()->SetTitleOffset(1.3);
+      PlottingUtils::SaveFigure(c, Form("totalE_vs_stripE_s%d", s),
+                                trace_summary_subdir, PlotSaveOptions::kLINEAR);
+      output_file->cd();
+      c->Write(h2_totalE_vs_stripE[s]->GetName(), TObject::kOverwrite);
+      delete c;
+    }
   }
+
+  for (Int_t s = 0; s < 18; s++)
+    delete h2_totalE_vs_stripE[s];
 
   output_file->Close();
   delete output_file;

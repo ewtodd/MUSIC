@@ -4,6 +4,7 @@
 #include "BinaryUtils.hpp"
 #include "Constants.hpp"
 #include "EventBuilder.hpp"
+#include "GpuAccel.hpp"
 #include "InitUtils.hpp"
 #include "Timing.hpp"
 #include "TraceCreator.hpp"
@@ -155,7 +156,7 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
   }
   if (Constants::RUN_TRACES) {
     t0 = std::chrono::steady_clock::now();
-    BuildTraces(events_name_vec, file_labels_vec, kFALSE, kTRUE);
+    BuildTraces(events_name_vec, file_labels_vec, kTRUE, kTRUE);
     t_traces = FusedSecSince(t0);
     PrintMemUsage((TString("after traces ") + file_label).Data());
   }
@@ -174,6 +175,7 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
 
 void Pipeline() {
   ROOT::EnableThreadSafety();
+  GpuAccel::Init();
   const TString project_root = Paths::ProjectRootOf(__FILE__);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
                                 project_root + "/root_files");

@@ -30,9 +30,22 @@
             cudaForwardCompat = false;
           };
         };
-        analysis-utils = utils.packages.${system}.cuda;
-        root = utils.packages.${system}.rootCuda;
+        analysis-utils = utils.packages.${system}.default;
+        #utils.packages.${system}.cuda;
+        root = pkgs.root; # utils.packages.${system}.rootCuda;
         agenixPkg = agenix.packages.${system}.default;
+        clangdConfigFile = (pkgs.formats.yaml { }).generate "dot-clangd" {
+          CompileFlags.Add = [
+            "--cuda-gpu-arch=sm_120"
+            "--no-cuda-version-check"
+          ];
+          Diagnostics.Suppress = [
+            "no_member"
+            "nested_name_spec_non_tag"
+            "typename_nested_not_found"
+            "template_instantiate_undefined"
+          ];
+        };
       in
       {
         devShells.default = pkgs.mkShell {
@@ -46,11 +59,19 @@
             root
             pkgs.bash
             agenixPkg
+            pkgs.cudaPackages.cuda_nvcc
+            pkgs.cudaPackages.cuda_cudart
+            pkgs.cudaPackages.cuda_cccl
           ];
           shellHook = ''
             echo "Analysis-Utilities version: ${analysis-utils.version} (CUDA)"
             export NIX_CFLAGS_COMPILE="-DAU_ROOFIT_BACKEND_CUDA=1''${NIX_CFLAGS_COMPILE:+ $NIX_CFLAGS_COMPILE}"
+            export LD_LIBRARY_PATH="/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             flake_root="$PWD"
+
+            install -m 644 ${clangdConfigFile} "$flake_root/gpu/.clangd"
+
+            export LD_LIBRARY_PATH="$flake_root/gpu''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             git_root="$(git -C "$flake_root" rev-parse --show-toplevel)"
 
             mkdir -p "$flake_root/.claude"
@@ -70,7 +91,7 @@
                 fi
               done
             alias clean-aclic='rm -f *_C.so *_C.d *_C_ACLiC_dict_rdict.pcm *_cpp.so *_cpp.d *_cpp_ACLiC_dict_rdict.pcm *_cxx.so *_cxx.d *_cxx_ACLiC_dict_rdict.pcm AutoDict_*'
-            cd macros
+            cd macros  
           '';
         };
       }

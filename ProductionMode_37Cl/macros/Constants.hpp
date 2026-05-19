@@ -19,13 +19,14 @@ inline TString ProjectRootOf(const char *file) {
 
 namespace Constants {
 
-inline const std::vector<Int_t> RUN_NUMBERS = {
-    16}; // {12, 13, 14, 16, 17, 18, 19, 20, 37};
+inline const std::vector<Int_t> RUN_NUMBERS = {12, 13, 14, 16, 17,
+                                               18, 19, 20, 37};
 
 // N_FILES = -1 for all
-const Int_t N_FILES = 1;
+const Int_t N_FILES = -1;
 
-inline const TString COMPASS_BASE_DIR = "/home/e-work/LabData/MUSIC/37Cl/";
+inline const TString COMPASS_BASE_DIR =
+    "/run/media/e-work/B16A-129A/LabData/MUSIC/";
 
 const Int_t N_BOARDS = 4;
 const Int_t N_CHANNELS = 16;
@@ -55,6 +56,10 @@ const Int_t MAX_FUSED_WORKERS = 16;
 
 const Bool_t USE_NEAREST_TO_GRID = kTRUE;
 const Bool_t SAVE_PER_CHANNEL_TIMESTAMPS_FLAGS = kFALSE;
+
+const Bool_t USE_GPU_ACCELERATION = kTRUE;
+// Cap concurrent GPU sorts to avoid cudaErrorMemoryAllocation
+const Int_t MAX_GPU_CONCURRENT_SORTS = 5;
 
 inline Char_t LongAnodeSide(Int_t strip) {
   if (strip < 1 || strip > 16)

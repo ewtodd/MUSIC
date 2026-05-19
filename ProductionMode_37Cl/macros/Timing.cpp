@@ -1,6 +1,7 @@
 #include "Timing.hpp"
 #include "BinaryUtils.hpp"
 #include "Constants.hpp"
+#include "GpuAccel.hpp"
 #include <TGraph.h>
 #include <TH2F.h>
 #include <TMath.h>
@@ -222,6 +223,14 @@ void ApplyShiftsInPlace(std::vector<RawHit> &hits,
 }
 
 void SortHitsByTimestamp(std::vector<RawHit> &hits) {
+  if (GpuAccel::Available() && GpuAccel::TryAcquireSortSlot()) {
+    Int_t rc = GpuAccel::GetSort()(hits.data(), Long64_t(hits.size()));
+    GpuAccel::ReleaseSortSlot();
+    if (rc == 0)
+      return;
+    std::cerr << "[GPU] Sort failed (rc=" << rc << "), falling back to CPU."
+              << std::endl;
+  }
   std::sort(hits.begin(), hits.end(), [](const RawHit &a, const RawHit &b) {
     return a.timestamp < b.timestamp;
   });
