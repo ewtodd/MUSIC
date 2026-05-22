@@ -129,15 +129,17 @@ inline void PlotExtremeEvents2D(TH2F *h_before, TH2F *h_after,
   TCanvas *c_before = PlottingUtils::GetConfiguredCanvas(kFALSE);
   PlottingUtils::ConfigureAndDraw2DHistogram(h_before, c_before);
   c_before->SetLogz(kFALSE);
-  PlottingUtils::SaveFigure(c_before, "extreme_events_before", subdir,
-                            PlotSaveOptions::kLINEAR);
+  if (Constants::SAVE_PLOTS)
+    PlottingUtils::SaveFigure(c_before, "extreme_events_before", subdir,
+                              PlotSaveOptions::kLINEAR);
   delete c_before;
 
   TCanvas *c_after = PlottingUtils::GetConfiguredCanvas(kFALSE);
   PlottingUtils::ConfigureAndDraw2DHistogram(h_after, c_after);
   c_after->SetLogz(kFALSE);
-  PlottingUtils::SaveFigure(c_after, "extreme_events_after", subdir,
-                            PlotSaveOptions::kLINEAR);
+  if (Constants::SAVE_PLOTS)
+    PlottingUtils::SaveFigure(c_after, "extreme_events_after", subdir,
+                              PlotSaveOptions::kLINEAR);
   delete c_after;
 }
 
@@ -171,8 +173,9 @@ inline void PlotCostLandscape(const std::vector<Double_t> &shifts,
 
   PlottingUtils::AddText(Form("best shift = %.6f s", best_shift), 0.85, 0.85);
 
-  PlottingUtils::SaveFigure(canvas, Form("cost_landscape_board_%d", board),
-                            "timing/" + file_label, PlotSaveOptions::kLINEAR);
+  if (Constants::SAVE_PLOTS)
+    PlottingUtils::SaveFigure(canvas, Form("cost_landscape_board_%d", board),
+                              "timing/" + file_label, PlotSaveOptions::kLINEAR);
   delete canvas;
 }
 

@@ -126,6 +126,8 @@ void RegionTracesOneFile(const TString &cut_name, const FileSpec &spec) {
     return;
   }
 
+  TFile *cal_file = AttachCalSidecar(tree, spec);
+
   EnergyView ev;
   ev.Attach(tree);
   if (!ev.is_mev)
@@ -162,6 +164,9 @@ void RegionTracesOneFile(const TString &cut_name, const FileSpec &spec) {
   Double_t strip_x[18];
   for (Int_t s = 0; s < 18; s++)
     strip_x[s] = Double_t(s);
+  const Int_t s_lo = Constants::FirstStrip();
+  const Int_t s_hi = Constants::LastStrip();
+  const Int_t n_active = Constants::NumActiveStrips();
 
   Int_t indiv_color = TColor::GetColorTransparent(kGray + 2, 0.05);
 
@@ -186,13 +191,13 @@ void RegionTracesOneFile(const TString &cut_name, const FileSpec &spec) {
       if (st.n_traced >= Constants::REGION_TRACES_MAX_INDIV)
         continue;
 
-      TGraph *g = new TGraph(18, strip_x, ev.total);
+      TGraph *g = new TGraph(n_active, strip_x + s_lo, ev.total + s_lo);
       g->SetLineColor(indiv_color);
       g->SetLineWidth(1);
       g->SetMarkerStyle(0);
       st.mg->Add(g, "L");
 
-      for (Int_t s = 0; s < 18; s++)
+      for (Int_t s = s_lo; s <= s_hi; s++)
         st.sum_per_strip[s] += ev.total[s];
       st.n_traced++;
     }
@@ -222,7 +227,7 @@ void RegionTracesOneFile(const TString &cut_name, const FileSpec &spec) {
     std::cout << "  '" << st.name << "': " << st.n_passed << " / " << n_entries
               << " (" << (100.0 * st.n_passed / n_entries) << "%)" << std::endl;
 
-    TGraph *avg = new TGraph(18, strip_x, avg_per_strip);
+    TGraph *avg = new TGraph(n_active, strip_x + s_lo, avg_per_strip + s_lo);
     PlottingUtils::ConfigureGraph(
         avg, kRed + 1,
         Form("Region '%s' (%lld evts);Strip Index;#DeltaE [%s]", st.name.Data(),
@@ -239,8 +244,9 @@ void RegionTracesOneFile(const TString &cut_name, const FileSpec &spec) {
     st.mg->GetYaxis()->SetRangeUser(0, y_max);
     st.mg->Draw("A");
     avg->Draw("L SAME");
-    PlottingUtils::SaveFigure(c, "region_" + st.name, out_subdir,
-                              PlotSaveOptions::kLINEAR);
+    if (Constants::SAVE_PLOTS)
+      PlottingUtils::SaveFigure(c, "region_" + st.name, out_subdir,
+                                PlotSaveOptions::kLINEAR);
     delete c;
     delete avg;
     delete st.mg;
@@ -248,7 +254,7 @@ void RegionTracesOneFile(const TString &cut_name, const FileSpec &spec) {
 
   Int_t color_palette[8] = {kRed + 1,    kBlue + 1, kGreen + 2,  kMagenta + 1,
                             kOrange + 7, kCyan + 2, kViolet + 1, kBlack};
-  for (Int_t s_target = 0; s_target < 18; s_target++) {
+  for (Int_t s_target = s_lo; s_target <= s_hi; s_target++) {
     std::vector<Int_t> idx_for_strip;
     for (Int_t i = 0; i < Int_t(states.size()); i++) {
       if (states[i].strip_index == s_target && states[i].h1_strip_e &&
@@ -281,8 +287,9 @@ void RegionTracesOneFile(const TString &cut_name, const FileSpec &spec) {
                     Form("%s (%lld)", st.name.Data(), st.n_passed), "l");
     }
     leg->Draw();
-    PlottingUtils::SaveFigure(c, Form("strip%d_cut_overlay", s_target),
-                              out_subdir, PlotSaveOptions::kLOG);
+    if (Constants::SAVE_PLOTS)
+      PlottingUtils::SaveFigure(c, Form("strip%d_cut_overlay", s_target),
+                                out_subdir, PlotSaveOptions::kLOG);
 
     file->cd();
     c->Write(Form("strip%d_cut_overlay", s_target), TObject::kOverwrite);
@@ -294,6 +301,10 @@ void RegionTracesOneFile(const TString &cut_name, const FileSpec &spec) {
     delete states[i].h1_strip_e;
 
   file->Close();
+  if (cal_file) {
+    cal_file->Close();
+    delete cal_file;
+  }
 }
 
 } // namespace RegionTracesNS

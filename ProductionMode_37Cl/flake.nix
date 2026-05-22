@@ -30,7 +30,7 @@
             cudaForwardCompat = false;
           };
         };
-        isCUDA = false;
+        isCUDA = true;
         analysis-utils =
           if !isCUDA then utils.packages.${system}.default else utils.packages.${system}.cuda;
         root = if !isCUDA then pkgs.root else utils.packages.${system}.rootCuda;
@@ -59,6 +59,7 @@
             analysis-utils
             root
             pkgs.bash
+            pkgs.tomlplusplus
             agenixPkg
           ]
           ++ pkgs.lib.optionals isCUDA [

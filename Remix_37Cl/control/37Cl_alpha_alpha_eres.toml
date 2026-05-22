@@ -1,0 +1,93 @@
+[gas]
+species = "4He"     # Fill gas: 4He, 3He, Ar, CF4, CH4, P10, iC4H10
+pressure = 220.0    # Torr
+temperature = 293.0 # K
+
+[beam]
+species = "37Cl"  # Use "AEl" notation
+energy = 92.0     # Beam KE at the accelerator (before entrance window) [MeV]
+energy_fwhm = 0.9 # Beam energy FWHM at accelerator [MeV]
+dedx_scale = 1.0  # Beam stopping power scale factor
+
+[target]
+species = "4He"
+compound = "41K"
+
+[windows.entrance]
+# mg/cm^2 areal density; -1 disables
+material = "Ti"
+thickness_mg_cm2 = 0.9
+
+[windows.exit]
+# mg/cm^2 areal density; -1 disables
+material = "Ti"
+thickness_mg_cm2 = 1.3
+
+[windows.degrader]
+thickness_um = -1
+
+[detector]
+eloss_bins = 555            # Number of bins for y axis
+max_eloss = 10.0            # Max y value [MeV]
+strip = 6                   # -1 for unreacted beam
+ignore_short_strips = false # true zeroes 4 cm half-strips on L/R anode branches
+# Per-channel readout noise σ [MeV]. -1 on a given channel disables noise
+# there. Mutually exclusive with a scalar `eres` key in [detector].
+[detector.eres]
+Cathode = 0.2255182570142194
+L1 = 0.20756662876902504
+L10 = 0.00032462938894669229
+L11 = 0.22175587954519874
+L12 = 0.00049842107047141286
+L13 = 0.26432176898029197
+L14 = 0.00024981524259334788
+L15 = 0.27831751550376865
+L16 = 2.5644967698429376e-12
+L2 = 0.00022171016408638978
+L3 = 0.19844439895737589
+L4 = -1.0
+L5 = 0.2015958134350378
+L6 = 1.3639851913599634e-12
+L7 = 0.18356852793642095
+L8 = -1.0
+L9 = 0.19741749056843866
+R1 = 0.00016963150003310829
+R10 = 0.2331559843313904
+R11 = 4.4772217692272069e-15
+R12 = 0.25194729945810579
+R13 = 1.5683694117162369e-14
+R14 = 0.2611141252970684
+R15 = 6.7817332211887309e-12
+R16 = 0.26517325648253898
+R2 = 0.22939352485433501
+R3 = 7.3017604163987302e-13
+R4 = 0.22555307263234939
+R5 = -1.0
+R6 = 0.1664220227853993
+R7 = -1.0
+R8 = 0.22254480269076526
+R9 = 2.1730274473910512e-05
+S0 = 0.22551825701421938
+S17 = 0.2255182570142194
+
+[[reaction.step]]
+[reaction.step.evap]
+name = "4He"
+color = 2
+
+[reaction.step.res]
+name = "37Cl"
+color = 4
+dedx_scale = 1.0
+
+[run]
+n_events = 100000
+threads = 32
+wait = 0
+update = 0
+max_time = 2000.0                                                            # ns
+sim_step = 0.001                                                             # cm
+method = 0
+output = "/home/e-work/MUSIC/Remix_37Cl/root_files/traces_37Cl_aa_eres.root"
+file_opt = "recreate"
+print_opt = 0

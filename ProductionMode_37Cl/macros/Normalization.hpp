@@ -14,7 +14,7 @@ struct EnergyView {
   Int_t leftdE_adc[18], rightdE_adc[18], totaldE_adc[18];
   Int_t cathode_adc;
 
-  // MeV source (from BeamCalibration)
+  // MeV source (from CalibrateBeam's per-subfile sidecar, attached as a friend)
   Float_t leftdE_mev[18], rightdE_mev[18], totaldE_mev[18];
   Float_t cathode_mev;
 
@@ -23,7 +23,9 @@ struct EnergyView {
   Double_t cathode;
 
   Bool_t Attach(TTree *t) {
-    is_mev = (t->GetBranch("TotaldEMeV") != nullptr);
+    // FindBranch walks attached friend trees, so callers can AddFriend the
+    // cal sidecar before calling us and the MeV branches are picked up.
+    is_mev = (t->FindBranch("TotaldEMeV") != nullptr);
     if (is_mev) {
       t->SetBranchAddress("LeftdEMeV", leftdE_mev);
       t->SetBranchAddress("RightdEMeV", rightdE_mev);
@@ -64,6 +66,16 @@ struct EnergyView {
           left[s] = 0.0;
         }
       }
+    }
+    if (Constants::IGNORE_STRIP_0) {
+      left[0] = 0.0;
+      right[0] = 0.0;
+      total[0] = 0.0;
+    }
+    if (Constants::IGNORE_STRIP_17) {
+      left[17] = 0.0;
+      right[17] = 0.0;
+      total[17] = 0.0;
     }
   }
 

@@ -57,8 +57,12 @@ void BuildTraces(std::vector<TString> input_output_filenames,
     std::cout << "Building traces from " << n_entries << " entries..."
               << std::endl;
 
-    TH2D *h2_TotalE_vs_StripE[18];
-    for (Int_t s = 0; s < Constants::N_STRIPS; s++) {
+    const Int_t s_lo = Constants::FirstStrip();
+    const Int_t s_hi = Constants::LastStrip();
+    const Int_t n_active = Constants::NumActiveStrips();
+
+    TH2D *h2_TotalE_vs_StripE[18] = {nullptr};
+    for (Int_t s = s_lo; s <= s_hi; s++) {
       h2_TotalE_vs_StripE[s] =
           new TH2D(Form("h2_TotalE_vs_StripE_s%d", s),
                    Form(";Strip %d #DeltaE [MeV];Total #DeltaE [MeV]", s), 200,
@@ -72,26 +76,33 @@ void BuildTraces(std::vector<TString> input_output_filenames,
       input_output_tree->GetEntry(j);
 
       Double_t event_total = 0.0;
-      for (Int_t s = 0; s < Constants::N_STRIPS; s++)
+      for (Int_t s = s_lo; s <= s_hi; s++)
         event_total += Double_t(totaldE[s]);
 
-      for (Int_t s = 0; s < Constants::N_STRIPS; s++)
+      for (Int_t s = s_lo; s <= s_hi; s++)
         h2_TotalE_vs_StripE[s]->Fill(Double_t(totaldE[s]), event_total);
 
       if (save_plots && save_count < Constants::MAX_TRACE_SAVES) {
         save_count++;
 
-        TGraph *TraceTotal = new TGraph(Constants::N_STRIPS);
-        TGraph *TraceLeft = new TGraph(Constants::N_STRIPS);
-        TGraph *TraceRight = new TGraph(Constants::N_STRIPS);
-        for (Int_t k = 0; k < Constants::N_STRIPS; k++) {
-          TraceTotal->SetPoint(k, k, Double_t(totaldE[k]));
+        TGraph *TraceTotal = new TGraph(n_active);
+        TGraph *TraceLeft = new TGraph(n_active);
+        TGraph *TraceRight = new TGraph(n_active);
+        for (Int_t k = 0; k < n_active; k++) {
+          Int_t s = s_lo + k;
+          TraceTotal->SetPoint(k, s, Double_t(totaldE[s]));
           // Sim populates Left/Right only on indices 1..16; 0 and 17 are
           // single-ended guard strips and live in TotaldE alone.
-          Double_t l = (k == 0 || k == 17) ? 0.0 : Double_t(leftdE[k]);
-          Double_t r = (k == 0 || k == 17) ? 0.0 : Double_t(rightdE[k]);
-          TraceLeft->SetPoint(k, k, l);
-          TraceRight->SetPoint(k, k, r);
+          Double_t l = (s == 0 || s == 17) ? 0.0 : Double_t(leftdE[s]);
+          Double_t r = (s == 0 || s == 17) ? 0.0 : Double_t(rightdE[s]);
+          if (Constants::IGNORE_SHORT_STRIPS) {
+            if (Constants::IsShortSide(s, 'L'))
+              l = 0.0;
+            if (Constants::IsShortSide(s, 'R'))
+              r = 0.0;
+          }
+          TraceLeft->SetPoint(k, s, l);
+          TraceRight->SetPoint(k, s, r);
         }
         TString total_title = Form("Event %lld;Strip Index;#DeltaE [MeV]", j);
         PlottingUtils::ConfigureGraph(TraceTotal, kBlack, total_title);
@@ -137,13 +148,13 @@ void BuildTraces(std::vector<TString> input_output_filenames,
     }
 
     input_output_file->cd();
-    for (Int_t s = 0; s < Constants::N_STRIPS; s++)
+    for (Int_t s = s_lo; s <= s_hi; s++)
       h2_TotalE_vs_StripE[s]->Write("", TObject::kOverwrite);
     {
       std::lock_guard<std::mutex> lock(g_plot_mutex);
       TString summary_subdir = "trace_summary/" + file_label;
 
-      for (Int_t s = 0; s < Constants::N_STRIPS; s++) {
+      for (Int_t s = s_lo; s <= s_hi; s++) {
         TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
         PlottingUtils::ConfigureAndDraw2DHistogram(h2_TotalE_vs_StripE[s], c);
         h2_TotalE_vs_StripE[s]->GetYaxis()->SetTitleOffset(1.3);
@@ -152,7 +163,7 @@ void BuildTraces(std::vector<TString> input_output_filenames,
         delete c;
       }
     }
-    for (Int_t s = 0; s < Constants::N_STRIPS; s++)
+    for (Int_t s = s_lo; s <= s_hi; s++)
       delete h2_TotalE_vs_StripE[s];
 
     input_output_file->Write("", TObject::kOverwrite);

@@ -9,6 +9,7 @@
 #include <TCanvas.h>
 #include <TFile.h>
 #include <TGraph.h>
+#include <TH2F.h>
 #include <TROOT.h>
 #include <TString.h>
 #include <TSystem.h>
@@ -16,6 +17,152 @@
 #include <iostream>
 #include <mutex>
 #include <vector>
+
+inline void WriteH2CanvasToFile(TFile *file, TH2F *h, const TString &save_name,
+                                const TString &subdir) {
+  TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+  PlottingUtils::ConfigureAndDraw2DHistogram(h, c);
+  h->GetYaxis()->SetTitleOffset(1.3);
+  c->SetLeftMargin(0.18);
+  if (Constants::SAVE_PLOTS)
+    PlottingUtils::SaveFigure(c, save_name, subdir, PlotSaveOptions::kLINEAR);
+  file->cd();
+  c->Write(h->GetName(), TObject::kOverwrite);
+  delete c;
+}
+
+inline void BuildMeVSummaryHistograms(const TString &input_filename,
+                                      const TString &file_label,
+                                      const FileSpec &spec) {
+  TString input_filepath = input_filename + ".root";
+
+  TFile *input_file = IO::OpenForWriting(input_filepath, "UPDATE");
+  if (!input_file || input_file->IsZombie()) {
+    std::cerr << "[" << file_label
+              << "] cannot open UPDATE for MeV summary: " << input_filepath
+              << std::endl;
+    if (input_file)
+      delete input_file;
+    return;
+  }
+  TTree *input_tree = static_cast<TTree *>(input_file->Get("events"));
+  if (!input_tree) {
+    std::cerr << "[" << file_label << "] no events tree for MeV summary"
+              << std::endl;
+    input_file->Close();
+    delete input_file;
+    return;
+  }
+  TFile *cal_file =
+      (spec.run >= 0) ? AttachCalSidecar(input_tree, spec) : nullptr;
+  if (!cal_file) {
+    std::cout << "[" << file_label
+              << "] no cal sidecar; skipping MeV summary build" << std::endl;
+    input_file->Close();
+    delete input_file;
+    return;
+  }
+
+  EnergyView ev;
+  ev.Attach(input_tree);
+  if (!ev.is_mev) {
+    std::cerr << "[" << file_label
+              << "] cal sidecar attached but no MeV branches; aborting"
+              << std::endl;
+    input_file->Close();
+    delete input_file;
+    cal_file->Close();
+    delete cal_file;
+    return;
+  }
+
+  Bool_t is_complete = kFALSE;
+  UInt_t flags_or = 0;
+  Int_t cathode_raw = 0;
+  input_tree->SetBranchAddress("IsComplete", &is_complete);
+  input_tree->SetBranchAddress("FlagsOR", &flags_or);
+  input_tree->SetBranchAddress("Cathode", &cathode_raw);
+
+  const Double_t strip_e_min = Constants::STRIP_E_MIN_MEV;
+  const Double_t strip_e_max = Constants::STRIP_E_MAX_MEV;
+  const Double_t total_e_min = Constants::TOTAL_E_MIN_MEV;
+  const Double_t total_e_max = Constants::TOTAL_E_MAX_MEV;
+
+  TH2F *h_music = new TH2F(
+      "hMUSIC_MeV", "MUSIC strip energies (complete events);Strip;Energy [MeV]",
+      18, -0.5, 17.5, 400, strip_e_min, strip_e_max);
+  TH2F *h_music_clean =
+      new TH2F("hMUSICClean_MeV",
+               "MUSIC strip energies (complete, no flags);Strip;Energy [MeV]",
+               18, -0.5, 17.5, 400, strip_e_min, strip_e_max);
+  TH2F *h_music_flagged =
+      new TH2F("hMUSICFlagged_MeV",
+               "MUSIC strip energies (complete, flagged);Strip;Energy [MeV]",
+               18, -0.5, 17.5, 400, strip_e_min, strip_e_max);
+  TH2F *h2_strip[18];
+  for (Int_t s = 0; s < 18; s++) {
+    h2_strip[s] =
+        new TH2F(Form("h2_totalE_vs_stripE_s%d_MeV", s),
+                 Form(";Strip %d #DeltaE [MeV];Total #DeltaE [MeV]", s), 200,
+                 strip_e_min, strip_e_max, 400, total_e_min, total_e_max);
+  }
+  TH2F *h2_cath = new TH2F("h2_totalE_vs_cathode_MeV",
+                           ";Cathode #DeltaE [MeV];Total #DeltaE [MeV]", 200,
+                           0.0, total_e_max, 400, total_e_min, total_e_max);
+
+  Long64_t n_entries = input_tree->GetEntries();
+  std::cout << "[" << file_label << "] rebuilding MeV summary over "
+            << n_entries << " events..." << std::endl;
+  for (Long64_t j = 0; j < n_entries; j++) {
+    input_tree->GetEntry(j);
+    if (!is_complete)
+      continue;
+    ev.Decode();
+    Double_t event_total = 0.0;
+    for (Int_t s = 0; s < 18; s++)
+      event_total += ev.total[s];
+    Bool_t has_any_flag = (flags_or != 0);
+    for (Int_t s = 0; s < 18; s++) {
+      h_music->Fill(Double_t(s), ev.total[s]);
+      if (has_any_flag)
+        h_music_flagged->Fill(Double_t(s), ev.total[s]);
+      else
+        h_music_clean->Fill(Double_t(s), ev.total[s]);
+      h2_strip[s]->Fill(ev.total[s], event_total);
+    }
+    if (cathode_raw != -1)
+      h2_cath->Fill(ev.cathode, event_total);
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(g_plot_mutex);
+    TString music_subdir = "events_nearest_mev/" + file_label;
+    TString trace_subdir = "trace_summary_mev/" + file_label;
+    WriteH2CanvasToFile(input_file, h_music, "music_strip_energies_mev",
+                        music_subdir);
+    WriteH2CanvasToFile(input_file, h_music_clean,
+                        "music_strip_energies_clean_mev", music_subdir);
+    WriteH2CanvasToFile(input_file, h_music_flagged,
+                        "music_strip_energies_flagged_mev", music_subdir);
+    for (Int_t s = 0; s < 18; s++)
+      WriteH2CanvasToFile(input_file, h2_strip[s],
+                          Form("totalE_vs_stripE_s%d_mev", s), trace_subdir);
+    WriteH2CanvasToFile(input_file, h2_cath, "totalE_vs_cathode_mev",
+                        trace_subdir);
+  }
+
+  for (Int_t s = 0; s < 18; s++)
+    delete h2_strip[s];
+  delete h_music;
+  delete h_music_clean;
+  delete h_music_flagged;
+  delete h2_cath;
+
+  input_file->Close();
+  delete input_file;
+  cal_file->Close();
+  delete cal_file;
+}
 
 inline void BuildTraces(std::vector<TString> input_filenames,
                         std::vector<TString> file_labels,
@@ -42,6 +189,10 @@ inline void BuildTraces(std::vector<TString> input_filenames,
       continue;
     }
 
+    FileSpec spec = ResolveFileSpec(file_label);
+    TFile *cal_file =
+        (spec.run >= 0) ? AttachCalSidecar(input_tree, spec) : nullptr;
+
     EnergyView ev;
     ev.Attach(input_tree);
     if (!ev.is_mev)
@@ -64,15 +215,19 @@ inline void BuildTraces(std::vector<TString> input_filenames,
       input_tree->GetEntry(j);
       ev.Decode();
 
-      TGraph *TraceTotal = new TGraph(18);
-      TGraph *TraceLeft = new TGraph(18);
-      TGraph *TraceRight = new TGraph(18);
-      for (Int_t k = 0; k < 18; k++) {
-        TraceTotal->SetPoint(k, k, ev.total[k]);
-        Double_t l = (k == 0 || k == 17) ? 0.0 : ev.left[k];
-        Double_t r = (k == 0 || k == 17) ? 0.0 : ev.right[k];
-        TraceLeft->SetPoint(k, k, l);
-        TraceRight->SetPoint(k, k, r);
+      Int_t s_lo = Constants::FirstStrip();
+      Int_t s_hi = Constants::LastStrip();
+      Int_t n_pts = s_hi - s_lo + 1;
+      TGraph *TraceTotal = new TGraph(n_pts);
+      TGraph *TraceLeft = new TGraph(n_pts);
+      TGraph *TraceRight = new TGraph(n_pts);
+      for (Int_t k = 0; k < n_pts; k++) {
+        Int_t s = s_lo + k;
+        TraceTotal->SetPoint(k, s, ev.total[s]);
+        Double_t l = (s == 0 || s == 17) ? 0.0 : ev.left[s];
+        Double_t r = (s == 0 || s == 17) ? 0.0 : ev.right[s];
+        TraceLeft->SetPoint(k, s, l);
+        TraceRight->SetPoint(k, s, r);
       }
       TString total_title =
           Form("Event %lld;Strip Index;#DeltaE [%s]", j, unit);
@@ -98,8 +253,9 @@ inline void BuildTraces(std::vector<TString> input_filenames,
         TraceTotal->Draw("ALP");
         TraceLeft->Draw("LP SAME");
         TraceRight->Draw("LP SAME");
-        PlottingUtils::SaveFigure(c, "trace_" + trace_tag, trace_subdir,
-                                  PlotSaveOptions::kLINEAR);
+        if (Constants::SAVE_PLOTS)
+          PlottingUtils::SaveFigure(c, "trace_" + trace_tag, trace_subdir,
+                                    PlotSaveOptions::kLINEAR);
         delete c;
 
         std::cout << "Saved event " << j << " under " << trace_subdir
@@ -113,6 +269,13 @@ inline void BuildTraces(std::vector<TString> input_filenames,
 
     input_file->Close();
     delete input_file;
+    Bool_t had_cal = (cal_file != nullptr);
+    if (cal_file) {
+      cal_file->Close();
+      delete cal_file;
+    }
+    if (had_cal)
+      BuildMeVSummaryHistograms(input_filename, file_label, spec);
     std::cout << "Finished processing " << input_filename << std::endl;
   }
 }

@@ -1,5 +1,4 @@
 #include "Pipeline.hpp"
-#include "BeamCalibration.hpp"
 #include "BinaryToRoot.hpp"
 #include "BinaryUtils.hpp"
 #include "Constants.hpp"
@@ -145,15 +144,6 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
   std::vector<TString> events_name_vec = {EventsName(spec)};
   std::vector<TString> file_labels_vec = {file_label};
 
-  if (Constants::RUN_BEAM_CALIBRATION) {
-    TString sim_beam_path =
-        BeamCal::SimBeamPath(Paths::ProjectRootOf(__FILE__));
-    t0 = std::chrono::steady_clock::now();
-    BuildBeamCalibration(events_name_vec, file_labels_vec, sim_beam_path,
-                         kTRUE);
-    t_cal = FusedSecSince(t0);
-    PrintMemUsage((TString("after cal ") + file_label).Data());
-  }
   if (Constants::RUN_TRACES) {
     t0 = std::chrono::steady_clock::now();
     BuildTraces(events_name_vec, file_labels_vec, kTRUE, kTRUE);

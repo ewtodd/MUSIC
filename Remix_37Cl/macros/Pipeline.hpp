@@ -14,7 +14,7 @@ struct FileSpec {
 };
 
 inline std::vector<FileSpec> BuildFileSpecs() {
-  return {{"aa"}, {"an"}, {"beam"}};
+  return {{"aa"}, {"an"}, {"beam"}, {"aa_eres"}, {"an_eres"}, {"beam_eres"}};
 }
 
 inline TString TracesName(const FileSpec &s) {

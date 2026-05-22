@@ -19,14 +19,11 @@ inline TString ProjectRootOf(const char *file) {
 
 namespace Constants {
 
-inline const std::vector<Int_t> RUN_NUMBERS = {12, 13, 14, 16, 17,
-                                               18, 19, 20, 37};
+inline const std::vector<Int_t> RUN_NUMBERS = {16};
 
-// N_FILES = -1 for all
 const Int_t N_FILES = -1;
 
-inline const TString COMPASS_BASE_DIR =
-    "/run/media/e-work/B16A-129A/LabData/MUSIC/";
+inline const TString COMPASS_BASE_DIR = "/home/e-work/LabData/MUSIC/37Cl/";
 
 const Int_t N_BOARDS = 4;
 const Int_t N_CHANNELS = 16;
@@ -45,20 +42,24 @@ const Int_t MAX_TRACE_SAVES = 10;
 const Bool_t REJECT_FLAGGED_EVENTS = kFALSE;
 
 // Post EventBuilder only!
-const Bool_t IGNORE_SHORT_STRIPS = kTRUE;
+const Bool_t IGNORE_SHORT_STRIPS = kFALSE;
+const Bool_t IGNORE_STRIP_0 = kFALSE;
+const Bool_t IGNORE_STRIP_17 = kFALSE;
 
-// Fused pipeline stage controls.
 const Bool_t SKIP_EXISTING = kTRUE;
-const Bool_t RUN_BEAM_CALIBRATION = kFALSE;
 const Bool_t RUN_TRACES = kTRUE;
 
-const Int_t MAX_FUSED_WORKERS = 16;
+const Bool_t BEAM_CAL_REDRAW_CUTS = kFALSE;
 
-const Bool_t USE_NEAREST_TO_GRID = kTRUE;
+const Bool_t SAVE_PLOTS = kTRUE;
+
+const Int_t MAX_FUSED_WORKERS = 16;
+const Int_t MAX_DIAGNOSE_WORKERS = 32;
+
+const Bool_t USE_NEAREST_TO_GRID = kFALSE;
 const Bool_t SAVE_PER_CHANNEL_TIMESTAMPS_FLAGS = kFALSE;
 
 const Bool_t USE_GPU_ACCELERATION = kTRUE;
-// Cap concurrent GPU sorts to avoid cudaErrorMemoryAllocation
 const Int_t MAX_GPU_CONCURRENT_SORTS = 5;
 
 inline Char_t LongAnodeSide(Int_t strip) {
@@ -74,6 +75,13 @@ inline Bool_t IsLongSide(Int_t strip, Char_t side) {
 inline Bool_t IsShortSide(Int_t strip, Char_t side) {
   return strip >= 1 && strip <= 16 && (side == 'L' || side == 'R') &&
          side != LongAnodeSide(strip);
+}
+
+inline Int_t FirstStrip() { return IGNORE_STRIP_0 ? 1 : 0; }
+inline Int_t LastStrip() { return IGNORE_STRIP_17 ? 16 : 17; }
+inline Int_t NumActiveStrips() { return LastStrip() - FirstStrip() + 1; }
+inline Bool_t IsActiveStrip(Int_t strip) {
+  return strip >= FirstStrip() && strip <= LastStrip();
 }
 
 const Long64_t BASELINE_MIN_ENTRIES = 500;

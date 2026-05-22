@@ -2,8 +2,11 @@
 #define PIPELINE_HPP
 
 #include "Constants.hpp"
+#include "IOUtils.hpp"
+#include <TFile.h>
 #include <TString.h>
 #include <TSystem.h>
+#include <TTree.h>
 #include <algorithm>
 #include <iostream>
 #include <mutex>
@@ -101,11 +104,34 @@ inline TString ShiftFriendName(const FileSpec &s) {
 inline TString EventsName(const FileSpec &s) {
   return Form("Events_Run%d%s", s.run, s.suffix.Data());
 }
-inline TString TracesSidecarName(const FileSpec &s) {
-  return Form("Events_Run%d%s.traces.root", s.run, s.suffix.Data());
+inline TString CalSidecarName(const FileSpec &s) {
+  return Form("Events_Run%d%s.cal.root", s.run, s.suffix.Data());
 }
 inline TString FileLabel(const FileSpec &s) {
   return Form("run%d%s", s.run, s.suffix.Data());
+}
+
+// Attach the per-subfile calibration sidecar as a TTree friend so EnergyView
+// (via FindBranch) sees TotaldEMeV/etc. Returns the opened sidecar TFile
+// (caller closes after the events file is done) or nullptr if no sidecar.
+inline TFile *AttachCalSidecar(TTree *events, const FileSpec &spec) {
+  TString cal_subpath = CalSidecarName(spec);
+  TString full = IO::GetRootFilesBaseDir() + "/" + cal_subpath;
+  if (gSystem->AccessPathName(full))
+    return nullptr;
+  TFile *cal = IO::OpenForReading(cal_subpath);
+  if (!cal || cal->IsZombie()) {
+    if (cal)
+      delete cal;
+    return nullptr;
+  }
+  if (!cal->Get("events_cal")) {
+    cal->Close();
+    delete cal;
+    return nullptr;
+  }
+  events->AddFriend("events_cal", full);
+  return cal;
 }
 
 inline FileSpec ResolveFileSpec(const TString &file_label) {

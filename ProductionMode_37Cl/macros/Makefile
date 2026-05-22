@@ -15,7 +15,7 @@
 
 CXX       := g++
 ROOT_CFLAGS := $(shell root-config --cflags)
-ROOT_LIBS   := $(shell root-config --libs)
+ROOT_LIBS   := $(shell root-config --glibs)
 
 # The nix gcc-wrapper strips -march=native unless this is cleared.
 # Make exports the empty value to every recipe sub-shell.
@@ -32,7 +32,7 @@ CXXFLAGS  := -O3 -g -Wall -Wno-unused-variable -fPIC -std=c++17 \
              '-DR__ADD_INCLUDE_PATH(...)=' \
              -MMD -MP
 LDFLAGS   := -Wl,--gc-sections $(ROOT_LIBS) \
-             -l:lib-analysis-utils.so -ldl -lpthread
+             -l:libanalysis-utils.so -ldl -lpthread
 
 # Shared library objects linked into every binary.
 LIB_OBJS  := $(BUILD_DIR)/Timing.o $(BUILD_DIR)/EventBuilder.o \
@@ -42,21 +42,31 @@ LIB_OBJS  := $(BUILD_DIR)/Timing.o $(BUILD_DIR)/EventBuilder.o \
 PIPELINE_OBJ := $(BUILD_DIR)/Pipeline.o
 CATHODE_OBJ  := $(BUILD_DIR)/CathodeAnodeRatio.o
 REGION_OBJ   := $(BUILD_DIR)/RegionTraces.o
+CALIB_OBJ    := $(BUILD_DIR)/CalibrateBeam.o
+TRACES_OBJ   := $(BUILD_DIR)/Traces.o
 
 DIAG_TIM_OBJ  := $(BUILD_DIR)/DiagnoseTiming.o
 DIAG_EVT_OBJ  := $(BUILD_DIR)/DiagnoseEvents.o
 DIAG_GAIN_OBJ := $(BUILD_DIR)/DiagnoseGainDrift.o
+DIAG_SUB_OBJ  := $(BUILD_DIR)/DiagnoseSubfileDrift.o
+DIAG_RATE_OBJ := $(BUILD_DIR)/DiagnoseSubfileRate.o
 
 MAIN_OBJS := $(BUILD_DIR)/main_pipeline.o \
              $(BUILD_DIR)/main_cathode_anode.o \
              $(BUILD_DIR)/main_region_traces.o \
+             $(BUILD_DIR)/main_calibrate_beam.o \
+             $(BUILD_DIR)/main_traces.o \
              $(BUILD_DIR)/main_diag_timing.o \
              $(BUILD_DIR)/main_diag_events.o \
-             $(BUILD_DIR)/main_diag_gain_drift.o
+             $(BUILD_DIR)/main_diag_gain_drift.o \
+             $(BUILD_DIR)/main_diag_subfile_drift.o \
+             $(BUILD_DIR)/main_diag_subfile_rate.o
 
 BINS := $(BIN_DIR)/pipeline $(BIN_DIR)/cathode-anode $(BIN_DIR)/region-traces \
+        $(BIN_DIR)/calibrate-beam $(BIN_DIR)/traces \
         $(BIN_DIR)/diag-timing $(BIN_DIR)/diag-events \
-        $(BIN_DIR)/diag-gain-drift
+        $(BIN_DIR)/diag-gain-drift $(BIN_DIR)/diag-subfile-drift \
+        $(BIN_DIR)/diag-subfile-rate
 
 .PHONY: all gpu clean clean-aclic
 
@@ -91,6 +101,12 @@ $(BIN_DIR)/cathode-anode: $(BUILD_DIR)/main_cathode_anode.o $(CATHODE_OBJ) $(LIB
 $(BIN_DIR)/region-traces: $(BUILD_DIR)/main_region_traces.o $(REGION_OBJ) $(LIB_OBJS) | $(BIN_DIR)
 	$(CXX) -o $@ $^ $(LDFLAGS)
 
+$(BIN_DIR)/calibrate-beam: $(BUILD_DIR)/main_calibrate_beam.o $(CALIB_OBJ) $(LIB_OBJS) | $(BIN_DIR)
+	$(CXX) -o $@ $^ $(LDFLAGS)
+
+$(BIN_DIR)/traces: $(BUILD_DIR)/main_traces.o $(TRACES_OBJ) $(LIB_OBJS) | $(BIN_DIR)
+	$(CXX) -o $@ $^ $(LDFLAGS)
+
 $(BIN_DIR)/diag-timing: $(BUILD_DIR)/main_diag_timing.o $(DIAG_TIM_OBJ) $(LIB_OBJS) | $(BIN_DIR)
 	$(CXX) -o $@ $^ $(LDFLAGS)
 
@@ -100,17 +116,29 @@ $(BIN_DIR)/diag-events: $(BUILD_DIR)/main_diag_events.o $(DIAG_EVT_OBJ) $(LIB_OB
 $(BIN_DIR)/diag-gain-drift: $(BUILD_DIR)/main_diag_gain_drift.o $(DIAG_GAIN_OBJ) $(LIB_OBJS) | $(BIN_DIR)
 	$(CXX) -o $@ $^ $(LDFLAGS)
 
+$(BIN_DIR)/diag-subfile-drift: $(BUILD_DIR)/main_diag_subfile_drift.o $(DIAG_SUB_OBJ) $(LIB_OBJS) | $(BIN_DIR)
+	$(CXX) -o $@ $^ $(LDFLAGS)
+
+$(BIN_DIR)/diag-subfile-rate: $(BUILD_DIR)/main_diag_subfile_rate.o $(DIAG_RATE_OBJ) $(LIB_OBJS) | $(BIN_DIR)
+	$(CXX) -o $@ $^ $(LDFLAGS)
+
 # Convenience shortcuts so `make pipeline` etc. still work.
-.PHONY: pipeline cathode-anode region-traces diag-timing diag-events diag-gain-drift
-pipeline:        $(BIN_DIR)/pipeline
-cathode-anode:   $(BIN_DIR)/cathode-anode
-region-traces:   $(BIN_DIR)/region-traces
-diag-timing:     $(BIN_DIR)/diag-timing
-diag-events:     $(BIN_DIR)/diag-events
-diag-gain-drift: $(BIN_DIR)/diag-gain-drift
+.PHONY: pipeline cathode-anode region-traces calibrate-beam traces diag-timing diag-events diag-gain-drift diag-subfile-drift diag-subfile-rate
+pipeline:           $(BIN_DIR)/pipeline
+cathode-anode:      $(BIN_DIR)/cathode-anode
+region-traces:      $(BIN_DIR)/region-traces
+calibrate-beam:     $(BIN_DIR)/calibrate-beam
+traces:             $(BIN_DIR)/traces
+diag-timing:        $(BIN_DIR)/diag-timing
+diag-events:        $(BIN_DIR)/diag-events
+diag-gain-drift:    $(BIN_DIR)/diag-gain-drift
+diag-subfile-drift: $(BIN_DIR)/diag-subfile-drift
+diag-subfile-rate:  $(BIN_DIR)/diag-subfile-rate
 
 ALL_OBJS := $(LIB_OBJS) $(PIPELINE_OBJ) $(CATHODE_OBJ) $(REGION_OBJ) \
-            $(DIAG_TIM_OBJ) $(DIAG_EVT_OBJ) $(DIAG_GAIN_OBJ) $(MAIN_OBJS)
+            $(CALIB_OBJ) $(TRACES_OBJ) \
+            $(DIAG_TIM_OBJ) $(DIAG_EVT_OBJ) $(DIAG_GAIN_OBJ) $(DIAG_SUB_OBJ) \
+            $(DIAG_RATE_OBJ) $(MAIN_OBJS)
 -include $(ALL_OBJS:.o=.d)
 
 clean: clean-aclic

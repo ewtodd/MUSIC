@@ -10,6 +10,7 @@
 #include <TH1F.h>
 #include <TH2F.h>
 #include <TObject.h>
+#include <TParameter.h>
 #include <TString.h>
 #include <TTree.h>
 #include <iostream>
@@ -34,16 +35,16 @@ struct EventCounters {
   Long64_t dropped_cathode_hits_total;
 };
 
-static void
-FinalizeEvent(NearestGrid::EventState &e, NearestGrid::PerChannelData *pc,
-              Bool_t write_per_channel, TTree *output_tree,
-              Int_t *leftdE_branch, Int_t *rightdE_branch,
-              Int_t *totaldE_branch, ULong64_t *all_timestamps_branch,
-              UInt_t *all_flags_branch, Int_t *hits_branch,
-              Int_t &cathode_branch, Int_t &grid_branch,
-              UInt_t &flags_or_branch, Bool_t &is_complete_branch,
-              TH2F *h_music, TH2F *h_music_clean, TH2F *h_music_flagged,
-              TH1F *h_mult, TH2F *h2_totalE_vs_stripE[18], EventCounters &c) {
+static void FinalizeEvent(
+    NearestGrid::EventState &e, NearestGrid::PerChannelData *pc,
+    Bool_t write_per_channel, TTree *output_tree, Int_t *leftdE_branch,
+    Int_t *rightdE_branch, Int_t *totaldE_branch,
+    ULong64_t *all_timestamps_branch, UInt_t *all_flags_branch,
+    Int_t *hits_branch, Int_t &cathode_branch, Int_t &grid_branch,
+    UInt_t &flags_or_branch, Bool_t &is_complete_branch, TH2F *h_music,
+    TH2F *h_music_clean, TH2F *h_music_flagged, TH1F *h_mult,
+    TH2F *h2_totalE_vs_stripE[18], TH2F *h2_totalE_vs_short[18],
+    TH2F *h2_totalE_vs_cathode, EventCounters &c) {
   for (Int_t s = 1; s < 17; s++)
     e.totaldE[s] = e.leftdE[s] + e.rightdE[s];
 
@@ -102,6 +103,15 @@ FinalizeEvent(NearestGrid::EventState &e, NearestGrid::PerChannelData *pc,
           h_music_clean->Fill(Double_t(s), Double_t(e.totaldE[s]));
         h2_totalE_vs_stripE[s]->Fill(Double_t(e.totaldE[s]), event_total);
       }
+      for (Int_t s = 1; s <= 16; s++) {
+        // Short side: opposite of LongAnodeSide. Odd strips -> R short,
+        // even strips -> L short.
+        Int_t short_val = (s % 2 == 1) ? e.rightdE[s] : e.leftdE[s];
+        if (short_val > 0)
+          h2_totalE_vs_short[s]->Fill(Double_t(short_val), event_total);
+      }
+      if (e.had_cathode)
+        h2_totalE_vs_cathode->Fill(Double_t(e.cathode), event_total);
       Int_t mult = 0;
       for (Int_t k = 0; k < 36; k++)
         mult += e.hits[k];
@@ -192,11 +202,27 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
 
   TH2F *h2_totalE_vs_stripE[18];
   for (Int_t s = 0; s < 18; s++) {
+    // Strip 0 dynamic range exceeds the L/R-tuned default; widen so its
+    // beam + pileup peaks fit on the calibration h2.
+    Double_t strip_e_max = (s == 0) ? 10000.0 : Constants::STRIP_E_MAX_ADC;
     h2_totalE_vs_stripE[s] =
         new TH2F(Form("h2_totalE_vs_stripE_s%d", s),
                  Form(";Strip %d #DeltaE [ADC];Total #DeltaE [ADC]", s), 200,
-                 Constants::STRIP_E_MIN_ADC, Constants::STRIP_E_MAX_ADC, 400,
+                 Constants::STRIP_E_MIN_ADC, strip_e_max, 400,
                  Constants::TOTAL_E_MIN_ADC, Constants::TOTAL_E_MAX_ADC);
+  }
+  TH2F *h2_totalE_vs_cathode =
+      new TH2F("h2_totalE_vs_cathode",
+               ";Cathode #DeltaE [ADC];Total #DeltaE [ADC]", 200, 0.0, 16384.0,
+               400, Constants::TOTAL_E_MIN_ADC, Constants::TOTAL_E_MAX_ADC);
+  // Short-side per-strip h2s for split strips 1..16. Indices 0 and 17 unused.
+  TH2F *h2_totalE_vs_short[18] = {nullptr};
+  for (Int_t s = 1; s <= 16; s++) {
+    h2_totalE_vs_short[s] = new TH2F(
+        Form("h2_totalE_vs_short_s%d", s),
+        Form(";Strip %d short-side #DeltaE [ADC];Total #DeltaE [ADC]", s), 200,
+        Constants::STRIP_E_MIN_ADC, Constants::STRIP_E_MAX_ADC, 400,
+        Constants::TOTAL_E_MIN_ADC, Constants::TOTAL_E_MAX_ADC);
   }
 
   Long64_t n_entries = Long64_t(hits.size());
@@ -249,6 +275,8 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   Long64_t &dropped_cathode_hits_total = cnt.dropped_cathode_hits_total;
 
   Int_t n_grids = 0;
+  ULong64_t first_grid_ts = 0;
+  ULong64_t last_grid_ts = 0;
   Int_t emptyChannelMapEvents = 0;
   Long64_t cathode_hits_total = 0;
 
@@ -309,7 +337,8 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
                       leftdE, rightdE, totaldE, all_timestamps, all_flags,
                       hits_arr, cathode, grid, flags_or, is_complete, h_music,
                       h_music_clean, h_music_flagged, h_mult,
-                      h2_totalE_vs_stripE, cnt);
+                      h2_totalE_vs_stripE, h2_totalE_vs_short,
+                      h2_totalE_vs_cathode, cnt);
       } else {
         // First grid: initialise cur and flush all pending into it. Pending
         // here only contains hits with timestamps before the first grid;
@@ -330,6 +359,9 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
         }
         pending.clear();
       }
+      if (n_grids == 0)
+        first_grid_ts = h.timestamp;
+      last_grid_ts = h.timestamp;
       n_grids++;
     } else {
       if (slot == NearestGrid::kSlotCathode)
@@ -358,7 +390,8 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     FinalizeEvent(cur_event, pc_cur, write_per_channel, output_tree, leftdE,
                   rightdE, totaldE, all_timestamps, all_flags, hits_arr,
                   cathode, grid, flags_or, is_complete, h_music, h_music_clean,
-                  h_music_flagged, h_mult, h2_totalE_vs_stripE, cnt);
+                  h_music_flagged, h_mult, h2_totalE_vs_stripE,
+                  h2_totalE_vs_short, h2_totalE_vs_cathode, cnt);
   }
 
   std::cout << "Found " << n_grids << " grid hits." << std::endl;
@@ -373,10 +406,19 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     delete h_mult;
     for (Int_t s = 0; s < 18; s++)
       delete h2_totalE_vs_stripE[s];
+    for (Int_t s = 1; s <= 16; s++)
+      delete h2_totalE_vs_short[s];
+    delete h2_totalE_vs_cathode;
     return kFALSE;
   }
 
+  Double_t span_s = (last_grid_ts > first_grid_ts)
+                        ? Double_t(last_grid_ts - first_grid_ts) / 1e12
+                        : 0.0;
+  Double_t grid_rate_hz = (span_s > 0.0) ? Double_t(n_grids) / span_s : 0.0;
+
   output_file->cd();
+  TParameter<Double_t>("grid_rate_hz", grid_rate_hz).Write();
   output_tree->Write("events", TObject::kOverwrite);
   h_mult->Write("", TObject::kOverwrite);
 
@@ -388,8 +430,9 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     PlottingUtils::ConfigureAndDraw2DHistogram(h_music, c_music);
     h_music->GetYaxis()->SetTitleOffset(1.4);
     c_music->SetLeftMargin(0.18);
-    PlottingUtils::SaveFigure(c_music, "music_strip_energies", subdir,
-                              PlotSaveOptions::kLINEAR);
+    if (Constants::SAVE_PLOTS)
+      PlottingUtils::SaveFigure(c_music, "music_strip_energies", subdir,
+                                PlotSaveOptions::kLINEAR);
     output_file->cd();
     c_music->Write(h_music->GetName(), TObject::kOverwrite);
     delete c_music;
@@ -398,8 +441,9 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     PlottingUtils::ConfigureAndDraw2DHistogram(h_music_clean, c_music_clean);
     h_music_clean->GetYaxis()->SetTitleOffset(1.4);
     c_music_clean->SetLeftMargin(0.18);
-    PlottingUtils::SaveFigure(c_music_clean, "music_strip_energies_clean",
-                              subdir, PlotSaveOptions::kLINEAR);
+    if (Constants::SAVE_PLOTS)
+      PlottingUtils::SaveFigure(c_music_clean, "music_strip_energies_clean",
+                                subdir, PlotSaveOptions::kLINEAR);
     output_file->cd();
     c_music_clean->Write(h_music_clean->GetName(), TObject::kOverwrite);
     delete c_music_clean;
@@ -409,16 +453,18 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
                                                c_music_flagged);
     h_music_flagged->GetYaxis()->SetTitleOffset(1.4);
     c_music_flagged->SetLeftMargin(0.18);
-    PlottingUtils::SaveFigure(c_music_flagged, "music_strip_energies_flagged",
-                              subdir, PlotSaveOptions::kLINEAR);
+    if (Constants::SAVE_PLOTS)
+      PlottingUtils::SaveFigure(c_music_flagged, "music_strip_energies_flagged",
+                                subdir, PlotSaveOptions::kLINEAR);
     output_file->cd();
     c_music_flagged->Write(h_music_flagged->GetName(), TObject::kOverwrite);
     delete c_music_flagged;
 
     TCanvas *c_mult = PlottingUtils::GetConfiguredCanvas(kFALSE);
     PlottingUtils::ConfigureAndDrawHistogram(h_mult, kBlue + 1);
-    PlottingUtils::SaveFigure(c_mult, "multiplicity", subdir,
-                              PlotSaveOptions::kLOG);
+    if (Constants::SAVE_PLOTS)
+      PlottingUtils::SaveFigure(c_mult, "multiplicity", subdir,
+                                PlotSaveOptions::kLOG);
     delete c_mult;
 
     TString trace_summary_subdir = "trace_summary/" + file_label;
@@ -426,16 +472,44 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
       PlottingUtils::ConfigureAndDraw2DHistogram(h2_totalE_vs_stripE[s], c);
       h2_totalE_vs_stripE[s]->GetYaxis()->SetTitleOffset(1.3);
-      PlottingUtils::SaveFigure(c, Form("totalE_vs_stripE_s%d", s),
-                                trace_summary_subdir, PlotSaveOptions::kLINEAR);
+      if (Constants::SAVE_PLOTS)
+        PlottingUtils::SaveFigure(c, Form("totalE_vs_stripE_s%d", s),
+                                  trace_summary_subdir,
+                                  PlotSaveOptions::kLINEAR);
       output_file->cd();
       c->Write(h2_totalE_vs_stripE[s]->GetName(), TObject::kOverwrite);
+      delete c;
+    }
+
+    TCanvas *c_cath = PlottingUtils::GetConfiguredCanvas(kFALSE);
+    PlottingUtils::ConfigureAndDraw2DHistogram(h2_totalE_vs_cathode, c_cath);
+    h2_totalE_vs_cathode->GetYaxis()->SetTitleOffset(1.3);
+    if (Constants::SAVE_PLOTS)
+      PlottingUtils::SaveFigure(c_cath, "totalE_vs_cathode",
+                                trace_summary_subdir, PlotSaveOptions::kLINEAR);
+    output_file->cd();
+    c_cath->Write(h2_totalE_vs_cathode->GetName(), TObject::kOverwrite);
+    delete c_cath;
+
+    for (Int_t s = 1; s <= 16; s++) {
+      TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      PlottingUtils::ConfigureAndDraw2DHistogram(h2_totalE_vs_short[s], c);
+      h2_totalE_vs_short[s]->GetYaxis()->SetTitleOffset(1.3);
+      if (Constants::SAVE_PLOTS)
+        PlottingUtils::SaveFigure(c, Form("totalE_vs_short_s%d", s),
+                                  trace_summary_subdir,
+                                  PlotSaveOptions::kLINEAR);
+      output_file->cd();
+      c->Write(h2_totalE_vs_short[s]->GetName(), TObject::kOverwrite);
       delete c;
     }
   }
 
   for (Int_t s = 0; s < 18; s++)
     delete h2_totalE_vs_stripE[s];
+  for (Int_t s = 1; s <= 16; s++)
+    delete h2_totalE_vs_short[s];
+  delete h2_totalE_vs_cathode;
 
   output_file->Close();
   delete output_file;
@@ -445,6 +519,8 @@ Bool_t BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
               << " hits with empty entry in channel map." << std::endl;
 
   std::cout << "Grid hits total: " << n_grids << std::endl;
+  std::cout << "Grid trigger rate: " << grid_rate_hz << " Hz over " << span_s
+            << " s" << std::endl;
   std::cout << "Cathode hits total: " << cathode_hits_total
             << " (cathode/grid = "
             << (n_grids > 0 ? Double_t(cathode_hits_total) / n_grids : 0.0)
