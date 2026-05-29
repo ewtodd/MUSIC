@@ -19,7 +19,7 @@ namespace Constants {
 const Int_t N_STRIPS = 18;
 const Int_t MAX_TRACE_SAVES = 10;
 
-const Bool_t IGNORE_SHORT_STRIPS = kTRUE;
+const Bool_t IGNORE_SHORT_STRIPS = kFALSE;
 const Bool_t IGNORE_STRIP_0 = kTRUE;
 const Bool_t IGNORE_STRIP_17 = kTRUE;
 

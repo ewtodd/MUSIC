@@ -68,18 +68,20 @@
             pkgs.cudaPackages.cuda_cccl
           ];
           shellHook = ''
-            echo "Analysis-Utilities version: ${analysis-utils.version}${pkgs.lib.optionalString isCUDA " (CUDA)"}"
+             echo "Analysis-Utilities version: ${analysis-utils.version}${pkgs.lib.optionalString isCUDA " (CUDA)"}"
+             flake_root="$PWD"
             ${pkgs.lib.optionalString isCUDA ''
               export NIX_CFLAGS_COMPILE="-DAU_ROOFIT_BACKEND_CUDA=1''${NIX_CFLAGS_COMPILE:+ $NIX_CFLAGS_COMPILE}"
               export LD_LIBRARY_PATH="/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-            ''}
-            flake_root="$PWD"
-
-            ${pkgs.lib.optionalString isCUDA ''
               install -m 644 ${clangdConfigFile} "$flake_root/gpu/.clangd"
-              export LD_LIBRARY_PATH="$flake_root/gpu''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             ''}
+
             git_root="$(git -C "$flake_root" rev-parse --show-toplevel)"
+
+
+            export CPLUS_INCLUDE_PATH="$PWD/include''${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}"
+            export ROOT_INCLUDE_PATH="$PWD/include''${ROOT_INCLUDE_PATH:+:$ROOT_INCLUDE_PATH}"
+            export LD_LIBRARY_PATH="$PWD/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
             mkdir -p "$flake_root/.claude"
             (
@@ -98,7 +100,6 @@
                 fi
               done
             alias clean-aclic='rm -f *_C.so *_C.d *_C_ACLiC_dict_rdict.pcm *_cpp.so *_cpp.d *_cpp_ACLiC_dict_rdict.pcm *_cxx.so *_cxx.d *_cxx_ACLiC_dict_rdict.pcm AutoDict_*'
-            cd macros  
           '';
         };
       }
