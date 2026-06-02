@@ -1,4 +1,0 @@
-bin/
-build/
-gpu/libgpuaccel.so
-gpu/.clangd

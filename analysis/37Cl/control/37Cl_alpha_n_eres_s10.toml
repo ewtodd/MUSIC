@@ -1,0 +1,93 @@
+[gas]
+species = "4He"     # Fill gas: 4He, 3He, Ar, CF4, CH4, P10, iC4H10
+pressure = 220.0    # Torr
+temperature = 293.0 # K
+
+[beam]
+species = "37Cl"  # Use "AEl" notation
+energy = 92.0     # Beam KE at the accelerator (before entrance window) [MeV]
+energy_fwhm = 0.9 # Beam energy FWHM at accelerator [MeV]
+dedx_scale = 1.0  # Beam stopping power scale factor
+
+[target]
+species = "4He"
+compound = "41K"
+
+[windows.entrance]
+# mg/cm^2 areal density
+material = "Ti"
+thickness_mg_cm2 = 0.9
+
+[windows.exit]
+# mg/cm^2 areal density
+material = "Ti"
+thickness_mg_cm2 = 1.3
+
+[windows.degrader]
+thickness_um = -1
+
+[detector]
+eloss_bins = 555            # Number of bins for y axis
+max_eloss = 10.0            # Max y value [MeV]
+strip = 10
+ignore_short_strips = false # true zeroes 4 cm half-strips on L/R anode branches
+# Per-channel readout noise σ [MeV]. -1 on a given channel disables noise
+# there. Mutually exclusive with a scalar `eres` key in [detector].
+[detector.eres]
+Cathode = 29.442325266525813
+L1 = 0.1115594267307074
+L10 = -1.0
+L11 = 0.10183317794890301
+L12 = -1.0
+L13 = 0.11381636688425356
+L14 = -1.0
+L15 = 0.11416910305764683
+L16 = -1.0
+L2 = -1.0
+L3 = 0.10708286086800278
+L4 = -1.0
+L5 = 0.10693522965996616
+L6 = -1.0
+L7 = 0.10172066860130968
+L8 = -1.0
+L9 = 0.099769155489520589
+R1 = -1.0
+R10 = 0.22128350406719033
+R11 = -1.0
+R12 = 0.26312855479706521
+R13 = -1.0
+R14 = 0.31701291446540036
+R15 = -1.0
+R16 = 0.36677036939504504
+R2 = 0.13627595397566594
+R3 = -1.0
+R4 = 0.14809903493111065
+R5 = -1.0
+R6 = 0.16560526825129118
+R7 = -1.0
+R8 = 0.1849081589697219
+R9 = -1.0
+S0 = 0.49160636344136588
+S17 = 0.61876040547964095
+
+[[reaction.step]]
+[reaction.step.evap]
+name = "n"
+color = 4
+
+[reaction.step.res]
+name = "40K"
+color = 3
+dedx_scale = 1.0
+
+[run]
+n_events = 100000
+threads = 32
+wait = 0
+update = 0
+max_time = 2000.0                                                                # ns
+sim_step = 0.001                                                                 # cm
+method = 0
+output = "/home/e-work/MUSIC/Remix_37Cl/root_files/traces_37Cl_an_eres_s10.root"
+file_opt = "recreate"
+print_opt = 0

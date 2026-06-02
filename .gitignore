@@ -23,3 +23,8 @@ __pycache__
 *.pcm
 result
 *.png
+
+# monorepo: per-dataset binaries (no extension) + editor/junk
+analysis/*/bin/
+.clangd
+\#*\#
