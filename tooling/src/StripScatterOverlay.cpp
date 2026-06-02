@@ -25,9 +25,7 @@ void StripScatterOverlay::PrepareTree(TTree *tree, Float_t *totaldE,
   n_total = tree->GetEntries();
   n_use = (max_points > 0 && n_total > max_points) ? max_points : n_total;
   // Stride-sample so we cover the full file rather than just its head.
-  stride = (n_use > 0) ? (n_total / n_use) : 1;
-  if (stride < 1)
-    stride = 1;
+  stride = FileSet::SampleStride(n_total, max_points);
 }
 
 void StripScatterOverlay::StyleScatter(TGraph *g, Int_t color) {

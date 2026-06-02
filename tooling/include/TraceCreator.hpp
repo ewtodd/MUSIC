@@ -25,6 +25,9 @@ public:
   static void WriteH2CanvasToFile(TFile *file, TH2F *h,
                                   const TString &save_name,
                                   const TString &subdir);
+  // Per-event trace: total #DeltaE vs strip index (0-17, honouring the
+  // IGNORE_STRIP_0/17 config). Caller owns the returned graph.
+  static TGraph *BuildEventTrace(const EnergyView &ev);
   static void BuildMeVSummaryHistograms(const TString &input_filename,
                                         const TString &file_label,
                                         const FileSpec &spec);

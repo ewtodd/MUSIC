@@ -1,5 +1,16 @@
 #include "BeamFit2D.hpp"
 
+namespace {
+// Strip0-vs-Strip1-long-side beam gate geometry, shared by delta-e-scatter and
+// gate-cache (both fit the same calibration beam ellipse).
+const Double_t kGateMin = 0.0;
+const Double_t kGateMax = 12.0;
+const Int_t kGateBins = 240;
+const Double_t kGateNSigma = 2.0;
+const Int_t kSeedHalfBins = 40;
+const Double_t kSeedFrac = 0.30;
+} // namespace
+
 void BeamFitUtils::DiagonalizeCov(const BeamFit2D &b, Double_t &major,
                                   Double_t &minor, Double_t &theta_deg) {
   Double_t vx = b.sigma_x * b.sigma_x;
@@ -113,4 +124,87 @@ BeamFit2D BeamFitUtils::FitBigausInWindow(TH2F *h, Double_t x_lo, Double_t x_hi,
   }
   delete f;
   return out;
+}
+
+Double_t BeamFitUtils::GateNSigma() { return kGateNSigma; }
+
+// Pass 1: build the gate H2 (S0 vs L1) for the chain.
+TH2F *BeamFitUtils::BuildGateHist(TChain *chain, const TString &name) {
+  Float_t leftdE[18] = {0};
+  Float_t rightdE[18] = {0};
+  chain->SetBranchStatus("*", 0);
+  chain->SetBranchStatus("LeftdEMeV", 1);
+  chain->SetBranchStatus("RightdEMeV", 1);
+  chain->SetBranchAddress("LeftdEMeV", leftdE);
+  chain->SetBranchAddress("RightdEMeV", rightdE);
+
+  TH2F *h = new TH2F(name, ";#DeltaE S0 [MeV];#DeltaE L1 [MeV]", kGateBins,
+                     kGateMin, kGateMax, kGateBins, kGateMin, kGateMax);
+  h->SetDirectory(nullptr);
+
+  Long64_t n = chain->GetEntries();
+  for (Long64_t j = 0; j < n; j++) {
+    chain->GetEntry(j);
+    Double_t x = Double_t(leftdE[1]);
+    Double_t y = Double_t(rightdE[2]);
+    if (x > 0 && y > 0)
+      h->Fill(x, y);
+  }
+  return h;
+}
+
+// Moments-seeded bigaus fit on the single largest peak.
+BeamFit2D BeamFitUtils::FitBigPeak(TH2F *h, const TString &tag) {
+  BeamFit2D out;
+  if (!h || h->GetEntries() < 100)
+    return out;
+
+  Double_t bw_x = h->GetXaxis()->GetBinWidth(1);
+  Double_t bw_y = h->GetYaxis()->GetBinWidth(1);
+
+  Int_t bx = 0, by = 0, bz = 0;
+  h->GetMaximumBin(bx, by, bz);
+  Double_t peak_val = h->GetBinContent(bx, by);
+  if (peak_val <= 0)
+    return out;
+
+  Int_t lo_bx = std::max(1, bx - kSeedHalfBins);
+  Int_t hi_bx = std::min(h->GetNbinsX(), bx + kSeedHalfBins);
+  Int_t lo_by = std::max(1, by - kSeedHalfBins);
+  Int_t hi_by = std::min(h->GetNbinsY(), by + kSeedHalfBins);
+
+  Moments2D m = ComputeMoments(h, lo_bx, hi_bx, lo_by, hi_by,
+                               kSeedFrac * peak_val, bw_x, bw_y);
+  if (m.weight <= 0) {
+    std::cerr << "  FitBigPeak " << tag << ": no bins above seed threshold"
+              << std::endl;
+    return out;
+  }
+
+  Double_t x_lo = std::max(h->GetXaxis()->GetXmin(), m.mu_x - 3.0 * m.sigma_x);
+  Double_t x_hi = std::min(h->GetXaxis()->GetXmax(), m.mu_x + 3.0 * m.sigma_x);
+  Double_t y_lo = std::max(h->GetYaxis()->GetXmin(), m.mu_y - 3.0 * m.sigma_y);
+  Double_t y_hi = std::min(h->GetYaxis()->GetXmax(), m.mu_y + 3.0 * m.sigma_y);
+
+  out = FitBigausInWindow(h, x_lo, x_hi, y_lo, y_hi, m, peak_val,
+                          Form("f_gate_%s", tag.Data()),
+                          TString("FitBigPeak ") + tag);
+
+  std::cout << "  gate fit " << tag << ": mu=(" << out.mu_x << "," << out.mu_y
+            << ") sigma=(" << out.sigma_x << "," << out.sigma_y
+            << ") rho=" << out.rho << std::endl;
+  return out;
+}
+
+void BeamFitUtils::DrawGateEllipse(const BeamFit2D &gate, Double_t n_sigma) {
+  if (!gate.ok)
+    return;
+  Double_t major, minor, theta_deg;
+  DiagonalizeCov(gate, major, minor, theta_deg);
+  TEllipse *e = new TEllipse(gate.mu_x, gate.mu_y, n_sigma * major,
+                             n_sigma * minor, 0.0, 360.0, theta_deg);
+  e->SetFillStyle(0);
+  e->SetLineColor(kRed + 1);
+  e->SetLineWidth(2);
+  e->Draw();
 }

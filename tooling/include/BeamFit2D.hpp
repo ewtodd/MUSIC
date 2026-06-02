@@ -2,6 +2,8 @@
 #define BEAM_FIT_2D_HPP
 
 #include <Rtypes.h>
+#include <TChain.h>
+#include <TEllipse.h>
 #include <TF2.h>
 #include <TFitResult.h>
 #include <TH2F.h>
@@ -50,6 +52,17 @@ public:
                                      Double_t y_lo, Double_t y_hi,
                                      const Moments2D &seed, Double_t seed_amp,
                                      const TString &fname, const TString &tag);
+
+  // Shared Strip0-vs-Strip1-long-side beam gate (delta-e-scatter, gate-cache):
+  // GateNSigma() is the ellipse half-width in sigma; BuildGateHist fills the 2D
+  // MeV histogram; FitBigPeak moments-seeds a bigaus on its largest peak.
+  static Double_t GateNSigma();
+  static TH2F *BuildGateHist(TChain *chain, const TString &name);
+  static BeamFit2D FitBigPeak(TH2F *h, const TString &tag);
+
+  // Draw the diagonalized n_sigma gate ellipse on the current pad (no-op if the
+  // fit failed). Caller has already drawn the gate histogram.
+  static void DrawGateEllipse(const BeamFit2D &gate, Double_t n_sigma);
 };
 
 #endif

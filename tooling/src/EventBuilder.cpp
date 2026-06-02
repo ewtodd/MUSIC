@@ -7,7 +7,7 @@ void EventBuilder::InitEventState(EventState &e, UShort_t grid_energy,
     e.rightdE[k] = 0;
     e.totaldE[k] = 0;
   }
-  for (Int_t k = 0; k < 36; k++)
+  for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++)
     e.hits[k] = 0;
   e.cathode = -1;
   e.grid = grid_energy;
@@ -18,7 +18,7 @@ void EventBuilder::InitEventState(EventState &e, UShort_t grid_energy,
 
 void EventBuilder::InitPerChannelData(PerChannelData &p, ULong64_t grid_ts,
                                       UInt_t grid_flag) {
-  for (Int_t k = 0; k < 36; k++) {
+  for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++) {
     p.timestamps[k] = 0;
     p.flags[k] = 0;
   }
@@ -35,7 +35,7 @@ void EventBuilder::ResetEventState(EventState &e) {
     e.rightdE[k] = 0;
     e.totaldE[k] = 0;
   }
-  for (Int_t k = 0; k < 36; k++)
+  for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++)
     e.hits[k] = 0;
   e.cathode = -1;
   e.grid = 0;
@@ -44,7 +44,7 @@ void EventBuilder::ResetEventState(EventState &e) {
 }
 
 void EventBuilder::ResetPerChannelData(PerChannelData &p) {
-  for (Int_t k = 0; k < 36; k++) {
+  for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++) {
     p.timestamps[k] = 0;
     p.flags[k] = 0;
   }
@@ -96,6 +96,10 @@ EventBuilder::SlotMap EventBuilder::BuildSlotMap() {
 void EventBuilder::AssignHit(EventState &e, PerChannelData *pc,
                              ULong64_t grid_ts, Int_t slot, UShort_t energy,
                              ULong64_t timestamp, UInt_t flags) {
+  // Slots are 0..ARR_SLOT_GRID by construction (BuildSlotMap); guard
+  // defensively so an out-of-range slot can never index the arrays below.
+  if (slot < 0 || slot >= Constants::N_ARR_SLOTS)
+    return;
   e.flags_or |= flags;
 
   Bool_t wins;
@@ -236,7 +240,7 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
         rightdE_branch[k] = e.rightdE[k];
         totaldE_branch[k] = e.totaldE[k];
       }
-      for (Int_t k = 0; k < 36; k++)
+      for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++)
         hits_branch[k] = e.hits[k];
       cathode_branch = e.cathode;
       grid_branch = e.grid;
@@ -285,7 +289,7 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
         h2_long_back_vs_front->Fill(back_long_l, front_long_l);
       }
       Int_t mult = 0;
-      for (Int_t k = 0; k < 36; k++)
+      for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++)
         mult += e.hits[k];
       h_mult->Fill(Double_t(mult));
     } else {

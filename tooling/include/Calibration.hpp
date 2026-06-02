@@ -19,10 +19,6 @@ public:
     return E - 0.55 * E / (1.0 + 0.37568 * E);
   }
 
-  static Double_t MulginPredictChannel(Double_t E, Double_t B, Double_t C) {
-    return B * MulginEffectiveDetected(E) + C;
-  }
-
   // Numerical inverse: ADC channel -> true energy (MeV).
   static Double_t MulginInverseEnergy(Double_t adc, Double_t B, Double_t C) {
     Double_t E_det_target = (adc - C) / B;

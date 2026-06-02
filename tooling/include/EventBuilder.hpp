@@ -27,7 +27,7 @@ struct EventState {
   Int_t leftdE[18];
   Int_t rightdE[18];
   Int_t totaldE[18];
-  Int_t hits[36];
+  Int_t hits[Constants::N_ARR_SLOTS];
   Int_t cathode;
   Int_t grid;
   UInt_t flags_or;
@@ -35,8 +35,8 @@ struct EventState {
 };
 
 struct PerChannelData {
-  ULong64_t timestamps[36];
-  UInt_t flags[36];
+  ULong64_t timestamps[Constants::N_ARR_SLOTS];
+  UInt_t flags[Constants::N_ARR_SLOTS];
 };
 
 class EventBuilder {

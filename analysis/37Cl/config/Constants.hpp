@@ -13,11 +13,10 @@
 
 namespace Constants {
 
-const std::vector<Int_t> RUN_NUMBERS = {
-    37}; // {12, 13, 14, 15, 16, 17, 20, 37};
+const std::vector<Int_t> RUN_NUMBERS = {12, 13, 14, 15, 16, 17, 20, 37};
 
-const TString COMPASS_BASE_DIR = "/home/e-work/LabData/MUSIC/37Cl/";
-const Int_t N_FILES = 5;
+const TString COMPASS_BASE_DIR = "/run/media/e-work/B16A-129A/LabData/MUSIC/";
+const Int_t N_FILES = -1;
 
 const TString SIM_BEAM_FILE = "traces_37Cl_beam.root";
 
@@ -31,7 +30,8 @@ const Double_t TIMING_MAX_ENERGY = 1500;
 const Double_t TIMING_OVERLAP_MARGIN_S = 1.0;
 const Double_t TIMING_THRESH_DT_US = 175.0;
 const Double_t TIMING_MAX_ABS_SHIFT_S = 1.5;
-const Double_t TIMING_MIN_NSD2_GAIN = 1.10;
+// Whether to apply the beam-pattern inter-board time sync. On for 37Cl.
+const Bool_t TIMING_DO_BOARD_SYNC = kTRUE;
 
 const Int_t MAX_TRACE_SAVES = 10;
 
@@ -44,7 +44,7 @@ const Bool_t IGNORE_STRIP_17 = kFALSE;
 
 const Bool_t SKIP_EXISTING = kTRUE;
 const Bool_t RUN_TRACES = kTRUE;
-const Bool_t SAVE_PLOTS = kTRUE;
+const Bool_t SAVE_PLOTS = kFALSE;
 
 const Bool_t SKIP_CALIBRATION = kFALSE;
 
@@ -59,13 +59,21 @@ const Double_t EVENT_TIME_WINDOW_US = 8.0;
 const Bool_t USE_GPU_ACCELERATION = kTRUE;
 const Int_t MAX_GPU_CONCURRENT_SORTS = 5;
 
-const Double_t STRIP_E_MIN_MEV = -0.2;
-const Double_t STRIP_E_MAX_MEV = 10.0;
+const Double_t STRIP_E_MIN_MEV = 1;
+const Double_t STRIP_E_MAX_MEV = 3.5;
 const Double_t CATHODE_E_MAX_MEV = 300;
 const Double_t TOTAL_E_MIN_MEV = 10.0;
 const Double_t TOTAL_E_MAX_MEV = 150.0;
 
 const Double_t NORM_MUSIC_MEV = 2.30;
+
+const Int_t STRIP_SUM_CANDIDATE_REACTION_STRIP = 7;
+const Double_t STRIP_SUM_XMIN = 20;
+const Double_t STRIP_SUM_XMAX = 60;
+const Int_t STRIP_SUM_XBINS = 300;
+const Double_t STRIP_SUM_YMIN = 10;
+const Double_t STRIP_SUM_YMAX = 20;
+const Int_t STRIP_SUM_YBINS = 300;
 
 const Int_t REACTION_STRIP_MIN = 7;
 const Int_t REACTION_STRIP_MAX = 15;

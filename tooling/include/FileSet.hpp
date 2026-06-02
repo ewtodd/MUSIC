@@ -4,12 +4,14 @@
 #include "Constants.hpp"
 #include "IOUtils.hpp"
 #include <Rtypes.h>
+#include <TChain.h>
 #include <TFile.h>
 #include <TString.h>
 #include <TSystem.h>
 #include <TTree.h>
 #include <algorithm>
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <vector>
 
@@ -39,6 +41,18 @@ public:
   static TFile *AttachCalSidecar(TTree *events, const FileSpec &spec);
 
   static FileSpec ResolveFileSpec(const TString &file_label);
+
+  // Group every configured subfile's cal sidecar (tree "events_cal") by run
+  // number into one TChain per run. Subfiles whose sidecar is missing on disk
+  // are skipped with a warning. run_order receives the run numbers in
+  // first-seen order; the caller owns and deletes the returned chains.
+  static std::map<Int_t, TChain *>
+  GroupCalSidecarsByRun(std::vector<Int_t> &run_order);
+
+  // Stride for visiting at most max_points entries spread across n_total (so a
+  // scan covers the whole chain rather than just its head). <=0 max_points
+  // means "visit all". Always >= 1.
+  static Long64_t SampleStride(Long64_t n_total, Long64_t max_points);
 };
 
 #endif

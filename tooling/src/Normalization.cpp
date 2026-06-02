@@ -32,7 +32,7 @@ void EnergyView::Decode() {
     }
     cathode = Double_t(cathode_adc);
   }
-  if (Constants::IGNORE_SHORT_STRIPS && !is_mev) {
+  if (Constants::IGNORE_SHORT_STRIPS) {
     for (Int_t s = 1; s <= 16; s++) {
       if ((s % 2) != 0) {
         total[s] = left[s];

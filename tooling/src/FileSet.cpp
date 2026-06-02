@@ -118,6 +118,35 @@ TFile *FileSet::AttachCalSidecar(TTree *events, const FileSpec &spec) {
   return cal;
 }
 
+std::map<Int_t, TChain *>
+FileSet::GroupCalSidecarsByRun(std::vector<Int_t> &run_order) {
+  std::map<Int_t, TChain *> chain_by_run;
+  std::vector<FileSpec> all_specs = BuildFileSpecs();
+  for (Int_t i = 0; i < Int_t(all_specs.size()); i++) {
+    const FileSpec &s = all_specs[i];
+    TString full = IO::GetRootFilesBaseDir() + "/" + CalSidecarName(s);
+    if (gSystem->AccessPathName(full)) {
+      std::cerr << "Missing cal sidecar: " << full << std::endl;
+      continue;
+    }
+    if (chain_by_run.find(s.run) == chain_by_run.end()) {
+      chain_by_run[s.run] = new TChain("events_cal");
+      run_order.push_back(s.run);
+    }
+    chain_by_run[s.run]->Add(full);
+  }
+  return chain_by_run;
+}
+
+Long64_t FileSet::SampleStride(Long64_t n_total, Long64_t max_points) {
+  Long64_t n_visit =
+      (max_points > 0 && n_total > max_points) ? max_points : n_total;
+  Long64_t stride = (n_visit > 0) ? (n_total / n_visit) : 1;
+  if (stride < 1)
+    stride = 1;
+  return stride;
+}
+
 FileSpec FileSet::ResolveFileSpec(const TString &file_label) {
   std::vector<FileSpec> specs = BuildFileSpecs();
   for (Int_t k = 0; k < Int_t(specs.size()); k++) {

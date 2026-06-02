@@ -227,17 +227,8 @@ Double_t Timing::FindShiftBeam(TGraph *ref, TGraph *gr, Double_t overlap_tmin_s,
     std::cout << "  Improvement vs no-shift: " << max_inv_nsd2 / inv_nsd2_zero
               << "x" << std::endl;
 
-  // Only accept a shift that beats no-shift by a meaningful margin; otherwise
-  // the scan has latched onto a spurious match in the repeating beam/spill DT
-  // pattern (boards are already clock-synced) and the "best" shift is bogus.
-  if (inv_nsd2_zero <= 0 ||
-      max_inv_nsd2 < Constants::TIMING_MIN_NSD2_GAIN * inv_nsd2_zero) {
-    std::cout << "  Gain below " << Constants::TIMING_MIN_NSD2_GAIN
-              << "x threshold; using no shift (boards already aligned)."
-              << std::endl;
-    best_shift = 0.0;
-  }
-
+  // Reached only when board sync is enabled (the caller short-circuits
+  // otherwise), so the best scan shift is used as found.
   PlotCostLandscape(scan_shifts, scan_inv_nsd2, best_shift, ref_board, board,
                     file_label);
 
@@ -313,6 +304,16 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
 
   TimeShiftResult result;
   result.board_shifts.assign(Constants::N_BOARDS, 0);
+
+  // Board sync disabled for this dataset (e.g. 87Rb): nothing to compute, so
+  // skip the whole extract/scan/extreme-events pipeline and leave every board
+  // at zero shift. Per-channel TTF correction still happens in ApplyShifts.
+  if (!Constants::TIMING_DO_BOARD_SYNC) {
+    std::cout << "Board sync disabled for this dataset; skipping timeshift "
+                 "calculation (all board shifts = 0)."
+              << std::endl;
+    return result;
+  }
 
   if (hits.empty()) {
     std::cerr << "CalcTimeShiftsBeamMethodFromHits: empty hits vector"

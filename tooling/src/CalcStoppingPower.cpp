@@ -64,8 +64,7 @@ void CalcStoppingPower::Run() {
       lise_dir + "/" + isotope + "_in_Mylar.lise";
 
   Double_t deltaE_ppac, deltaE_entrance, deltaE_gas, deltaE_exit;
-  Double_t beam_energy_per_u_entrance, beam_energy_per_u_gas,
-      beam_energy_per_u_exit;
+  Double_t beam_energy_per_u_entrance, beam_energy_per_u_exit;
 
   Int_t nentries = calibration_results->GetEntries();
   const Double_t segment_micron = SiCalib::GAS_SEGMENT_MICRON;
@@ -99,8 +98,6 @@ void CalcStoppingPower::Run() {
       Double_t entrance_dedx_MeV_per_mg_cm2 = Lise::StoppingPower(
           ti_lise_filename, model, beam_energy_per_u_entrance);
       deltaE_entrance = entrance_dedx_MeV_per_mg_cm2 * titanium_entrance;
-      beam_energy_per_u_gas =
-          (beam_energy_TOF - deltaE_ppac - deltaE_entrance) / beam_A;
       if (gas_pressure_torr == 0) {
         deltaE_gas = 0;
       } else {

@@ -28,6 +28,7 @@
 #include <TList.h>
 #include <TMath.h>
 #include <TROOT.h>
+#include <TSpectrum.h>
 #include <TString.h>
 #include <TSystem.h>
 #include <TTree.h>
@@ -43,23 +44,15 @@
 #include <toml++/toml.hpp>
 #include <vector>
 
-// Standard single-scale ("normMUSIC") calibration: one beam-peak anchor only.
-const Int_t kNPeaks = 1;
-
-// Per-channel calibration: the measured beam-peak ADC anchor and the resulting
-// single gain to NORM_MUSIC_MEV (lin_a=0).
 struct ChannelCal {
   TString name;
   Char_t side;
   Int_t strip;
   Double_t sim_mu_mev = 0.0;
   Double_t sim_sigma_mev = 0.0;
-  Double_t anchor_adc[kNPeaks] = {0};
-  Double_t anchor_sigma_adc[kNPeaks] = {0};
-  Long64_t n_samples[kNPeaks] = {0};
-  Double_t lin_a = 0, lin_b = 0;
-  Double_t lin_chi2_ndf = -1;
-  Bool_t lin_ok = kFALSE;
+  Double_t fit_adc = 0.0;
+  Double_t fit_sigma_adc = 0.0;
+  Long64_t n_samples = 0.0;
 };
 
 class CalibrateBeam {
@@ -71,14 +64,10 @@ public:
   static void CalibrateBeamOneSubfile(const FileSpec &spec,
                                       const std::vector<ChannelCal> &sim_chans);
 
-  // Overlay (one color per channel, log-y, MeV) of ONLY the events used for
-  // calibration: the k=1 + k=2 anchor samples. Each beam-dE channel shows its
-  // beam and single-pileup peak. Same axes as the dynamic_range_check plot but
-  // restricted to calibration events.
-  static void SaveCalibSampleOverlay(
-      const std::vector<ChannelCal> &chans,
-      const std::vector<std::vector<std::vector<Float_t>>> &samples,
-      const TString &plot_subdir, const TString &file_label);
+  static void
+  SaveCalibSampleOverlay(const std::vector<ChannelCal> &chans,
+                         const std::vector<std::vector<Float_t>> &samples,
+                         const TString &plot_subdir, const TString &file_label);
 
   static void AggregateEresTomlForRun(Int_t run,
                                       const std::vector<FileSpec> &specs);

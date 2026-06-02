@@ -1,12 +1,11 @@
 #include "CalibrateBeam.hpp"
 
 const Int_t kMaxChannels = 35;
-const Double_t kEllipseNSigma = 2.5;
-// Axis-aligned gate half-widths for the Strip1-vs-Strip0 beam/pileup ellipses:
-// tight horizontally (Strip0), loose vertically (Strip1).
+// Axis-aligned gate half-widths for the Strip1-vs-Strip0 beam ellipse: tight
+// horizontally (Strip0), loose vertically (Strip1).
 const Double_t kEllipseNSigmaX = 1.0;
 const Double_t kEllipseNSigmaY = 3.0;
-const Long64_t kMinSamplesPerAnchor = 200;
+const Long64_t kMinSamples = 200;
 const Long64_t kSampleCap = 20000;
 
 TString CalibrateBeam::DefaultSimBeamPath(const TString &project_root) {
@@ -68,33 +67,31 @@ Bool_t IsBeamdEChannel(const ChannelCal &c) {
   return c.side == LongSide(c.strip);
 }
 
-TH2F *ExtractH2(TFile *f, const TString &name) {
-  TObject *obj = f->Get(name);
-  if (!obj)
-    return nullptr;
-  if (obj->InheritsFrom(TH2F::Class()))
-    return static_cast<TH2F *>(obj);
-  if (!obj->InheritsFrom(TCanvas::Class()))
-    return nullptr;
-  TCanvas *canv = static_cast<TCanvas *>(obj);
-  TList *prims = canv->GetListOfPrimitives();
-  for (Int_t i = 0; i < prims->GetSize(); i++) {
-    TObject *p = prims->At(i);
-    if (p && p->InheritsFrom(TH2F::Class()))
-      return static_cast<TH2F *>(p);
-  }
-  return nullptr;
+// Standard ("normMUSIC") calibration: each beam-dE channel's beam-peak ADC is
+// scaled to the common reference NORM_MUSIC_MEV by a single gain through the
+// origin. Calibrated dE is normalized to a common beam value, not absolute --
+// which is what the PID / summed-dE analysis needs. sim_mu_mev>0 selects the
+// channels that have a sim beam anchor (the long sides); the sim energy itself
+// is no longer the calibration target.
+Bool_t IsCalibrated(const ChannelCal &c) {
+  return c.sim_mu_mev > 0 && c.fit_adc > 0;
 }
 
-// Beam selection for the standard single-scale calibration: the beam is the
-// dominant population in Strip1 dE vs Strip0 dE, so we take the largest peak
-// there and gate on a 2D ellipse built from local moments (no L-strip-sum gate,
-// no TF2). Only the beam peak is needed -- no pileup (k=2) anchor.
-std::vector<BeamFit2D> FindBeamGateStp1VsStp0(const FileSpec &spec,
-                                              const TString &run_label,
-                                              const TString &plot_subdir,
-                                              Bool_t save_plot = kTRUE) {
-  std::vector<BeamFit2D> out(kNPeaks);
+Double_t Gain(const ChannelCal &c) {
+  return Constants::NORM_MUSIC_MEV / c.fit_adc;
+}
+
+inline Double_t ApplyCal(const ChannelCal &c, Double_t adc) {
+  return Gain(c) * adc;
+}
+
+// Beam selection: the beam is the dominant population in Strip1 dE vs Strip0
+// dE, so we take the largest peak there and gate on a 2D ellipse built from
+// local moments (no L-strip-sum gate, no TF2).
+BeamFit2D FindBeamGateStp1VsStp0(const FileSpec &spec, const TString &run_label,
+                                 const TString &plot_subdir,
+                                 Bool_t save_plot = kTRUE) {
+  BeamFit2D out;
 
   TString sub = FileSet::EventsName(spec) + ".root";
   TFile *sf = IO::OpenForReading(sub);
@@ -151,34 +148,27 @@ std::vector<BeamFit2D> FindBeamGateStp1VsStp0(const FileSpec &spec,
     delete h;
     return out;
   }
-  out[0].amp = peak_val;
-  out[0].mu_x = m.mu_x;
-  out[0].mu_y = m.mu_y;
-  out[0].sigma_x = m.sigma_x;
-  out[0].sigma_y = m.sigma_y;
-  out[0].rho = m.rho;
-  out[0].ok = kTRUE;
-  std::cout << "  beam gate (Strip1 vs Strip0): mu=(" << out[0].mu_x << ","
-            << out[0].mu_y << ") sigma=(" << out[0].sigma_x << ","
-            << out[0].sigma_y << ") rho=" << out[0].rho << std::endl;
-
-  // Standard calibration uses only the beam (k=1) peak -> single gain to
-  // NORM_MUSIC_MEV, so no pileup (k=2) anchor is gated or collected.
+  out.amp = peak_val;
+  out.mu_x = m.mu_x;
+  out.mu_y = m.mu_y;
+  out.sigma_x = m.sigma_x;
+  out.sigma_y = m.sigma_y;
+  out.rho = m.rho;
+  out.ok = kTRUE;
+  std::cout << "  beam gate (Strip1 vs Strip0): mu=(" << out.mu_x << ","
+            << out.mu_y << ") sigma=(" << out.sigma_x << "," << out.sigma_y
+            << ") rho=" << out.rho << std::endl;
 
   if (save_plot) {
     TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
     PlottingUtils::ConfigureAndDraw2DHistogram(h, cv);
-    for (Int_t k = 0; k < kNPeaks; k++) {
-      if (!out[k].ok)
-        continue;
-      TEllipse *e = new TEllipse(out[k].mu_x, out[k].mu_y,
-                                 kEllipseNSigmaX * out[k].sigma_x,
-                                 kEllipseNSigmaY * out[k].sigma_y);
-      e->SetFillStyle(0);
-      e->SetLineColor(kRed + 1);
-      e->SetLineWidth(2);
-      e->Draw();
-    }
+    TEllipse *e =
+        new TEllipse(out.mu_x, out.mu_y, kEllipseNSigmaX * out.sigma_x,
+                     kEllipseNSigmaY * out.sigma_y);
+    e->SetFillStyle(0);
+    e->SetLineColor(kRed + 1);
+    e->SetLineWidth(2);
+    e->Draw();
     if (Constants::SAVE_PLOTS)
       PlottingUtils::SaveFigure(cv, "beam_gate_stp1_vs_stp0", plot_subdir,
                                 PlotSaveOptions::kLINEAR);
@@ -188,40 +178,18 @@ std::vector<BeamFit2D> FindBeamGateStp1VsStp0(const FileSpec &spec,
   return out;
 }
 
-// Landau (intrinsic energy-loss fluctuation) convolved with Gaussian (detector
-// resolution). par[0]=Landau width, par[1]=Landau MPV (after the standard
-// -0.22278298*width shift, so par[1] is the true MPV of the unsmeared Landau),
-// par[2]=area, par[3]=Gaussian sigma. Standard CERN langaus midpoint-rule
-// implementation.
-Double_t LangausFunction(Double_t *x, Double_t *par) {
-  const Double_t kInvSq2Pi = 0.3989422804014;
-  const Double_t kMpShift = -0.22278298;
-  const Int_t kNSteps = 100;
-  const Double_t kRangeSigmas = 5.0;
-  Double_t mpc = par[1] - kMpShift * par[0];
-  Double_t xlow = x[0] - kRangeSigmas * par[3];
-  Double_t xupp = x[0] + kRangeSigmas * par[3];
-  Double_t step = (xupp - xlow) / Double_t(kNSteps);
-  Double_t sum = 0.0;
-  for (Int_t i = 1; i <= kNSteps / 2; i++) {
-    Double_t xx = xlow + (Double_t(i) - 0.5) * step;
-    Double_t fland = TMath::Landau(xx, mpc, par[0]) / par[0];
-    sum += fland * TMath::Gaus(x[0], xx, par[3]);
-    xx = xupp - (Double_t(i) - 0.5) * step;
-    fland = TMath::Landau(xx, mpc, par[0]) / par[0];
-    sum += fland * TMath::Gaus(x[0], xx, par[3]);
-  }
-  return par[2] * step * sum * kInvSq2Pi / par[3];
-}
-
-// Fit a langaus to the sample distribution and return the convolved peak
-// position (peak_adc) and the Gaussian sigma (sigma_gauss_adc). Returns
-// kFALSE on failure; the caller should fall back to median/IQR.
-Bool_t FitLangausPeak(const std::vector<Float_t> &v, const TString &fname,
-                      Double_t &peak_adc, Double_t &sigma_gauss_adc,
-                      TF1 *&fit_out, Double_t mpv_seed_override = -1.0) {
+// Upstream normEsegment peak extraction: locate the beam peak with
+// TSpectrum::Search(hist, sigma=2, "", threshold=0.9), then fit a plain "gaus"
+// in a window [peak*0.9, peak*1.1] around the found position. Returns the
+// fitted centroid (peak_adc, = upstream gCalib->GetParameter(1)) and sigma
+// (sigma_adc, = GetParameter(2)). Returns kFALSE on failure; the caller falls
+// back to median/IQR. The samples are already beam-gated by the 2D ellipse, so
+// the threshold=0.9 search returns essentially the single beam peak.
+Bool_t FitTSpectrumGaussianPeak(const std::vector<Float_t> &v,
+                                const TString &fname, Double_t &peak_adc,
+                                Double_t &sigma_adc, TF1 *&fit_out) {
   fit_out = nullptr;
-  if (v.size() < kMinSamplesPerAnchor)
+  if (v.size() < kMinSamples)
     return kFALSE;
   Float_t lo = v[0], hi = v[0];
   for (Int_t j = 1; j < Int_t(v.size()); j++) {
@@ -241,145 +209,47 @@ Bool_t FitLangausPeak(const std::vector<Float_t> &v, const TString &fname,
   for (Int_t j = 0; j < Int_t(v.size()); j++)
     h.Fill(Double_t(v[j]));
 
-  // k=2 fits are seeded at 2x the k=1 MPV (passed in) so the pileup fit can't
-  // drift onto the much taller beam peak that contaminates the k=2 gate; k=1
-  // self-seeds from the sample histogram maximum.
-  Int_t peak_bin;
-  if (mpv_seed_override > 0.0) {
-    peak_bin = h.FindBin(mpv_seed_override);
-    if (peak_bin < 1)
-      peak_bin = 1;
-    if (peak_bin > nbins)
-      peak_bin = nbins;
-  } else {
-    peak_bin = h.GetMaximumBin();
+  // Upstream peak finder: sigma=2 bins, threshold=0.9 (only peaks within 90% of
+  // the tallest survive). "nodraw" suppresses the marker polymarker so nothing
+  // leaks onto the batch canvases.
+  TSpectrum spec;
+  Int_t npeaks = spec.Search(&h, 2, "nodraw", 0.9);
+  if (npeaks < 1)
+    return kFALSE;
+  Double_t *xpeaks = spec.GetPositionX();
+  // Take the tallest of the returned peaks as the beam peak. (Upstream takes
+  // index 0; with threshold=0.9 there is usually only one, but selecting by
+  // bin content is robust to TSpectrum's position ordering.)
+  Int_t best = 0;
+  Double_t best_val = h.GetBinContent(h.FindBin(xpeaks[0]));
+  for (Int_t p = 1; p < npeaks; p++) {
+    Double_t val = h.GetBinContent(h.FindBin(xpeaks[p]));
+    if (val > best_val) {
+      best_val = val;
+      best = p;
+    }
   }
-  Double_t peak_val = h.GetBinContent(peak_bin);
-  Double_t mpv_seed = h.GetBinCenter(peak_bin);
-  Int_t lo_half = peak_bin;
-  while (lo_half > 1 && h.GetBinContent(lo_half) > 0.5 * peak_val)
-    lo_half--;
-  Int_t hi_half = peak_bin;
-  while (hi_half < nbins && h.GetBinContent(hi_half) > 0.5 * peak_val)
-    hi_half++;
-  Double_t fwhm_lhalf = mpv_seed - h.GetBinCenter(lo_half);
-  Double_t fwhm_rhalf = h.GetBinCenter(hi_half) - mpv_seed;
-  Double_t fwhm = fwhm_lhalf + fwhm_rhalf;
-  if (fwhm <= 0)
-    fwhm = (xhi - xlo) / 10.0;
-  if (fwhm_lhalf <= 0)
-    fwhm_lhalf = 0.4 * fwhm;
-  if (fwhm_rhalf <= 0)
-    fwhm_rhalf = 0.6 * fwhm;
-  // Asymmetric seeding: left side is Gaussian-dominated (HWHM_l ~ 1.177*sigma),
-  // right-side excess over left is Landau-dominated. This breaks the seed
-  // degeneracy where both widths get pulled from the same FWHM number.
-  Double_t gauss_sigma_seed = fwhm_lhalf / 1.177;
-  Double_t landau_excess = fwhm_rhalf - fwhm_lhalf;
-  Double_t landau_width_seed =
-      (landau_excess > 0) ? landau_excess / 2.39 : fwhm / 8.0;
-  Double_t area_seed = Double_t(v.size()) * h.GetBinWidth(1);
-  Double_t fit_lo = mpv_seed - 1.5 * fwhm;
-  Double_t fit_hi = mpv_seed + 3.0 * fwhm;
+  Double_t peak_pos = xpeaks[best];
+  if (!(peak_pos > 0))
+    return kFALSE;
+
+  // Gaussian fit in the upstream [peak*0.9, peak*1.1] window around the peak.
+  Double_t fit_lo = peak_pos * 0.9;
+  Double_t fit_hi = peak_pos * 1.1;
   if (fit_lo < xlo)
     fit_lo = xlo;
   if (fit_hi > xhi)
     fit_hi = xhi;
-
-  TF1 *f = new TF1(fname, LangausFunction, fit_lo, fit_hi, 4);
-  f->SetNpx(1000);
-  f->SetParNames("LandauWidth", "MPV", "Area", "GaussSigma");
-  f->SetParameters(landau_width_seed, mpv_seed, area_seed, gauss_sigma_seed);
-  // Floor both width params at the bin width: a Landau-or-Gauss narrower than
-  // one bin lets the convolution spike across bin centers and chase noise.
   Double_t bw = h.GetBinWidth(1);
-  f->SetParLimits(0, bw, 5.0 * fwhm);
-  f->SetParLimits(1, mpv_seed - fwhm, mpv_seed + fwhm);
-  f->SetParLimits(2, 0.0, 1e6 * area_seed);
-  f->SetParLimits(3, bw, 5.0 * fwhm);
-  TFitResultPtr r = h.Fit(f, "QSRNL");
-  if (!r.Get() || !r->IsValid()) {
-    delete f;
-    return kFALSE;
-  }
-  peak_adc = f->GetMaximumX(fit_lo, fit_hi);
-  sigma_gauss_adc = f->GetParameter(3);
-  if (!(peak_adc > 0) || !(sigma_gauss_adc > 0)) {
-    delete f;
-    return kFALSE;
-  }
-  fit_out = f;
-  return kTRUE;
-}
-
-// Fit a plain Gaussian to the sample distribution around its peak and return
-// the mean (peak_adc) and sigma. Windowed around the peak so the asymmetric
-// energy-loss tail doesn't bias the centroid. Returns kFALSE on failure; the
-// caller falls back to median/IQR. mpv_seed_override (k=2) seeds and
-// constrains the mean near 2x the k=1 anchor; k=1 self-seeds from the maximum.
-Bool_t FitGaussianPeak(const std::vector<Float_t> &v, const TString &fname,
-                       Double_t &peak_adc, Double_t &sigma_adc, TF1 *&fit_out,
-                       Double_t mpv_seed_override = -1.0) {
-  fit_out = nullptr;
-  if (v.size() < kMinSamplesPerAnchor)
-    return kFALSE;
-  Float_t lo = v[0], hi = v[0];
-  for (Int_t j = 1; j < Int_t(v.size()); j++) {
-    if (v[j] < lo)
-      lo = v[j];
-    if (v[j] > hi)
-      hi = v[j];
-  }
-  Double_t pad = 0.05 * (Double_t(hi) - Double_t(lo));
-  if (pad < 1.0)
-    pad = 1.0;
-  const Int_t nbins = 100;
-  Double_t xlo = Double_t(lo) - pad;
-  Double_t xhi = Double_t(hi) + pad;
-  TH1F h(fname + "_h", "", nbins, xlo, xhi);
-  h.SetDirectory(nullptr);
-  for (Int_t j = 0; j < Int_t(v.size()); j++)
-    h.Fill(Double_t(v[j]));
-
-  Int_t peak_bin;
-  if (mpv_seed_override > 0.0) {
-    peak_bin = h.FindBin(mpv_seed_override);
-    if (peak_bin < 1)
-      peak_bin = 1;
-    if (peak_bin > nbins)
-      peak_bin = nbins;
-  } else {
-    peak_bin = h.GetMaximumBin();
-  }
-  Double_t peak_val = h.GetBinContent(peak_bin);
-  Double_t mean_seed = h.GetBinCenter(peak_bin);
-  Int_t lo_half = peak_bin;
-  while (lo_half > 1 && h.GetBinContent(lo_half) > 0.5 * peak_val)
-    lo_half--;
-  Int_t hi_half = peak_bin;
-  while (hi_half < nbins && h.GetBinContent(hi_half) > 0.5 * peak_val)
-    hi_half++;
-  Double_t fwhm = h.GetBinCenter(hi_half) - h.GetBinCenter(lo_half);
-  if (fwhm <= 0)
-    fwhm = (xhi - xlo) / 10.0;
-  Double_t bw = h.GetBinWidth(1);
-  Double_t sigma_seed = fwhm / 2.355;
+  Double_t sigma_seed = (fit_hi - fit_lo) / 4.0;
   if (sigma_seed < bw)
     sigma_seed = bw;
-  // Narrow core fit (this supplies only the resolution sigma + overlay curve;
-  // the gain anchor is the sample mean, set by the caller).
-  Double_t fit_lo = mean_seed - 1.5 * fwhm;
-  Double_t fit_hi = mean_seed + 1.5 * fwhm;
-  if (fit_lo < xlo)
-    fit_lo = xlo;
-  if (fit_hi > xhi)
-    fit_hi = xhi;
 
   TF1 *f = new TF1(fname, "gaus", fit_lo, fit_hi);
   f->SetNpx(1000);
-  f->SetParameters(peak_val, mean_seed, sigma_seed);
-  f->SetParLimits(1, mean_seed - fwhm, mean_seed + fwhm);
-  f->SetParLimits(2, bw, 5.0 * fwhm);
+  f->SetParameters(best_val, peak_pos, sigma_seed);
+  f->SetParLimits(1, fit_lo, fit_hi);
+  f->SetParLimits(2, bw, fit_hi - fit_lo);
   TFitResultPtr r = h.Fit(f, "QSRNL");
   if (!r.Get() || !r->IsValid()) {
     delete f;
@@ -537,10 +407,11 @@ std::vector<ChannelCal> CalibrateBeam::LoadSimChans(const TString &sim_path) {
 
 void CollectAnchorSamplesOneSubfile(
     const FileSpec &spec, const std::vector<ChannelCal> &chans,
-    const std::vector<BeamFit2D> &beams,
-    std::vector<std::vector<std::vector<Float_t>>> &samples) {
+    const BeamFit2D &beam, std::vector<std::vector<Float_t>> &samples) {
   Int_t n_chans = Int_t(chans.size());
-  samples.assign(n_chans, std::vector<std::vector<Float_t>>(kNPeaks));
+  samples.assign(n_chans, std::vector<Float_t>());
+  if (!beam.ok)
+    return;
 
   TString sub = FileSet::EventsName(spec) + ".root";
   TFile *sf = IO::OpenForReading(sub);
@@ -569,30 +440,24 @@ void CollectAnchorSamplesOneSubfile(
     Double_t y = Double_t(totaldE_adc[1]);
     if (x <= 0 || y <= 0)
       continue;
-
-    for (Int_t k = 1; k <= kNPeaks; k++) {
-      if (!beams[k - 1].ok)
+    if (!BeamFitUtils::InEllipseXY(beam, x, y, kEllipseNSigmaX,
+                                   kEllipseNSigmaY))
+      continue;
+    for (Int_t i = 0; i < n_chans; i++) {
+      if (Long64_t(samples[i].size()) >= kSampleCap)
         continue;
-      if (!BeamFitUtils::InEllipseXY(beams[k - 1], x, y, kEllipseNSigmaX,
-                                     kEllipseNSigmaY))
-        continue;
-      for (Int_t i = 0; i < n_chans; i++) {
-        if (Long64_t(samples[i][k - 1].size()) >= kSampleCap)
-          continue;
-        const ChannelCal &c = chans[i];
-        Int_t v = 0;
-        if (c.side == 'S')
-          v = totaldE_adc[c.strip];
-        else if (c.side == 'L')
-          v = leftdE_adc[c.strip];
-        else if (c.side == 'R')
-          v = rightdE_adc[c.strip];
-        else if (c.side == 'C')
-          v = cathode_adc;
-        if (v > 0)
-          samples[i][k - 1].push_back(Float_t(v));
-      }
-      break;
+      const ChannelCal &c = chans[i];
+      Int_t v = 0;
+      if (c.side == 'S')
+        v = totaldE_adc[c.strip];
+      else if (c.side == 'L')
+        v = leftdE_adc[c.strip];
+      else if (c.side == 'R')
+        v = rightdE_adc[c.strip];
+      else if (c.side == 'C')
+        v = cathode_adc;
+      if (v > 0)
+        samples[i].push_back(Float_t(v));
     }
   }
   sf->Close();
@@ -601,95 +466,55 @@ void CollectAnchorSamplesOneSubfile(
 
 // Cathode uses median + IQR/1.349 (asymmetric tail not as clean and the user
 // prefers to keep cathode on the existing approach). All other channels
-// (S guard strips + L/R long anodes) fit a plain Gaussian per k=1, k=2 in a
-// window around the peak; the fitted mean is the gain anchor and the sigma is
-// the detector resolution. Fall back to median/IQR on fit failure.
+// (S guard strips + L/R long anodes) use the upstream normEsegment recipe:
+// TSpectrum locates the beam peak, a Gaussian is fit in a [peak*0.9, peak*1.1]
+// window, and the fitted centroid is the gain anchor while the sigma is the
+// detector resolution. Fall back to mean + IQR/1.349 on fit failure.
 void ReduceToAnchors(std::vector<ChannelCal> &chans,
-                     std::vector<std::vector<std::vector<Float_t>>> &samples,
-                     std::vector<std::vector<TF1 *>> &fits_out,
-                     const TString &run_label) {
+                     std::vector<std::vector<Float_t>> &samples,
+                     std::vector<TF1 *> &fits_out, const TString &run_label) {
   Int_t n_chans = Int_t(chans.size());
-  fits_out.assign(n_chans, std::vector<TF1 *>(kNPeaks, nullptr));
+  fits_out.assign(n_chans, nullptr);
   for (Int_t i = 0; i < n_chans; i++) {
     ChannelCal &c = chans[i];
-    for (Int_t k = 0; k < kNPeaks; k++) {
-      std::vector<Float_t> &v = samples[i][k];
-      c.n_samples[k] = Long64_t(v.size());
-      if (Long64_t(v.size()) < kMinSamplesPerAnchor) {
-        c.anchor_adc[k] = 0;
-        c.anchor_sigma_adc[k] = 0;
-        continue;
-      }
-      // Anchor = the averaged value of the beam-gated samples (matches the
-      // paper / upstream normMUSIC: the beam is normalized to its AVERAGE dE).
-      // A Gaussian fit returns the mode regardless of window, which leaves the
-      // summed-dE ridge ~2% high; the mean is what "averaged value" means.
-      Double_t mean_adc = 0.0;
-      for (Int_t j = 0; j < Int_t(v.size()); j++)
-        mean_adc += Double_t(v[j]);
-      mean_adc /= Double_t(v.size());
+    std::vector<Float_t> &v = samples[i];
+    c.n_samples = Long64_t(v.size());
+    if (Long64_t(v.size()) < kMinSamples) {
+      c.fit_adc = 0;
+      c.fit_sigma_adc = 0;
+      continue;
+    }
+    // Sample mean kept only as the fallback anchor if the TSpectrum+Gaussian
+    // fit fails.
+    Double_t mean_adc = 0.0;
+    for (Int_t j = 0; j < Int_t(v.size()); j++)
+      mean_adc += Double_t(v[j]);
+    mean_adc /= Double_t(v.size());
 
-      if (c.side == 'C') {
-        // Cathode: median + IQR (asymmetric tail, no clean peak).
-        c.anchor_adc[k] = Median(v);
-        c.anchor_sigma_adc[k] = InterquartileRange(v) / 1.349;
+    if (c.side == 'C') {
+      // Cathode: median + IQR (asymmetric tail, no clean peak).
+      c.fit_adc = Median(v);
+      c.fit_sigma_adc = InterquartileRange(v) / 1.349;
+    } else {
+      // Upstream recipe: anchor = Gaussian centroid around the TSpectrum peak;
+      // sigma = Gaussian width. Mean + IQR fallback on fit failure.
+      TString fname =
+          Form("f_tspec_gaus_%s_%s", c.name.Data(), run_label.Data());
+      Double_t peak = 0, sig = 0;
+      TF1 *fit = nullptr;
+      if (FitTSpectrumGaussianPeak(v, fname, peak, sig, fit)) {
+        c.fit_adc = peak;
+        c.fit_sigma_adc = sig;
+        fits_out[i] = fit;
       } else {
-        c.anchor_adc[k] = mean_adc;
-        // Width + overlay curve from a Gaussian fit; IQR fallback on failure.
-        TString fname =
-            Form("f_gaus_%s_k%d_%s", c.name.Data(), k + 1, run_label.Data());
-        Double_t peak = 0, sig = 0;
-        TF1 *fit = nullptr;
-        if (FitGaussianPeak(v, fname, peak, sig, fit)) {
-          c.anchor_sigma_adc[k] = sig;
-          fits_out[i][k] = fit;
-        } else {
-          c.anchor_sigma_adc[k] = InterquartileRange(v) / 1.349;
-        }
+        c.fit_adc = mean_adc;
+        c.fit_sigma_adc = InterquartileRange(v) / 1.349;
       }
     }
-    std::cout << "  " << c.name << " anchors[ADC]:";
-    for (Int_t k = 0; k < kNPeaks; k++)
-      std::cout << " k" << (k + 1) << "=" << c.anchor_adc[k]
-                << " sig=" << c.anchor_sigma_adc[k] << " (n=" << c.n_samples[k]
-                << ")";
-    std::cout << std::endl;
-  }
-}
-
-// Linear y = a + b*x through (adc_k1, sim_mu) and (adc_k2, 2*sim_mu). Each
-// channel is calibrated independently from its own ADC anchors, so no
-// cross-channel gain matching is needed. If only the beam (k=1) anchor is
-// available (pileup peak too sparse), fall back to a single scale through the
-// origin so the channel is still calibrated.
-// Standard ("normMUSIC") calibration: scale each beam-dE channel's beam peak to
-// the common reference NORM_MUSIC_MEV via a single gain through the origin
-// (lin_a = 0, lin_b = NORM_MUSIC_MEV / beam_peak_adc). Calibrated dE is thus
-// normalized to a common beam value, not absolute -- which is what the PID /
-// summed-dE analysis needs; the reaction energy axis comes from the beam energy
-// + stopping-power degradation, not per-strip dE. sim_mu_mev>0 is used only to
-// select the channels that have a sim beam anchor (the long sides); the sim
-// energy itself is no longer the calibration target.
-void FitLinear(ChannelCal &c) {
-  if (c.sim_mu_mev <= 0) {
-    c.lin_ok = kFALSE;
-    return;
-  }
-  Double_t adc = c.anchor_adc[0];
-  if (adc <= 0) {
-    c.lin_ok = kFALSE;
-    std::cerr << "  " << c.name << ": no beam anchor; no calibration"
+    std::cout << "  " << c.name << " anchor[ADC]=" << c.fit_adc
+              << " sig=" << c.fit_sigma_adc << " (n=" << c.n_samples << ")"
               << std::endl;
-    return;
   }
-  c.lin_a = 0.0;
-  c.lin_b = Constants::NORM_MUSIC_MEV / adc;
-  c.lin_chi2_ndf = -1;
-  c.lin_ok = kTRUE;
-}
-
-inline Double_t ApplyLinear(const ChannelCal &c, Double_t adc) {
-  return c.lin_a + c.lin_b * adc;
 }
 
 void WriteEresTomlRaw(const TString &out_subpath,
@@ -728,134 +553,77 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans) {
   if (TObject *old = dst->Get("calibration"))
     old->Delete();
   TTree *cal = new TTree("calibration", "Per-channel normMUSIC calibration");
-  Float_t lin_b[kMaxChannels] = {0};
+  Float_t gain[kMaxChannels] = {0};
   Float_t sim_mu[kMaxChannels] = {0}, sim_sigma[kMaxChannels] = {0};
-  Float_t anchor_adc[kNPeaks][kMaxChannels] = {{0}};
-  Float_t anchor_sigma[kNPeaks][kMaxChannels] = {{0}};
-  Long64_t anchor_n[kNPeaks][kMaxChannels] = {{0}};
-  Bool_t lin_ok[kMaxChannels] = {0};
+  Float_t fit_adc[kMaxChannels] = {0}, fit_sigma[kMaxChannels] = {0};
+  Long64_t fit_n[kMaxChannels] = {0};
+  Bool_t ok[kMaxChannels] = {0};
   Int_t n_actual = TMath::Min(Int_t(chans.size()), kMaxChannels);
   for (Int_t k = 0; k < n_actual; k++) {
     const ChannelCal &c = chans[k];
-    lin_b[k] = Float_t(c.lin_b);
+    ok[k] = IsCalibrated(c);
+    gain[k] = ok[k] ? Float_t(Gain(c)) : 0.0f;
     sim_mu[k] = Float_t(c.sim_mu_mev);
     sim_sigma[k] = Float_t(c.sim_sigma_mev);
-    for (Int_t p = 0; p < kNPeaks; p++) {
-      anchor_adc[p][k] = Float_t(c.anchor_adc[p]);
-      anchor_sigma[p][k] = Float_t(c.anchor_sigma_adc[p]);
-      anchor_n[p][k] = c.n_samples[p];
-    }
-    lin_ok[k] = c.lin_ok;
+    fit_adc[k] = Float_t(c.fit_adc);
+    fit_sigma[k] = Float_t(c.fit_sigma_adc);
+    fit_n[k] = c.n_samples;
   }
-  cal->Branch("LinB", lin_b, Form("LinB[%d]/F", kMaxChannels));
-  cal->Branch("LinOK", lin_ok, Form("LinOK[%d]/O", kMaxChannels));
+  cal->Branch("Gain", gain, Form("Gain[%d]/F", kMaxChannels));
+  cal->Branch("Ok", ok, Form("Ok[%d]/O", kMaxChannels));
   cal->Branch("SimMu_MeV", sim_mu, Form("SimMu_MeV[%d]/F", kMaxChannels));
   cal->Branch("SimSigma_MeV", sim_sigma,
               Form("SimSigma_MeV[%d]/F", kMaxChannels));
-  for (Int_t p = 0; p < kNPeaks; p++) {
-    cal->Branch(Form("AnchorMPV_k%d_ADC", p + 1), anchor_adc[p],
-                Form("AnchorMPV_k%d_ADC[%d]/F", p + 1, kMaxChannels));
-    cal->Branch(Form("AnchorSigma_k%d_ADC", p + 1), anchor_sigma[p],
-                Form("AnchorSigma_k%d_ADC[%d]/F", p + 1, kMaxChannels));
-    cal->Branch(Form("AnchorN_k%d", p + 1), anchor_n[p],
-                Form("AnchorN_k%d[%d]/L", p + 1, kMaxChannels));
-  }
+  cal->Branch("FitADC", fit_adc, Form("FitADC[%d]/F", kMaxChannels));
+  cal->Branch("FitSigmaADC", fit_sigma,
+              Form("FitSigmaADC[%d]/F", kMaxChannels));
+  cal->Branch("FitN", fit_n, Form("FitN[%d]/L", kMaxChannels));
   cal->Fill();
   cal->Write("calibration", TObject::kOverwrite);
 }
 
-// Per-channel ADC histogram of the samples that fed each multiplicity anchor.
-// One file per (channel, k) under <plot_subdir>/beam_peak, named
-// beam_peak_k<n>_<channel>.
+// Per-channel ADC histogram of the samples that fed each beam anchor. One file
+// per channel under <plot_subdir>/beam_peak, named beam_peak_<channel>.
 void SaveBeamPeakChannelHistograms(
     const std::vector<ChannelCal> &chans,
-    const std::vector<std::vector<std::vector<Float_t>>> &samples,
-    const std::vector<std::vector<TF1 *>> &fits, const TString &plot_subdir) {
+    const std::vector<std::vector<Float_t>> &samples,
+    const std::vector<TF1 *> &fits, const TString &plot_subdir) {
   TString subdir = plot_subdir + "/beam_peak";
   for (Int_t i = 0; i < Int_t(chans.size()); i++) {
     const ChannelCal &c = chans[i];
-    for (Int_t k = 0; k < kNPeaks; k++) {
-      const std::vector<Float_t> &v = samples[i][k];
-      if (Long64_t(v.size()) < kMinSamplesPerAnchor)
-        continue;
-      Float_t lo = v[0], hi = v[0];
-      for (Int_t j = 1; j < Int_t(v.size()); j++) {
-        if (v[j] < lo)
-          lo = v[j];
-        if (v[j] > hi)
-          hi = v[j];
-      }
-      Double_t pad = 0.05 * (Double_t(hi) - Double_t(lo));
-      if (pad < 1.0)
-        pad = 1.0;
-      const Int_t nbins = 75;
-      TH1F *h = new TH1F(Form("h_beam_peak_k%d_%s", k + 1, c.name.Data()),
-                         Form(";%s #DeltaE [ADC];Counts", c.name.Data()), nbins,
-                         Double_t(lo) - pad, Double_t(hi) + pad);
-      h->SetDirectory(nullptr);
-      for (Int_t j = 0; j < Int_t(v.size()); j++)
-        h->Fill(Double_t(v[j]));
-      TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
-      PlottingUtils::ConfigureAndDrawHistogram(h, kBlack);
-      TF1 *fit = fits[i][k];
-      if (fit) {
-        fit->SetLineColor(kRed + 1);
-        fit->SetLineWidth(2);
-        fit->Draw("L SAME");
-      }
-      if (Constants::SAVE_PLOTS)
-        PlottingUtils::SaveFigure(
-            cv, Form("beam_peak_k%d_%s", k + 1, c.name.Data()), subdir,
-            PlotSaveOptions::kLINEAR);
-      delete cv;
-      delete h;
-    }
-  }
-}
-
-void SaveLinearFitPlots(const std::vector<ChannelCal> &chans,
-                        const TString &plot_subdir) {
-  for (Int_t i = 0; i < Int_t(chans.size()); i++) {
-    const ChannelCal &c = chans[i];
-    if (!c.lin_ok)
+    const std::vector<Float_t> &v = samples[i];
+    if (Long64_t(v.size()) < kMinSamples)
       continue;
-    TGraphErrors *g = new TGraphErrors();
-    Int_t np = 0;
-    Double_t xhi = 0;
-    for (Int_t k = 1; k <= kNPeaks; k++) {
-      Double_t adc = c.anchor_adc[k - 1];
-      if (adc <= 0)
-        continue;
-      Double_t sigma_adc = c.anchor_sigma_adc[k - 1];
-      g->SetPoint(np, adc, Double_t(k) * c.sim_mu_mev);
-      g->SetPointError(np, std::max(1.0, sigma_adc), 0.0);
-      np++;
-      if (adc > xhi)
-        xhi = adc;
+    Float_t lo = v[0], hi = v[0];
+    for (Int_t j = 1; j < Int_t(v.size()); j++) {
+      if (v[j] < lo)
+        lo = v[j];
+      if (v[j] > hi)
+        hi = v[j];
     }
-    if (np == 0) {
-      delete g;
-      continue;
-    }
-    xhi *= 1.1;
-    if (xhi <= 0)
-      xhi = 16384.0;
-    PlottingUtils::ConfigureGraph(
-        g, kBlack, Form(";%s #DeltaE [ADC];#DeltaE [MeV]", c.name.Data()));
-    g->SetMarkerStyle(20);
-    TF1 *f = new TF1(Form("f_lin_%s", c.name.Data()), "pol1", 0.0, xhi);
-    f->SetParameters(c.lin_a, c.lin_b);
-    f->SetLineColor(kRed + 1);
-    f->SetLineWidth(2);
+    Double_t pad = 0.05 * (Double_t(hi) - Double_t(lo));
+    if (pad < 1.0)
+      pad = 1.0;
+    const Int_t nbins = 75;
+    TH1F *h = new TH1F(Form("h_beam_peak_%s", c.name.Data()),
+                       Form(";%s #DeltaE [ADC];Counts", c.name.Data()), nbins,
+                       Double_t(lo) - pad, Double_t(hi) + pad);
+    h->SetDirectory(nullptr);
+    for (Int_t j = 0; j < Int_t(v.size()); j++)
+      h->Fill(Double_t(v[j]));
     TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
-    g->Draw("AP");
-    f->Draw("L SAME");
+    PlottingUtils::ConfigureAndDrawHistogram(h, kBlack);
+    TF1 *fit = fits[i];
+    if (fit) {
+      fit->SetLineColor(kRed + 1);
+      fit->SetLineWidth(2);
+      fit->Draw("L SAME");
+    }
     if (Constants::SAVE_PLOTS)
-      PlottingUtils::SaveFigure(cv, "lin_" + c.name, plot_subdir,
+      PlottingUtils::SaveFigure(cv, Form("beam_peak_%s", c.name.Data()), subdir,
                                 PlotSaveOptions::kLINEAR);
     delete cv;
-    delete f;
-    delete g;
+    delete h;
   }
 }
 
@@ -931,20 +699,20 @@ void WriteCalSidecar(const FileSpec &spec,
     for (Int_t s = 0; s < 18; s++) {
       if (s == 0 || s == 17) {
         const ChannelCal *cS = cal_S[s];
-        if (cS && cS->lin_ok && totaldE_adc[s] > 0)
-          totaldE_MeV[s] = Float_t(ApplyLinear(*cS, Double_t(totaldE_adc[s])));
+        if (cS && IsCalibrated(*cS) && totaldE_adc[s] > 0)
+          totaldE_MeV[s] = Float_t(ApplyCal(*cS, Double_t(totaldE_adc[s])));
       } else {
         const ChannelCal *cL = cal_L[s];
         const ChannelCal *cR = cal_R[s];
-        if (cL && cL->lin_ok && leftdE_adc[s] > 0)
-          leftdE_MeV[s] = Float_t(ApplyLinear(*cL, Double_t(leftdE_adc[s])));
-        if (cR && cR->lin_ok && rightdE_adc[s] > 0)
-          rightdE_MeV[s] = Float_t(ApplyLinear(*cR, Double_t(rightdE_adc[s])));
+        if (cL && IsCalibrated(*cL) && leftdE_adc[s] > 0)
+          leftdE_MeV[s] = Float_t(ApplyCal(*cL, Double_t(leftdE_adc[s])));
+        if (cR && IsCalibrated(*cR) && rightdE_adc[s] > 0)
+          rightdE_MeV[s] = Float_t(ApplyCal(*cR, Double_t(rightdE_adc[s])));
         totaldE_MeV[s] = leftdE_MeV[s] + rightdE_MeV[s];
       }
     }
-    cathode_MeV = (cal_C && cal_C->lin_ok && cathode_adc > 0)
-                      ? Float_t(ApplyLinear(*cal_C, Double_t(cathode_adc)))
+    cathode_MeV = (cal_C && IsCalibrated(*cal_C) && cathode_adc > 0)
+                      ? Float_t(ApplyCal(*cal_C, Double_t(cathode_adc)))
                       : 0.0f;
     cal_tree->Fill();
   }
@@ -1070,13 +838,12 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
 }
 
 // Overlay (one color per channel, log-y) of ONLY the events used for
-// calibration: the k=1 + k=2 anchor samples, converted to MeV via each
-// channel's linear fit. Each beam-dE channel shows its beam (k=1) and
-// single-pileup (k=2) peaks. Same axes/style as SaveDynamicRangeOverlay but
-// restricted to calibration events rather than the full spectrum.
+// calibration: the beam anchor samples, converted to MeV via each channel's
+// gain. Same axes/style as SaveDynamicRangeOverlay but restricted to
+// calibration events rather than the full spectrum.
 void CalibrateBeam::SaveCalibSampleOverlay(
     const std::vector<ChannelCal> &chans,
-    const std::vector<std::vector<std::vector<Float_t>>> &samples,
+    const std::vector<std::vector<Float_t>> &samples,
     const TString &plot_subdir, const TString &file_label) {
   const Int_t n_chans = Int_t(chans.size());
   const Int_t nbins = 300;
@@ -1085,19 +852,17 @@ void CalibrateBeam::SaveCalibSampleOverlay(
   std::vector<TH1D *> h(n_chans, nullptr);
   for (Int_t i = 0; i < n_chans; i++) {
     const ChannelCal &c = chans[i];
-    if (!IsBeamdEChannel(c) || !c.lin_ok)
+    if (!IsBeamdEChannel(c) || !IsCalibrated(c))
       continue;
     TString hname =
         Form("h_calibrange_%s_%s", file_label.Data(), c.name.Data());
     h[i] = new TH1D(hname, ";#DeltaE [MeV];Counts", nbins, emin, emax);
     h[i]->SetDirectory(nullptr);
-    for (Int_t k = 0; k < kNPeaks; k++) {
-      const std::vector<Float_t> &v = samples[i][k];
-      for (Int_t j = 0; j < Int_t(v.size()); j++) {
-        Double_t mev = ApplyLinear(c, Double_t(v[j]));
-        if (mev > 0)
-          h[i]->Fill(mev);
-      }
+    const std::vector<Float_t> &v = samples[i];
+    for (Int_t j = 0; j < Int_t(v.size()); j++) {
+      Double_t mev = ApplyCal(c, Double_t(v[j]));
+      if (mev > 0)
+        h[i]->Fill(mev);
     }
   }
 
@@ -1151,45 +916,37 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
     return;
   }
 
-  std::vector<BeamFit2D> beams;
+  BeamFit2D beam;
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
-    beams = FindBeamGateStp1VsStp0(spec, file_label, plot_subdir);
+    beam = FindBeamGateStp1VsStp0(spec, file_label, plot_subdir);
   }
-  if (beams.empty() || !beams[0].ok) {
+  if (!beam.ok) {
     std::cerr << "  " << file_label << ": Strip1-vs-Strip0 beam gate failed"
               << std::endl;
     return;
   }
 
   std::vector<ChannelCal> chans = sim_chans;
-  std::vector<std::vector<std::vector<Float_t>>> samples;
-  CollectAnchorSamplesOneSubfile(spec, chans, beams, samples);
-  std::vector<std::vector<TF1 *>> peak_fits;
+  std::vector<std::vector<Float_t>> samples;
+  CollectAnchorSamplesOneSubfile(spec, chans, beam, samples);
+  std::vector<TF1 *> peak_fits;
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
     ReduceToAnchors(chans, samples, peak_fits, file_label);
     SaveBeamPeakChannelHistograms(chans, samples, peak_fits, plot_subdir);
   }
   for (Int_t i = 0; i < Int_t(peak_fits.size()); i++)
-    for (Int_t k = 0; k < Int_t(peak_fits[i].size()); k++)
-      delete peak_fits[i][k];
+    delete peak_fits[i];
   peak_fits.clear();
 
-  for (Int_t i = 0; i < Int_t(chans.size()); i++) {
-    FitLinear(chans[i]);
-    if (chans[i].lin_ok)
-      std::cout << "  " << chans[i].name << " lin: a=" << chans[i].lin_a
-                << ", b=" << chans[i].lin_b
-                << ", chi2/ndf=" << chans[i].lin_chi2_ndf << std::endl;
-  }
+  for (Int_t i = 0; i < Int_t(chans.size()); i++)
+    if (IsCalibrated(chans[i]))
+      std::cout << "  " << chans[i].name << " gain=" << Gain(chans[i])
+                << " MeV/ADC" << std::endl;
 
   WriteCalSidecar(spec, chans);
 
-  {
-    std::lock_guard<std::mutex> lock(g_plot_mutex);
-    SaveLinearFitPlots(chans, plot_subdir);
-  }
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
     SaveDynamicRangeOverlay(spec, chans, plot_subdir, file_label);
@@ -1224,13 +981,12 @@ void CalibrateBeam::AggregateEresTomlForRun(
       delete cf;
       continue;
     }
-    Float_t lin_b[kMaxChannels] = {0};
-    Float_t anchor_sigma[kNPeaks][kMaxChannels] = {{0}};
-    Bool_t lin_ok[kMaxChannels] = {0};
-    t->SetBranchAddress("LinB", lin_b);
-    t->SetBranchAddress("LinOK", lin_ok);
-    for (Int_t p = 0; p < kNPeaks; p++)
-      t->SetBranchAddress(Form("AnchorSigma_k%d_ADC", p + 1), anchor_sigma[p]);
+    Float_t gain[kMaxChannels] = {0};
+    Float_t fit_sigma[kMaxChannels] = {0};
+    Bool_t ok[kMaxChannels] = {0};
+    t->SetBranchAddress("Gain", gain);
+    t->SetBranchAddress("Ok", ok);
+    t->SetBranchAddress("FitSigmaADC", fit_sigma);
     if (t->GetEntries() < 1) {
       cf->Close();
       delete cf;
@@ -1239,12 +995,12 @@ void CalibrateBeam::AggregateEresTomlForRun(
     t->GetEntry(0);
 
     for (Int_t i = 0; i < n_chans && i < kMaxChannels; i++) {
-      if (!lin_ok[i])
+      if (!ok[i])
         continue;
-      Double_t sig_adc = anchor_sigma[0][i];
-      if (sig_adc <= 0 || lin_b[i] <= 0)
+      Double_t sig_adc = fit_sigma[i];
+      if (sig_adc <= 0 || gain[i] <= 0)
         continue;
-      Double_t sigma_mev = Double_t(sig_adc) * Double_t(lin_b[i]);
+      Double_t sigma_mev = Double_t(sig_adc) * Double_t(gain[i]);
       Int_t idx = ChannelToEresIndex(tmpl[i]);
       if (idx >= 0 && idx < n_eres)
         sigma_per_chan[idx].push_back(sigma_mev);

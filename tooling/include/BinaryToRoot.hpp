@@ -12,7 +12,6 @@
 
 class BinaryToRoot {
 public:
-  static TString DataRBaseName(const FileSpec &s);
   static TString HeaderSidecarName(Int_t run);
   static void WriteHeaderSidecar(Int_t run, UShort_t header);
   static Bool_t ReadHeaderSidecar(Int_t run, UShort_t &header);

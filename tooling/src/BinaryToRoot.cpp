@@ -1,9 +1,5 @@
 #include "BinaryToRoot.hpp"
 
-TString BinaryToRoot::DataRBaseName(const FileSpec &s) {
-  return Form("DataR_run_%d%s", s.run, s.suffix.Data());
-}
-
 TString BinaryToRoot::HeaderSidecarName(Int_t run) {
   return Form("DataR_run_%d.header", run);
 }

@@ -144,6 +144,18 @@ void TraceCreator::BuildMeVSummaryHistograms(const TString &input_filename,
   delete cal_file;
 }
 
+TGraph *TraceCreator::BuildEventTrace(const EnergyView &ev) {
+  Int_t s_lo = Constants::IGNORE_STRIP_0 ? 1 : 0;
+  Int_t s_hi = Constants::IGNORE_STRIP_17 ? 16 : 17;
+  Int_t n_pts = s_hi - s_lo + 1;
+  TGraph *g = new TGraph(n_pts);
+  for (Int_t k = 0; k < n_pts; k++) {
+    Int_t s = s_lo + k;
+    g->SetPoint(k, s, ev.total[s]);
+  }
+  return g;
+}
+
 void TraceCreator::BuildTraces(std::vector<TString> input_filenames,
                                std::vector<TString> file_labels,
                                Bool_t save_plots, Bool_t reprocess) {
@@ -198,12 +210,11 @@ void TraceCreator::BuildTraces(std::vector<TString> input_filenames,
       Int_t s_lo = Constants::IGNORE_STRIP_0 ? 1 : 0;
       Int_t s_hi = Constants::IGNORE_STRIP_17 ? 16 : 17;
       Int_t n_pts = s_hi - s_lo + 1;
-      TGraph *TraceTotal = new TGraph(n_pts);
+      TGraph *TraceTotal = BuildEventTrace(ev);
       TGraph *TraceLeft = new TGraph(n_pts);
       TGraph *TraceRight = new TGraph(n_pts);
       for (Int_t k = 0; k < n_pts; k++) {
         Int_t s = s_lo + k;
-        TraceTotal->SetPoint(k, s, ev.total[s]);
         Double_t l = (s == 0 || s == 17) ? 0.0 : ev.left[s];
         Double_t r = (s == 0 || s == 17) ? 0.0 : ev.right[s];
         TraceLeft->SetPoint(k, s, l);

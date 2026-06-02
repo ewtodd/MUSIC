@@ -46,8 +46,6 @@ public:
 
 private:
   static TString FileName(Int_t run);
-  static TH2F *BuildGateHist(TChain *chain, const TString &name);
-  static BeamFit2D FitBigPeak(TH2F *h, const TString &tag);
   static void SaveGatePlot(TH2F *gate_hist, const BeamFit2D &gate,
                            const TString &subdir);
   static void BuildForRun(Int_t run, TChain *src_chain);

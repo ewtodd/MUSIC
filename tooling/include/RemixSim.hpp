@@ -45,9 +45,6 @@ public:
   // <dataset>/sim_root_files/traces_<iso>_<tag>.root.
   static TString SimRootPath(const SimFileSpec &s);
 
-  // Plot/label tag: <iso>_<tag>.
-  static TString FileLabel(const SimFileSpec &s);
-
   // Reaction strip encoded as a trailing "_s<N>" token on the tag. Returns -1
   // for unreacted-beam tags (no suffix).
   static Int_t ReactionStripOf(const TString &tag);

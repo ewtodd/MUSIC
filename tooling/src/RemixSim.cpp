@@ -65,10 +65,6 @@ TString RemixSim::SimRootPath(const SimFileSpec &s) {
   return Paths::DatasetDir() + "/sim_root_files/" + TracesName(s) + ".root";
 }
 
-TString RemixSim::FileLabel(const SimFileSpec &s) {
-  return Form("%s_%s", Paths::DatasetName().Data(), s.tag.Data());
-}
-
 Int_t RemixSim::ReactionStripOf(const TString &tag) {
   Ssiz_t pos = tag.Last('_');
   if (pos == kNPOS)

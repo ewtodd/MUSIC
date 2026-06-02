@@ -62,10 +62,19 @@ LDFLAGS   := -Wl,--gc-sections $(ROOT_LIBS) -lSpectrum -lMinuit \
 LIB      := $(BUILD_DIR)/libmusic.a
 SRC_OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(wildcard $(SRC_DIR)/*.cpp))
 
+# Si-detector calibration / stopping-power library objects. They #include the
+# per-dataset SiCalibConstants.hpp, so they only compile for a dataset that
+# provides one; otherwise drop them from the library (the matching binaries are
+# gated the same way below). This is what lets `make DATASET=87Rb` build.
+SI_SRC_OBJS := $(addprefix $(BUILD_DIR)/,SiFits.o SiCalibration.o \
+               CalcStoppingPower.o PlotStoppingPower.o)
+ifeq ($(wildcard $(CFG_DIR)/SiCalibConstants.hpp),)
+SRC_OBJS := $(filter-out $(SI_SRC_OBJS),$(SRC_OBJS))
+endif
+
 # Binary "foo-bar" is built from tooling/mains/main_foo_bar.cpp (dashes->underscores).
-BINS := pipeline calibrate-beam traces delta-e-scatter strip-scatter \
-        strip-sum-scatter gate-cache diag-timing diag-events diag-subfile-drift \
-        sim-delta-e-scatter sim-trace-creator strip-scatter-overlay
+BINS := pipeline calibrate-beam traces delta-e-scatter \
+        strip-sum-scatter gate-cache diag-timing diag-events diag-subfile-drift strip-scatter-overlay
 
 # Si-detector calibration / stopping-power binaries. These need a per-dataset
 # Si config (analysis/<DATASET>/config/SiCalibConstants.hpp); datasets without

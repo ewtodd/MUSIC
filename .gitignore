@@ -1,4 +1,6 @@
+upstream
 *.log
+*.html
 CLAUDE.md
 .claude
 .claude/settings.json
