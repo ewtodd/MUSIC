@@ -62,14 +62,14 @@ const Bool_t USE_GPU_ACCELERATION = kTRUE;
 const Int_t MAX_GPU_CONCURRENT_SORTS = 8;
 
 const Double_t STRIP_E_MIN_MEV = 9;
-const Double_t STRIP_E_MAX_MEV = 17;
+const Double_t STRIP_E_MAX_MEV = 15.5;
 const Double_t CATHODE_E_MAX_MEV = 300;
 const Double_t TOTAL_E_MIN_MEV = 10.0;
 const Double_t TOTAL_E_MAX_MEV = 400.0;
 
 const Double_t NORM_MUSIC_MEV = 12;
 
-const Int_t STRIP_SUM_CANDIDATE_REACTION_STRIP = 3;
+const Int_t STRIP_SUM_CANDIDATE_REACTION_STRIP = 6;
 const Double_t STRIP_SUM_XMIN = 150;
 const Double_t STRIP_SUM_XMAX = 230;
 const Int_t STRIP_SUM_XBINS = 300;
@@ -77,7 +77,7 @@ const Double_t STRIP_SUM_YMIN = 60;
 const Double_t STRIP_SUM_YMAX = 90;
 const Int_t STRIP_SUM_YBINS = 300;
 
-const Int_t REACTION_STRIP_MIN = 7;
+const Int_t REACTION_STRIP_MIN = 3;
 const Int_t REACTION_STRIP_MAX = 15;
 
 const Double_t STRIP_E_MIN_ADC = 0.0;

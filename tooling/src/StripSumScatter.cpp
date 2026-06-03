@@ -1,14 +1,14 @@
 #include "StripSumScatter.hpp"
+#include <TNamed.h>
+#include <limits>
 
 namespace {
 
 // (a,n) reaction selection on the long-anode strips, mirroring the upstream
 // dEE.C cuts. All energies are calibrated MeV normalized so the beam sits at
 // Constants::NORM_MUSIC_MEV per strip.
-const Int_t kReacStrip =
-    Constants::STRIP_SUM_CANDIDATE_REACTION_STRIP; // upstream anode_choice
 const Int_t kSmoothHiStrip =
-    12; // smoothness checked through this strip (upstream k<13)
+    12; // smoothness checked through this (absolute) strip (upstream k<13)
 const Double_t kBeamFlatTol =
     1.0; // |E - NORM| tol for the pre-reaction strips (0..reac-1)
 const Double_t kReacJumpMin =
@@ -19,16 +19,22 @@ const Double_t kSmoothMaxStep =
     1.2; // max |dE| step between adjacent post-reaction strips
 const Double_t kStrip17Max = 11.5; // Strip17 upper bound (upstream S17R[1])
 
+// Candidate reaction strips: every scatter is computed in one pass over the
+// data, one TH2F per reaction strip in [MIN, MAX].
+const Int_t kReacMin = Constants::REACTION_STRIP_MIN;
+const Int_t kReacMax = Constants::REACTION_STRIP_MAX;
+const Int_t kNReac = kReacMax - kReacMin + 1;
+
 // Max sampled per-strip traces drawn per region (beam / (a,a') / (a,n)).
 const Int_t kTracesPerRegion = 40;
+// Cap on beam-flat events kept in the trace reservoir (only ~40 are drawn).
+const Int_t kBeamReservoirCap = 400;
 
-// Sum windows: x = all long anodes (1-16), y = the downstream reaction window
-// reac+1 .. reac+6 (strips 4-9 for reac=3, matching upstream length_avDe=6;
-// the published 4-10 looks like an off-by-one).
+// Sum windows: x = all long anodes (1-16); y = the downstream reaction window
+// reac+1 .. reac+6, clamped to the last strip (17). The window shortens for
+// reaction strips near the downstream end.
 const Int_t kXLo = 1;
 const Int_t kXHi = 16;
-const Int_t kYLo = kReacStrip + 1;
-const Int_t kYHi = kReacStrip + 6;
 
 // Beam gate (kept): Strip0 vs Strip1 inside the calibration moments ellipse,
 // axis-aligned at (kGateNSigmaX, kGateNSigmaY) exactly like the calibration.
@@ -46,15 +52,105 @@ const Double_t kSeedFrac = 0.30;
 const Double_t kXMin = Constants::STRIP_SUM_XMIN;
 const Double_t kXMax = Constants::STRIP_SUM_XMAX;
 const Int_t kXBins = Constants::STRIP_SUM_XBINS;
-const Double_t kYMin = Constants::STRIP_SUM_YMIN;
-const Double_t kYMax = Constants::STRIP_SUM_YMAX;
 const Int_t kYBins = Constants::STRIP_SUM_YBINS;
 
+// Sampled-pass budget for the beam-gate fit and the y-bound auto-range. Both
+// only need to characterize a population, not visit every event.
+const Long64_t kSampleMaxPoints = 2000000;
+
+// Cache file (under root_files): all per-strip scatters + the trace reservoir,
+// stamped with a fingerprint of the cut constants and input entry counts.
+const char *kCacheName = "StripSumScatter_cache.root";
+
+Int_t ReacIndex(Int_t reac) { return reac - kReacMin; }
+Int_t YLoOf(Int_t reac) { return reac + 1; }
+Int_t YHiOf(Int_t reac) { return TMath::Min(reac + 6, 17); }
+
+// One sampled trace per kept event: the 18 strip totals (enough to redraw the
+// per-strip trace and recompute cut membership), the bitmask of which reaction
+// strips it passes, and whether it is clean flat beam.
+struct TraceEvt {
+  Float_t total[18];
+  UInt_t reac_mask;
+  Bool_t beam_flat;
+};
+
+void EnableEventBranches(TChain *chain) {
+  // Skip decompressing the branches EnergyView does not read
+  // (Hits/Grid/FlagsOR) on these full/sampled scans.
+  chain->SetBranchStatus("*", 0);
+  chain->SetBranchStatus("Left_0_17_dE", 1);
+  chain->SetBranchStatus("RightdE", 1);
+  chain->SetBranchStatus("Cathode", 1);
+}
+
+Bool_t AllStripsFired(const EnergyView &ev) {
+  if (!(ev.total[0] > 0.0 && ev.total[17] > 0.0))
+    return kFALSE;
+  for (Int_t s = 1; s <= 16; s++)
+    if (!(ev.total[s] > 0.0))
+      return kFALSE;
+  return kTRUE;
+}
+
+// Full (a,n) ladder (upstream dEE.C) for a given reaction strip, assuming the
+// beam gate already passed. The smoothness check runs from reac+1 up to the
+// absolute strip kSmoothHiStrip, so it is vacuous once reac >= kSmoothHiStrip
+// (the high reaction strips therefore carry no smoothness constraint -- a
+// physics knob to revisit if those strips matter).
+Bool_t PassesReaction(const EnergyView &ev, Int_t reac) {
+  const Double_t kNorm = Constants::NORM_MUSIC_MEV;
+  if (!AllStripsFired(ev))
+    return kFALSE;
+  for (Int_t s = 0; s < reac; s++)
+    if (TMath::Abs(ev.total[s] - kNorm) > kBeamFlatTol)
+      return kFALSE;
+  Double_t reac_jump = ev.total[reac] - ev.total[reac - 1];
+  if (!(reac_jump > kReacJumpMin && reac_jump < kReacJumpMax))
+    return kFALSE;
+  if (!(ev.total[reac] > kNorm + kReacJumpMin &&
+        ev.total[reac] < kNorm + kReacJumpMax))
+    return kFALSE;
+  for (Int_t s = reac + 1; s <= kSmoothHiStrip; s++)
+    if (TMath::Abs(ev.total[s] - ev.total[s - 1]) > kSmoothMaxStep)
+      return kFALSE;
+  return ev.total[17] < kStrip17Max;
+}
+
+// Clean un-reacted beam: all long anodes flat near NORM.
+Bool_t IsBeamFlat(const EnergyView &ev) {
+  const Double_t kNorm = Constants::NORM_MUSIC_MEV;
+  if (!AllStripsFired(ev))
+    return kFALSE;
+  for (Int_t s = 1; s <= 16; s++)
+    if (TMath::Abs(ev.total[s] - kNorm) > kBeamFlatTol)
+      return kFALSE;
+  return kTRUE;
+}
+
+Double_t SumRange(const Double_t *total, Int_t lo, Int_t hi) {
+  Double_t sum = 0.0;
+  for (Int_t s = lo; s <= hi; s++)
+    sum += total[s];
+  return sum;
+}
+
+Bool_t PassesGate(const BeamFit2D &gate, const EnergyView &ev) {
+  Double_t g0 = ev.total[kGateStripX];
+  Double_t g1 = ev.total[kGateStripY];
+  if (!(g0 > 0.0 && g1 > 0.0))
+    return kFALSE;
+  return BeamFitUtils::InEllipseXY(gate, g0, g1, kGateNSigmaX, kGateNSigmaY);
+}
+
+// Fit one run's Strip0-vs-Strip1 beam gate from a stride-sampled subset (the
+// 2D peak is characterized fine without every event), saving the gate plot.
 BeamFit2D FindBeamGate(TChain *chain, const TString &tag,
                        const TString &subdir) {
   BeamFit2D out;
   EnergyView ev;
   ev.Attach(chain);
+  EnableEventBranches(chain);
   TH2F *h = new TH2F(
       Form("h2_beamgate_s%d_s%d_%s", kGateStripX, kGateStripY, tag.Data()),
       Form(";#DeltaE strip %d [MeV];#DeltaE strip %d [MeV]", kGateStripX,
@@ -62,7 +158,8 @@ BeamFit2D FindBeamGate(TChain *chain, const TString &tag,
       kGateBins, kGateMin, kGateMax, kGateBins, kGateMin, kGateMax);
   h->SetDirectory(nullptr);
   Long64_t n = chain->GetEntries();
-  for (Long64_t j = 0; j < n; j++) {
+  Long64_t stride = FileSet::SampleStride(n, kSampleMaxPoints);
+  for (Long64_t j = 0; j < n; j += stride) {
     chain->GetEntry(j);
     ev.Decode();
     Double_t x = ev.total[kGateStripX];
@@ -97,8 +194,6 @@ BeamFit2D FindBeamGate(TChain *chain, const TString &tag,
   out.rho = m.rho;
   out.ok = kTRUE;
 
-  // Save the gate plot: Strip0-vs-Strip1 with the axis-aligned selection
-  // ellipse (kGateNSigmaX in x, kGateNSigmaY in y) drawn on it.
   if (Constants::SAVE_PLOTS) {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
     TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
@@ -118,124 +213,6 @@ BeamFit2D FindBeamGate(TChain *chain, const TString &tag,
   return out;
 }
 
-Bool_t PassesGate(const BeamFit2D &gate, const EnergyView &ev) {
-  Double_t g0 = ev.total[kGateStripX];
-  Double_t g1 = ev.total[kGateStripY];
-  if (!(g0 > 0.0 && g1 > 0.0))
-    return kFALSE;
-  return BeamFitUtils::InEllipseXY(gate, g0, g1, kGateNSigmaX, kGateNSigmaY);
-}
-
-Bool_t AllStripsFired(const EnergyView &ev) {
-  if (!(ev.total[0] > 0.0 && ev.total[17] > 0.0))
-    return kFALSE;
-  for (Int_t s = 1; s <= 16; s++)
-    if (!(ev.total[s] > 0.0))
-      return kFALSE;
-  return kTRUE;
-}
-
-// Full (a,n) ladder (upstream dEE.C), assuming the beam gate already passed.
-Bool_t PassesReaction(const EnergyView &ev) {
-  const Double_t kNorm = Constants::NORM_MUSIC_MEV;
-  if (!AllStripsFired(ev))
-    return kFALSE;
-  // (2) Beam still un-reacted up to the reaction strip.
-  for (Int_t s = 0; s < kReacStrip; s++)
-    if (TMath::Abs(ev.total[s] - kNorm) > kBeamFlatTol)
-      return kFALSE;
-  // (3) Energy jump at the reaction strip (relative + absolute).
-  Double_t reac_jump = ev.total[kReacStrip] - ev.total[kReacStrip - 1];
-  if (!(reac_jump > kReacJumpMin && reac_jump < kReacJumpMax))
-    return kFALSE;
-  if (!(ev.total[kReacStrip] > kNorm + kReacJumpMin &&
-        ev.total[kReacStrip] < kNorm + kReacJumpMax))
-    return kFALSE;
-  // (4) Smooth energy loss after the reaction strip.
-  for (Int_t s = kReacStrip + 1; s <= kSmoothHiStrip; s++)
-    if (TMath::Abs(ev.total[s] - ev.total[s - 1]) > kSmoothMaxStep)
-      return kFALSE;
-  // (5) Strip17 below its upper bound.
-  return ev.total[17] < kStrip17Max;
-}
-
-// Clean un-reacted beam: all long anodes flat near NORM. Beam is filtered off
-// the (a,n) scatter, so its sample traces come from this separate population.
-Bool_t IsBeamFlat(const EnergyView &ev) {
-  const Double_t kNorm = Constants::NORM_MUSIC_MEV;
-  if (!AllStripsFired(ev))
-    return kFALSE;
-  for (Int_t s = 1; s <= 16; s++)
-    if (TMath::Abs(ev.total[s] - kNorm) > kBeamFlatTol)
-      return kFALSE;
-  return kTRUE;
-}
-
-Double_t SumStrips(const EnergyView &ev, Int_t lo, Int_t hi) {
-  Double_t sum = 0.0;
-  for (Int_t s = lo; s <= hi; s++)
-    sum += ev.total[s];
-  return sum;
-}
-
-// Prompt the user to draw one graphical region on the already-drawn scatter
-// canvas; blocks until the polygon is closed. Returns the cut (renamed) or
-// null.
-TCutG *PromptCut(TCanvas *c, const char *name, const char *label) {
-  std::cout << "  >>> draw the " << label
-            << " region: left-click vertices, double-click to close"
-            << std::endl;
-  c->cd();
-  // emode is case-sensitive: "CutG" puts the pad in graphical-cut mode so
-  // left-clicks place vertices; the drawn TCutG is named "CUTG".
-  TCutG *cut = dynamic_cast<TCutG *>(c->WaitPrimitive("CUTG", "CutG"));
-  if (!cut) {
-    std::cerr << "  no " << label << " cut drawn" << std::endl;
-    return nullptr;
-  }
-  cut->SetName(name);
-  cut->SetLineColor(kBlack);
-  cut->SetLineWidth(2);
-  return cut;
-}
-
-// Re-scan one run and collect up to kTracesPerRegion sampled per-strip traces
-// per region: beam (flat, un-reacted) plus the (a,n)/(a,a') TCutGs on the
-// (Sigma_1-16, Sigma_4-9) plane. Accumulates across runs into the shared lists.
-void SampleRunTraces(TChain *chain, const BeamFit2D &gate, TCutG *cut_an,
-                     TCutG *cut_aa, std::vector<TGraph *> &an,
-                     std::vector<TGraph *> &aa, std::vector<TGraph *> &beam) {
-  if (!chain || !gate.ok)
-    return;
-  EnergyView ev;
-  ev.Attach(chain);
-  Long64_t n = chain->GetEntries();
-  for (Long64_t j = 0; j < n; j++) {
-    if (an.size() >= std::size_t(kTracesPerRegion) &&
-        aa.size() >= std::size_t(kTracesPerRegion) &&
-        beam.size() >= std::size_t(kTracesPerRegion))
-      return;
-    chain->GetEntry(j);
-    ev.Decode();
-    if (!PassesGate(gate, ev))
-      continue;
-    if (beam.size() < std::size_t(kTracesPerRegion) && IsBeamFlat(ev)) {
-      beam.push_back(TraceCreator::BuildEventTrace(ev));
-      continue;
-    }
-    if (!PassesReaction(ev))
-      continue;
-    Double_t x = SumStrips(ev, kXLo, kXHi);
-    Double_t y = SumStrips(ev, kYLo, kYHi);
-    if (cut_an && an.size() < std::size_t(kTracesPerRegion) &&
-        cut_an->IsInside(x, y))
-      an.push_back(TraceCreator::BuildEventTrace(ev));
-    else if (cut_aa && aa.size() < std::size_t(kTracesPerRegion) &&
-             cut_aa->IsInside(x, y))
-      aa.push_back(TraceCreator::BuildEventTrace(ev));
-  }
-}
-
 void DrawTraceSet(const std::vector<TGraph *> &traces, Int_t color) {
   for (std::size_t i = 0; i < traces.size(); i++) {
     traces[i]->SetLineColorAlpha(color, 0.45);
@@ -244,8 +221,15 @@ void DrawTraceSet(const std::vector<TGraph *> &traces, Int_t color) {
   }
 }
 
+TGraph *TraceFromTotal(const Float_t *total) {
+  Double_t td[18];
+  for (Int_t s = 0; s < 18; s++)
+    td[s] = Double_t(total[s]);
+  return TraceCreator::BuildTraceFromTotals(td);
+}
+
 // Overlay the sampled per-strip traces, one colour per region, on one canvas.
-void DrawRegionTraces(const std::vector<TGraph *> &beam,
+void DrawRegionTraces(Int_t reac, const std::vector<TGraph *> &beam,
                       const std::vector<TGraph *> &aa,
                       const std::vector<TGraph *> &an) {
   std::lock_guard<std::mutex> lock(g_plot_mutex);
@@ -275,7 +259,7 @@ void DrawRegionTraces(const std::vector<TGraph *> &beam,
   leg->AddEntry(p_an, "(#alpha,n)", "l");
   leg->Draw();
 
-  PlottingUtils::SaveFigure(c, Form("region_traces_reac%d", kReacStrip),
+  PlottingUtils::SaveFigure(c, Form("region_traces_reac%d", reac),
                             "strip_sum_scatter", PlotSaveOptions::kLINEAR);
   delete leg;
   delete p_beam;
@@ -285,49 +269,97 @@ void DrawRegionTraces(const std::vector<TGraph *> &beam,
   delete frame;
 }
 
-} // namespace
-
-BeamFit2D StripSumScatter::FillRun(Int_t run, TChain *chain,
-                                   const TString &gate_subdir, TH2F *h) {
-  BeamFit2D gate;
-  if (!chain || chain->GetEntries() == 0) {
-    std::cerr << "Run " << run << ": empty chain; skipping" << std::endl;
-    return gate;
+// Prompt the user to draw one graphical region on the already-drawn scatter
+// canvas; blocks until the polygon is closed. Returns the cut (renamed) or
+// null.
+TCutG *PromptCut(TCanvas *c, const char *name, const char *label) {
+  std::cout << "  >>> draw the " << label
+            << " region: left-click vertices, double-click to close"
+            << std::endl;
+  c->cd();
+  TCutG *cut = dynamic_cast<TCutG *>(c->WaitPrimitive("CUTG", "CutG"));
+  if (!cut) {
+    std::cerr << "  no " << label << " cut drawn" << std::endl;
+    return nullptr;
   }
-
-  gate = FindBeamGate(chain, Form("run%d", run), gate_subdir);
-  if (!gate.ok) {
-    std::cerr << "Run " << run << ": beam gate (strips " << kGateStripX << ","
-              << kGateStripY << ") failed; skipping" << std::endl;
-    return gate;
-  }
-  std::cout << "  beam gate (strips " << kGateStripX << "," << kGateStripY
-            << "): mu=(" << gate.mu_x << "," << gate.mu_y << ") sigma=("
-            << gate.sigma_x << "," << gate.sigma_y << ")" << std::endl;
-
-  EnergyView ev;
-  ev.Attach(chain);
-
-  Long64_t n = chain->GetEntries();
-  std::cout << "Run " << run << ": (a,n)-gating " << n
-            << " events (beam ellipse on strips " << kGateStripX << ","
-            << kGateStripY << ", then reaction-jump + smoothness on strip "
-            << kReacStrip << ")..." << std::endl;
-
-  Long64_t n_gated = 0;
-  for (Long64_t j = 0; j < n; j++) {
-    chain->GetEntry(j);
-    ev.Decode();
-    if (!PassesGate(gate, ev))
-      continue;
-    if (!PassesReaction(ev))
-      continue;
-    n_gated++;
-    h->Fill(SumStrips(ev, kXLo, kXHi), SumStrips(ev, kYLo, kYHi));
-  }
-  std::cout << "  " << n_gated << " events passed the PID gate" << std::endl;
-  return gate;
+  cut->SetName(name);
+  cut->SetLineColor(kBlack);
+  cut->SetLineWidth(2);
+  return cut;
 }
+
+TString BuildFingerprint(const std::vector<Int_t> &run_order,
+                         std::map<Int_t, TChain *> &chains) {
+  TString s = Form(
+      "v1 reac[%d,%d] norm=%.4f flatTol=%.3f jump[%.3f,%.3f] smoothHi=%d "
+      "step=%.3f s17=%.3f gate[s%d,s%d,%.2f,%.2f,%d,%.3f,%.3f] x[%.3f,%.3f,%d] "
+      "ybins=%d",
+      kReacMin, kReacMax, Constants::NORM_MUSIC_MEV, kBeamFlatTol, kReacJumpMin,
+      kReacJumpMax, kSmoothHiStrip, kSmoothMaxStep, kStrip17Max, kGateStripX,
+      kGateStripY, kGateNSigmaX, kGateNSigmaY, kGateBins, kGateMin, kGateMax,
+      kXMin, kXMax, kXBins, kYBins);
+  for (std::size_t i = 0; i < run_order.size(); i++) {
+    Int_t run = run_order[i];
+    s += Form(" r%d:%lld", run, chains[run]->GetEntries());
+  }
+  return s;
+}
+
+// Per-reaction-strip y-axis bounds from a stride-sampled pass over all runs
+// (x is strip-independent and stays fixed). Falls back to the configured
+// STRIP_SUM_Y range for strips with too few sampled events.
+void FindYBounds(const std::vector<Int_t> &run_order,
+                 std::map<Int_t, TChain *> &chains,
+                 std::map<Int_t, BeamFit2D> &gates, Double_t *y_lo,
+                 Double_t *y_hi) {
+  for (Int_t r = 0; r < kNReac; r++) {
+    y_lo[r] = std::numeric_limits<Double_t>::max();
+    y_hi[r] = -std::numeric_limits<Double_t>::max();
+  }
+  for (std::size_t i = 0; i < run_order.size(); i++) {
+    Int_t run = run_order[i];
+    TChain *chain = chains[run];
+    if (!chain || !gates[run].ok)
+      continue;
+    EnergyView ev;
+    ev.Attach(chain);
+    EnableEventBranches(chain);
+    Long64_t n = chain->GetEntries();
+    Long64_t stride = FileSet::SampleStride(n, kSampleMaxPoints);
+    for (Long64_t j = 0; j < n; j += stride) {
+      chain->GetEntry(j);
+      ev.Decode();
+      if (!PassesGate(gates[run], ev))
+        continue;
+      for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
+        if (!PassesReaction(ev, reac))
+          continue;
+        Double_t y = SumRange(ev.total, YLoOf(reac), YHiOf(reac));
+        Int_t ri = ReacIndex(reac);
+        if (y < y_lo[ri])
+          y_lo[ri] = y;
+        if (y > y_hi[ri])
+          y_hi[ri] = y;
+      }
+    }
+  }
+  for (Int_t r = 0; r < kNReac; r++) {
+    if (y_lo[r] > y_hi[r]) { // no events sampled for this strip
+      y_lo[r] = Constants::STRIP_SUM_YMIN;
+      y_hi[r] = Constants::STRIP_SUM_YMAX;
+      continue;
+    }
+    Double_t pad = 0.05 * (y_hi[r] - y_lo[r]);
+    if (pad < 1.0)
+      pad = 1.0;
+    y_lo[r] -= pad;
+    y_hi[r] += pad;
+    if (y_lo[r] < 0.0)
+      y_lo[r] = 0.0;
+  }
+}
+
+} // namespace
 
 void StripSumScatter::Run() {
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
@@ -335,51 +367,199 @@ void StripSumScatter::Run() {
                                 Paths::ResultsDir() + "/root_files");
   gROOT->SetBatch(kTRUE);
 
-  // Group events trees by run; each run becomes one TChain (EnergyView
-  // calibrates on the fly, reloading per-subfile gains at each file boundary).
   std::vector<Int_t> run_order;
   std::map<Int_t, TChain *> chain_by_run = FileSet::GroupEventsByRun(run_order);
-
-  // One aggregate histogram over all runs. Each run is gated with its own beam
-  // ellipse (the per-run calibration leaves residual epoch-to-epoch shifts),
-  // but the selected events all accumulate here for a single combined scatter.
-  TH2F *h =
-      new TH2F(Form("h2_normsumE_s%d_%d_vs_s%d_%d", kYLo, kYHi, kXLo, kXHi),
-               Form(";norm. #DeltaE strips %d#rightarrow%d [MeV];"
-                    "norm. #DeltaE strips %d#rightarrow%d [MeV]",
-                    kXLo, kXHi, kYLo, kYHi),
-               kXBins, kXMin, kXMax, kYBins, kYMin, kYMax);
-  h->SetDirectory(nullptr);
-  h->SetStats(0);
-
-  std::map<Int_t, BeamFit2D> gates;
-  for (std::size_t i = 0; i < run_order.size(); i++) {
-    Int_t run = run_order[i];
-    gates[run] = FillRun(run, chain_by_run[run],
-                         Form("strip_sum_scatter/run%d", run), h);
+  if (run_order.empty()) {
+    std::cerr << "strip-sum-scatter: no runs found" << std::endl;
+    return;
   }
 
+  TString fingerprint = BuildFingerprint(run_order, chain_by_run);
+
+  std::map<Int_t, TH2F *> scatter; // keyed by reaction strip
+  std::vector<TraceEvt> reservoir;
+
+  // ---- try the cache ----
+  Bool_t loaded = kFALSE;
+  TString cache_full = IO::GetRootFilesBaseDir() + TString("/") + kCacheName;
+  if (!gSystem->AccessPathName(cache_full)) {
+    TFile *cf = IO::OpenForReading(kCacheName);
+    if (cf && !cf->IsZombie()) {
+      TNamed *fp = dynamic_cast<TNamed *>(cf->Get("fingerprint"));
+      if (fp && fingerprint == fp->GetTitle()) {
+        Bool_t ok = kTRUE;
+        for (Int_t reac = kReacMin; reac <= kReacMax && ok; reac++) {
+          TH2F *h = dynamic_cast<TH2F *>(cf->Get(Form("scatter_r%d", reac)));
+          if (!h) {
+            ok = kFALSE;
+            break;
+          }
+          TH2F *hc = static_cast<TH2F *>(h->Clone());
+          hc->SetDirectory(nullptr);
+          scatter[reac] = hc;
+        }
+        TTree *tt = dynamic_cast<TTree *>(cf->Get("traces"));
+        if (ok && tt) {
+          TraceEvt e;
+          tt->SetBranchAddress("total", e.total);
+          tt->SetBranchAddress("reac_mask", &e.reac_mask);
+          tt->SetBranchAddress("beam_flat", &e.beam_flat);
+          Long64_t nt = tt->GetEntries();
+          reservoir.reserve(nt);
+          for (Long64_t j = 0; j < nt; j++) {
+            tt->GetEntry(j);
+            reservoir.push_back(e);
+          }
+          loaded = ok;
+        }
+      }
+      cf->Close();
+      delete cf;
+    }
+    if (loaded)
+      std::cout << "strip-sum-scatter: loaded cached scatters + "
+                << reservoir.size() << " reservoir events (fingerprint match)."
+                << std::endl;
+    else
+      std::cout << "strip-sum-scatter: cache present but stale; rebuilding."
+                << std::endl;
+  }
+
+  // ---- build (one sampled gate pass + one sampled bounds pass + one full
+  // fill pass over all runs, producing every reaction-strip scatter) ----
+  if (!loaded) {
+    std::map<Int_t, BeamFit2D> gates;
+    for (std::size_t i = 0; i < run_order.size(); i++) {
+      Int_t run = run_order[i];
+      if (!chain_by_run[run] || chain_by_run[run]->GetEntries() == 0)
+        continue;
+      gates[run] = FindBeamGate(chain_by_run[run], Form("run%d", run),
+                                Form("strip_sum_scatter/run%d", run));
+      if (gates[run].ok)
+        std::cout << "  run " << run << " beam gate: mu=(" << gates[run].mu_x
+                  << "," << gates[run].mu_y << ")" << std::endl;
+      else
+        std::cerr << "  run " << run << " beam gate failed; skipping"
+                  << std::endl;
+    }
+
+    Double_t y_lo[64], y_hi[64];
+    FindYBounds(run_order, chain_by_run, gates, y_lo, y_hi);
+
+    for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
+      Int_t ri = ReacIndex(reac);
+      TH2F *h = new TH2F(
+          Form("scatter_r%d", reac),
+          Form(";norm. #DeltaE strips %d#rightarrow%d [MeV];norm. #DeltaE "
+               "strips %d#rightarrow%d [MeV]",
+               kXLo, kXHi, YLoOf(reac), YHiOf(reac)),
+          kXBins, kXMin, kXMax, kYBins, y_lo[ri], y_hi[ri]);
+      h->SetDirectory(nullptr);
+      h->SetStats(0);
+      scatter[reac] = h;
+    }
+
+    Long64_t total_gated = 0, total_seen = 0;
+    Int_t n_beam_kept = 0;
+    for (std::size_t i = 0; i < run_order.size(); i++) {
+      Int_t run = run_order[i];
+      TChain *chain = chain_by_run[run];
+      if (!chain || !gates[run].ok)
+        continue;
+      EnergyView ev;
+      ev.Attach(chain);
+      EnableEventBranches(chain);
+      Long64_t n = chain->GetEntries();
+      std::cout << "Run " << run << ": filling " << kNReac
+                << " reaction-strip scatters over " << n << " events..."
+                << std::endl;
+      for (Long64_t j = 0; j < n; j++) {
+        chain->GetEntry(j);
+        ev.Decode();
+        total_seen++;
+        if (!PassesGate(gates[run], ev))
+          continue;
+        Double_t x = SumRange(ev.total, kXLo, kXHi);
+        UInt_t mask = 0;
+        for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
+          if (!PassesReaction(ev, reac))
+            continue;
+          mask |= (1u << ReacIndex(reac));
+          scatter[reac]->Fill(x, SumRange(ev.total, YLoOf(reac), YHiOf(reac)));
+        }
+        // Keep every reaction-passing event for traces; cap clean flat-beam
+        // events (only ~kTracesPerRegion are ever drawn). The two are mutually
+        // exclusive -- a flat-beam event has no reaction jump.
+        Bool_t beam = (mask == 0) && IsBeamFlat(ev);
+        if (mask == 0 && !(beam && n_beam_kept < kBeamReservoirCap))
+          continue;
+        if (beam)
+          n_beam_kept++;
+        TraceEvt e;
+        for (Int_t s = 0; s < 18; s++)
+          e.total[s] = Float_t(ev.total[s]);
+        e.reac_mask = mask;
+        e.beam_flat = beam;
+        reservoir.push_back(e);
+        if (mask != 0)
+          total_gated++;
+      }
+    }
+    std::cout << "Built scatters: " << total_gated
+              << " reaction events across strips " << kReacMin << "-"
+              << kReacMax << " (" << total_seen << " seen), reservoir "
+              << reservoir.size() << " events." << std::endl;
+
+    // ---- write cache ----
+    TFile *out = IO::OpenForWriting(kCacheName, "RECREATE");
+    if (out && !out->IsZombie()) {
+      out->cd();
+      TNamed fp("fingerprint", fingerprint.Data());
+      fp.Write();
+      for (Int_t reac = kReacMin; reac <= kReacMax; reac++)
+        scatter[reac]->Write(Form("scatter_r%d", reac));
+      TTree *tt = new TTree("traces", "strip-sum trace reservoir");
+      TraceEvt e;
+      tt->Branch("total", e.total, "total[18]/F");
+      tt->Branch("reac_mask", &e.reac_mask, "reac_mask/i");
+      tt->Branch("beam_flat", &e.beam_flat, "beam_flat/O");
+      for (std::size_t k = 0; k < reservoir.size(); k++) {
+        e = reservoir[k];
+        tt->Fill();
+      }
+      tt->Write();
+      out->Close();
+      delete out;
+      std::cout << "strip-sum-scatter: wrote cache " << kCacheName << std::endl;
+    }
+  }
+
+  // ---- save every reaction-strip scatter PNG ----
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
-    TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
-    PlottingUtils::ConfigureAndDraw2DHistogram(h, c);
-    h->GetYaxis()->SetTitleOffset(1.3);
-    c->SetLeftMargin(0.18);
-    PlottingUtils::SaveFigure(c,
-                              Form("normsumE_reac%d_s%d_%d_vs_s%d_%d",
-                                   kReacStrip, kYLo, kYHi, kXLo, kXHi),
-                              "strip_sum_scatter", PlotSaveOptions::kLINEAR);
-    delete c;
+    for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
+      TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      PlottingUtils::ConfigureAndDraw2DHistogram(scatter[reac], c);
+      scatter[reac]->GetYaxis()->SetTitleOffset(1.3);
+      c->SetLeftMargin(0.18);
+      PlottingUtils::SaveFigure(c,
+                                Form("normsumE_reac%d_s%d_%d_vs_s%d_%d", reac,
+                                     YLoOf(reac), YHiOf(reac), kXLo, kXHi),
+                                "strip_sum_scatter", PlotSaveOptions::kLINEAR);
+      delete c;
+    }
   }
 
-  // Interactive region-trace overlay: draw the aggregate, let the user draw the
-  // (a,n) and (a,a') regions, then sample per-strip traces from each region
-  // (plus a separate flat-beam population) and overlay them on one plot. Needs
-  // a display; headless runs just keep the aggregate scatter already saved
-  // above.
-  if (!gSystem->Getenv("DISPLAY")) {
+  // ---- interactive region-trace overlay on the configured reaction strip ----
+  // Needs a display; samples traces from the cached reservoir (no rescan).
+  Int_t reac = Constants::STRIP_SUM_CANDIDATE_REACTION_STRIP;
+  if (reac < kReacMin || reac > kReacMax) {
+    std::cerr << "strip-sum-scatter: candidate reaction strip " << reac
+              << " outside [" << kReacMin << "," << kReacMax
+              << "]; skipping interactive overlay." << std::endl;
+  } else if (!gSystem->Getenv("DISPLAY")) {
     std::cerr << "strip-sum-scatter: no DISPLAY; skipping interactive "
-                 "region-trace overlay (aggregate scatter already saved)."
+                 "region-trace overlay (scatters already saved)."
               << std::endl;
   } else {
     Int_t app_argc = 1;
@@ -390,20 +570,43 @@ void StripSumScatter::Run() {
 
     TCanvas *cut_canvas = new TCanvas(
         "c_strip_sum_regions", "Draw (a,n) then (a,a') regions", 900, 700);
-    h->Draw("COLZ");
+    cut_canvas->SetLogz(kTRUE); // match the saved scatter's z-scale
+    scatter[reac]->Draw("COLZ");
     cut_canvas->Update();
     TCutG *cut_an = PromptCut(cut_canvas, "region_an", "(a,n)");
     TCutG *cut_aa = PromptCut(cut_canvas, "region_aa", "(a,a')");
 
     std::vector<TGraph *> tr_an, tr_aa, tr_beam;
-    for (std::size_t i = 0; i < run_order.size(); i++)
-      SampleRunTraces(chain_by_run[run_order[i]], gates[run_order[i]], cut_an,
-                      cut_aa, tr_an, tr_aa, tr_beam);
+    UInt_t bit = (1u << ReacIndex(reac));
+    for (std::size_t k = 0; k < reservoir.size(); k++) {
+      if (tr_an.size() >= std::size_t(kTracesPerRegion) &&
+          tr_aa.size() >= std::size_t(kTracesPerRegion) &&
+          tr_beam.size() >= std::size_t(kTracesPerRegion))
+        break;
+      const TraceEvt &e = reservoir[k];
+      if (e.beam_flat && tr_beam.size() < std::size_t(kTracesPerRegion)) {
+        tr_beam.push_back(TraceFromTotal(e.total));
+        continue;
+      }
+      if (!(e.reac_mask & bit))
+        continue;
+      Double_t td[18];
+      for (Int_t s = 0; s < 18; s++)
+        td[s] = Double_t(e.total[s]);
+      Double_t x = SumRange(td, kXLo, kXHi);
+      Double_t y = SumRange(td, YLoOf(reac), YHiOf(reac));
+      if (cut_an && tr_an.size() < std::size_t(kTracesPerRegion) &&
+          cut_an->IsInside(x, y))
+        tr_an.push_back(TraceFromTotal(e.total));
+      else if (cut_aa && tr_aa.size() < std::size_t(kTracesPerRegion) &&
+               cut_aa->IsInside(x, y))
+        tr_aa.push_back(TraceFromTotal(e.total));
+    }
 
     std::cout << "Sampled traces: beam=" << tr_beam.size()
               << " (a,a')=" << tr_aa.size() << " (a,n)=" << tr_an.size()
               << std::endl;
-    DrawRegionTraces(tr_beam, tr_aa, tr_an);
+    DrawRegionTraces(reac, tr_beam, tr_aa, tr_an);
 
     for (std::size_t i = 0; i < tr_an.size(); i++)
       delete tr_an[i];
@@ -413,8 +616,8 @@ void StripSumScatter::Run() {
       delete tr_beam[i];
   }
 
-  delete h;
-
+  for (Int_t reac2 = kReacMin; reac2 <= kReacMax; reac2++)
+    delete scatter[reac2];
   for (std::size_t i = 0; i < run_order.size(); i++)
     delete chain_by_run[run_order[i]];
 }

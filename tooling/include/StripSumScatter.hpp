@@ -31,21 +31,15 @@
 #include <string>
 #include <vector>
 
-// Aggregate 2D scatter (all runs combined) of (sum of TotaldE over the full
-// split-anode range) vs (sum over a downstream reaction window), after a
-// per-run beam gate + (a,n) selection. Strip windows are named constants in the
-// .cpp. Reads the calibrated events_cal sidecars (MeV).
+// Per-reaction-strip 2D scatters (all runs combined) of (sum of dE over the
+// full split-anode range) vs (sum over the downstream reaction window), after a
+// per-run beam gate + (a,n) selection. One scatter is produced for every
+// candidate reaction strip [REACTION_STRIP_MIN, REACTION_STRIP_MAX] in a single
+// pass and cached (fingerprinted) under root_files, so re-runs and reaction-
+// strip changes are near-instant. Energies are calibrated MeV via EnergyView.
 class StripSumScatter {
 public:
   static void Run();
-
-private:
-  // Fit this run's beam gate and add its (a,n)-selected events into the shared
-  // aggregate histogram h; gate_subdir receives the per-run gate plot. Returns
-  // the fitted gate (ok=false on failure) so the interactive trace-sampling
-  // pass can reuse it.
-  static BeamFit2D FillRun(Int_t run, TChain *chain, const TString &gate_subdir,
-                           TH2F *h);
 };
 
 #endif

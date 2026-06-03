@@ -128,16 +128,18 @@ void TraceCreator::BuildMeVSummaryHistograms(const TString &input_filename,
   delete input_file;
 }
 
-TGraph *TraceCreator::BuildEventTrace(const EnergyView &ev) {
+TGraph *TraceCreator::BuildTraceFromTotals(const Double_t *total) {
   Int_t s_lo = Constants::IGNORE_STRIP_0 ? 1 : 0;
   Int_t s_hi = Constants::IGNORE_STRIP_17 ? 16 : 17;
   Int_t n_pts = s_hi - s_lo + 1;
   TGraph *g = new TGraph(n_pts);
-  for (Int_t k = 0; k < n_pts; k++) {
-    Int_t s = s_lo + k;
-    g->SetPoint(k, s, ev.total[s]);
-  }
+  for (Int_t k = 0; k < n_pts; k++)
+    g->SetPoint(k, s_lo + k, total[s_lo + k]);
   return g;
+}
+
+TGraph *TraceCreator::BuildEventTrace(const EnergyView &ev) {
+  return BuildTraceFromTotals(ev.total);
 }
 
 void TraceCreator::BuildTraces(std::vector<TString> input_filenames,
