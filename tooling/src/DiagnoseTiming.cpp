@@ -165,9 +165,9 @@ void ExploreOneFile(TString input_filename) {
 }
 
 void DiagnoseTiming::Run() {
-  const TString project_root = Paths::DatasetDir();
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
-                                project_root + "/root_files");
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                Paths::ResultsDir() + "/plots",
+                                Paths::ResultsDir() + "/root_files");
 
   std::vector<FileSpec> specs = FileSet::BuildFileSpecs();
   for (Int_t k = 0; k < Int_t(specs.size()); k++) {

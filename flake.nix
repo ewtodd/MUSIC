@@ -82,6 +82,12 @@
               export MUSIC_DATASET_DIR="$git_root/analysis/${dataset}"
               echo "MUSIC dataset: ${dataset}  ($MUSIC_DATASET_DIR)"
 
+              # Where GENERATED outputs (root_files, plots) land. Defaults to the
+              # in-repo dataset dir (on /home); override this one var to redirect
+              # processed output to a scratch drive without rebuilding.
+              export MUSIC_RESULTS_DIR="''${MUSIC_RESULTS_DIR:-$git_root/analysis/${dataset}}"
+              echo "MUSIC results: $MUSIC_RESULTS_DIR"
+
               ${pkgs.lib.optionalString isCUDA ''
                 export NIX_CFLAGS_COMPILE="-DAU_ROOFIT_BACKEND_CUDA=1''${NIX_CFLAGS_COMPILE:+ $NIX_CFLAGS_COMPILE}"
                 export LD_LIBRARY_PATH="/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -103,6 +109,8 @@
                 chmod 644 "$flake_root/.claude/settings.json"
               ''}
               alias wipe-analysis='rm -r analysis/${dataset}/plots analysis/${dataset}/root_files'
+              alias wipe-plots='rm -r analysis/${dataset}/plots'
+              alias wipe-root='rm -r analysis/${dataset}/root_files'
               alias clean-aclic='rm -f *_C.so *_C.d *_C_ACLiC_dict_rdict.pcm *_cpp.so *_cpp.d *_cpp_ACLiC_dict_rdict.pcm *_cxx.so *_cxx.d *_cxx_ACLiC_dict_rdict.pcm AutoDict_*'
             '';
           };

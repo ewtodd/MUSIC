@@ -90,47 +90,23 @@ TString FileSet::EventsName(const FileSpec &s) {
   return Form("Events_Run%d%s", s.run, s.suffix.Data());
 }
 
-TString FileSet::CalSidecarName(const FileSpec &s) {
-  return Form("Events_Run%d%s.cal.root", s.run, s.suffix.Data());
-}
-
 TString FileSet::FileLabel(const FileSpec &s) {
   return Form("run%d%s", s.run, s.suffix.Data());
 }
 
-TFile *FileSet::AttachCalSidecar(TTree *events, const FileSpec &spec) {
-  TString cal_subpath = CalSidecarName(spec);
-  TString full = IO::GetRootFilesBaseDir() + "/" + cal_subpath;
-  if (gSystem->AccessPathName(full))
-    return nullptr;
-  TFile *cal = IO::OpenForReading(cal_subpath);
-  if (!cal || cal->IsZombie()) {
-    if (cal)
-      delete cal;
-    return nullptr;
-  }
-  if (!cal->Get("events_cal")) {
-    cal->Close();
-    delete cal;
-    return nullptr;
-  }
-  events->AddFriend("events_cal", full);
-  return cal;
-}
-
 std::map<Int_t, TChain *>
-FileSet::GroupCalSidecarsByRun(std::vector<Int_t> &run_order) {
+FileSet::GroupEventsByRun(std::vector<Int_t> &run_order) {
   std::map<Int_t, TChain *> chain_by_run;
   std::vector<FileSpec> all_specs = BuildFileSpecs();
   for (Int_t i = 0; i < Int_t(all_specs.size()); i++) {
     const FileSpec &s = all_specs[i];
-    TString full = IO::GetRootFilesBaseDir() + "/" + CalSidecarName(s);
+    TString full = IO::GetRootFilesBaseDir() + "/" + EventsName(s) + ".root";
     if (gSystem->AccessPathName(full)) {
-      std::cerr << "Missing cal sidecar: " << full << std::endl;
+      std::cerr << "Missing events file: " << full << std::endl;
       continue;
     }
     if (chain_by_run.find(s.run) == chain_by_run.end()) {
-      chain_by_run[s.run] = new TChain("events_cal");
+      chain_by_run[s.run] = new TChain("events");
       run_order.push_back(s.run);
     }
     chain_by_run[s.run]->Add(full);

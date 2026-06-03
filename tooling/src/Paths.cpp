@@ -22,6 +22,13 @@ TString Paths::ProjectRootOf(const char *file) {
 
 TString Paths::DatasetName() { return TString(MUSIC_DATASET_NAME); }
 
+TString Paths::ResultsDir() {
+  const Char_t *env = gSystem->Getenv("MUSIC_RESULTS_DIR");
+  if (env && env[0] != '\0')
+    return TString(env);
+  return DatasetDir();
+}
+
 void Paths::PrintBanner(const TString &dataset_dir) {
   std::cout << "============================================================"
             << std::endl;

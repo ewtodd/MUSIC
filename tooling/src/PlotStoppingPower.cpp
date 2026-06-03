@@ -6,9 +6,9 @@ void PlotStoppingPower::Run() {
            "#right]} + C, PPAC %s",
            SiCalib::INCLUDE_PPAC ? "IN" : "OUT");
 
-  const TString project_root = Paths::DatasetDir();
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
-                                project_root + "/root_files");
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                Paths::ResultsDir() + "/plots",
+                                Paths::ResultsDir() + "/root_files");
   TFile *inFile = IO::OpenForReading(SiCalib::CALIBRATION_RESULTS_FILE);
   TTree *calibration_results =
       static_cast<TTree *>(inFile->Get("CalibrationResults"));

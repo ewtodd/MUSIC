@@ -17,6 +17,14 @@ public:
   // Dataset isotope name (e.g. "37Cl"), from the build-time MUSIC_DATASET_NAME.
   static TString DatasetName();
 
+  // Absolute path to the directory that holds GENERATED outputs (root_files,
+  // plots) for the active dataset. Read at runtime from the MUSIC_RESULTS_DIR
+  // env var; falls back to DatasetDir() when unset, so default behaviour writes
+  // outputs in-repo exactly as before. Unlike DatasetDir() this is a runtime
+  // (not build-time) value on purpose: where processed output lands is a
+  // per-machine deployment choice, redirectable without a rebuild.
+  static TString ResultsDir();
+
   // Legacy: derive a repo-relative root from a source __FILE__. Retained for
   // any non-dataset use; dataset code should use DatasetDir().
   static TString ProjectRootOf(const char *file);

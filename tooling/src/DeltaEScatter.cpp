@@ -1,4 +1,5 @@
 #include "DeltaEScatter.hpp"
+#include "Normalization.hpp"
 
 const Int_t kStripA1 = 10;
 const Int_t kStripA2 = 11;
@@ -14,16 +15,8 @@ const Double_t kAxisMax = 10.0;
 // max_points (gated count will be lower).
 TGraph *BuildGatedScatter(TChain *chain, const BeamFit2D &gate, Int_t color,
                           Long64_t max_points) {
-  Float_t leftdE[18] = {0};
-  Float_t rightdE[18] = {0};
-  Float_t totaldE[18] = {0};
-  chain->SetBranchStatus("*", 0);
-  chain->SetBranchStatus("LeftdEMeV", 1);
-  chain->SetBranchStatus("RightdEMeV", 1);
-  chain->SetBranchStatus("TotaldEMeV", 1);
-  chain->SetBranchAddress("LeftdEMeV", leftdE);
-  chain->SetBranchAddress("RightdEMeV", rightdE);
-  chain->SetBranchAddress("TotaldEMeV", totaldE);
+  EnergyView ev;
+  ev.Attach(chain);
 
   Long64_t n_total = chain->GetEntries();
   Long64_t stride = FileSet::SampleStride(n_total, max_points);
@@ -32,15 +25,15 @@ TGraph *BuildGatedScatter(TChain *chain, const BeamFit2D &gate, Int_t color,
   Long64_t k = 0;
   for (Long64_t j = 0; j < n_total; j += stride) {
     chain->GetEntry(j);
-    Double_t xg = Double_t(leftdE[1]);
-    Double_t yg = Double_t(rightdE[2]);
+    ev.Decode();
+    Double_t xg = ev.left[1];
+    Double_t yg = ev.right[2];
     if (!(xg > 0 && yg > 0))
       continue;
     if (!BeamFitUtils::InEllipse(gate, xg, yg, BeamFitUtils::GateNSigma()))
       continue;
-    Double_t x = Double_t(totaldE[kStripA1]) + Double_t(totaldE[kStripA2]);
-    Double_t y = Double_t(totaldE[kStripB1]) + Double_t(totaldE[kStripB2]) +
-                 Double_t(totaldE[kStripB3]);
+    Double_t x = ev.total[kStripA1] + ev.total[kStripA2];
+    Double_t y = ev.total[kStripB1] + ev.total[kStripB2] + ev.total[kStripB3];
     g->SetPoint(k++, x, y);
   }
 
@@ -55,19 +48,8 @@ TGraph *BuildGatedScatter(TChain *chain, const BeamFit2D &gate, Int_t color,
 // the calibrated cathode energy.
 TGraph *BuildGatedCathodeScatter(TChain *chain, const BeamFit2D &gate,
                                  Int_t color, Long64_t max_points) {
-  Float_t leftdE[18] = {0};
-  Float_t rightdE[18] = {0};
-  Float_t totaldE[18] = {0};
-  Float_t cathode = 0;
-  chain->SetBranchStatus("*", 0);
-  chain->SetBranchStatus("LeftdEMeV", 1);
-  chain->SetBranchStatus("RightdEMeV", 1);
-  chain->SetBranchStatus("TotaldEMeV", 1);
-  chain->SetBranchStatus("CathodeMeV", 1);
-  chain->SetBranchAddress("LeftdEMeV", leftdE);
-  chain->SetBranchAddress("RightdEMeV", rightdE);
-  chain->SetBranchAddress("TotaldEMeV", totaldE);
-  chain->SetBranchAddress("CathodeMeV", &cathode);
+  EnergyView ev;
+  ev.Attach(chain);
 
   Long64_t n_total = chain->GetEntries();
   Long64_t stride = FileSet::SampleStride(n_total, max_points);
@@ -76,15 +58,15 @@ TGraph *BuildGatedCathodeScatter(TChain *chain, const BeamFit2D &gate,
   Long64_t k = 0;
   for (Long64_t j = 0; j < n_total; j += stride) {
     chain->GetEntry(j);
-    Double_t xg = Double_t(leftdE[1]);
-    Double_t yg = Double_t(rightdE[2]);
+    ev.Decode();
+    Double_t xg = ev.left[1];
+    Double_t yg = ev.right[2];
     if (!(xg > 0 && yg > 0))
       continue;
     if (!BeamFitUtils::InEllipse(gate, xg, yg, BeamFitUtils::GateNSigma()))
       continue;
-    Double_t x = Double_t(cathode);
-    Double_t y = Double_t(totaldE[kStripB1]) + Double_t(totaldE[kStripB2]) +
-                 Double_t(totaldE[kStripB3]);
+    Double_t x = ev.cathode;
+    Double_t y = ev.total[kStripB1] + ev.total[kStripB2] + ev.total[kStripB3];
     g->SetPoint(k++, x, y);
   }
 
@@ -250,15 +232,14 @@ void ProcessRun(Int_t run, TChain *chain, const TString &output_subdir) {
 }
 
 void DeltaEScatter::Run() {
-  const TString project_root = Paths::DatasetDir();
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
-                                project_root + "/root_files");
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                Paths::ResultsDir() + "/plots",
+                                Paths::ResultsDir() + "/root_files");
 
-  // Group cal sidecars by run; each run becomes one TChain that drives a
-  // standalone gate fit and scatter plot.
+  // Group events trees by run; each run becomes one TChain that drives a
+  // standalone gate fit and scatter plot (EnergyView calibrates on the fly).
   std::vector<Int_t> run_order;
-  std::map<Int_t, TChain *> chain_by_run =
-      FileSet::GroupCalSidecarsByRun(run_order);
+  std::map<Int_t, TChain *> chain_by_run = FileSet::GroupEventsByRun(run_order);
 
   for (std::size_t i = 0; i < run_order.size(); i++) {
     Int_t run = run_order[i];

@@ -3,8 +3,9 @@
 void CalcStoppingPower::Run() {
 
   const TString project_root = Paths::DatasetDir();
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
-                                project_root + "/root_files");
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                Paths::ResultsDir() + "/plots",
+                                Paths::ResultsDir() + "/root_files");
 
   const TString lise_dir = project_root + "/si_eloss/lise";
   const TString isotope = Paths::DatasetName();

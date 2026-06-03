@@ -81,6 +81,16 @@ Double_t Gain(const ChannelCal &c) {
   return Constants::NORM_MUSIC_MEV / c.fit_adc;
 }
 
+// Energy resolution at the beam peak as percent FWHM. Scale-invariant (the gain
+// cancels), so it is computed straight from the ADC-domain fit: FWHM = 2.3548 *
+// sigma, %FWHM = 100 * FWHM / centroid.
+Double_t ResolutionFWHMPercent(const ChannelCal &c) {
+  if (c.fit_adc <= 0)
+    return 0.0;
+  const Double_t kFwhmPerSigma = 2.0 * TMath::Sqrt(2.0 * TMath::Log(2.0));
+  return 100.0 * kFwhmPerSigma * c.fit_sigma_adc / c.fit_adc;
+}
+
 inline Double_t ApplyCal(const ChannelCal &c, Double_t adc) {
   return Gain(c) * adc;
 }
@@ -106,8 +116,11 @@ BeamFit2D FindBeamGateStp1VsStp0(const FileSpec &spec, const TString &run_label,
     delete sf;
     return out;
   }
-  Int_t totaldE_adc[18];
-  tree->SetBranchAddress("TotaldE", totaldE_adc);
+  // Raw ADC, read before any calibration exists (this fit produces it), so read
+  // the branches directly. Strip0 = Left_0_17_dE[0]; strip1 total = L1 + R1.
+  UShort_t left_0_17_adc[18], rightdE_adc[18];
+  tree->SetBranchAddress("Left_0_17_dE", left_0_17_adc);
+  tree->SetBranchAddress("RightdE", rightdE_adc);
 
   TH2F *h = new TH2F(Form("h2_stp1_vs_stp0_%s", run_label.Data()),
                      ";Strip0 #DeltaE [ADC];Strip1 #DeltaE [ADC]", 256, 0.0,
@@ -116,8 +129,10 @@ BeamFit2D FindBeamGateStp1VsStp0(const FileSpec &spec, const TString &run_label,
   Long64_t n = tree->GetEntries();
   for (Long64_t j = 0; j < n; j++) {
     tree->GetEntry(j);
-    if (totaldE_adc[0] > 0 && totaldE_adc[1] > 0)
-      h->Fill(Double_t(totaldE_adc[0]), Double_t(totaldE_adc[1]));
+    Int_t stp0 = Int_t(left_0_17_adc[0]);
+    Int_t stp1 = Int_t(left_0_17_adc[1]) + Int_t(rightdE_adc[1]);
+    if (stp0 > 0 && stp1 > 0)
+      h->Fill(Double_t(stp0), Double_t(stp1));
   }
   sf->Close();
   delete sf;
@@ -426,18 +441,20 @@ void CollectAnchorSamplesOneSubfile(
     delete sf;
     return;
   }
-  Int_t leftdE_adc[18], rightdE_adc[18], totaldE_adc[18];
-  Int_t cathode_adc = 0;
-  tree->SetBranchAddress("LeftdE", leftdE_adc);
+  // Raw ADC, pre-calibration. Guard strips (S) and left ends (L) live in
+  // Left_0_17_dE; right ends in RightdE. Strip totals are L+R; the gate uses
+  // Strip0 (=Left_0_17_dE[0]) and the strip1 total (L1+R1).
+  UShort_t left_0_17_adc[18], rightdE_adc[18];
+  Short_t cathode_adc = 0;
+  tree->SetBranchAddress("Left_0_17_dE", left_0_17_adc);
   tree->SetBranchAddress("RightdE", rightdE_adc);
-  tree->SetBranchAddress("TotaldE", totaldE_adc);
   tree->SetBranchAddress("Cathode", &cathode_adc);
 
   Long64_t n = tree->GetEntries();
   for (Long64_t j = 0; j < n; j++) {
     tree->GetEntry(j);
-    Double_t x = Double_t(totaldE_adc[0]);
-    Double_t y = Double_t(totaldE_adc[1]);
+    Double_t x = Double_t(left_0_17_adc[0]);
+    Double_t y = Double_t(left_0_17_adc[1]) + Double_t(rightdE_adc[1]);
     if (x <= 0 || y <= 0)
       continue;
     if (!BeamFitUtils::InEllipseXY(beam, x, y, kEllipseNSigmaX,
@@ -448,14 +465,12 @@ void CollectAnchorSamplesOneSubfile(
         continue;
       const ChannelCal &c = chans[i];
       Int_t v = 0;
-      if (c.side == 'S')
-        v = totaldE_adc[c.strip];
-      else if (c.side == 'L')
-        v = leftdE_adc[c.strip];
+      if (c.side == 'S' || c.side == 'L')
+        v = Int_t(left_0_17_adc[c.strip]);
       else if (c.side == 'R')
-        v = rightdE_adc[c.strip];
+        v = Int_t(rightdE_adc[c.strip]);
       else if (c.side == 'C')
-        v = cathode_adc;
+        v = Int_t(cathode_adc);
       if (v > 0)
         samples[i].push_back(Float_t(v));
     }
@@ -536,7 +551,12 @@ void WriteEresTomlRaw(const TString &out_subpath,
   toml::table root_tbl;
   root_tbl.insert("detector", detector_tbl);
 
-  TString out_full = IO::GetRootFilesBaseDir() + "/" + out_subpath;
+  // The eres calibration TOML is a small, version-controlled input (a control
+  // file), not bulk output: write it into the repo's control/ dir alongside the
+  // other Calibration_Run*_eres.toml, regardless of where root_files point.
+  TString out_dir = Paths::DatasetDir() + "/control";
+  gSystem->mkdir(out_dir, kTRUE);
+  TString out_full = out_dir + "/" + out_subpath;
   std::ofstream f(out_full.Data());
   if (!f) {
     std::cerr << "Cannot write eres TOML: " << out_full << std::endl;
@@ -558,6 +578,13 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans) {
   Float_t fit_adc[kMaxChannels] = {0}, fit_sigma[kMaxChannels] = {0};
   Long64_t fit_n[kMaxChannels] = {0};
   Bool_t ok[kMaxChannels] = {0};
+  // Per-strip gains laid out to match the events tree exactly: GainLeft[s]
+  // multiplies Left_0_17_dE[s] (s=0/17 are the single-ended guards, s=1..16 the
+  // left ends), GainRight[s] multiplies RightdE[s] (0 at the guards). This is
+  // what EnergyView reads to calibrate on the fly -- no per-event MeV is
+  // stored.
+  Float_t gain_left[18] = {0}, gain_right[18] = {0};
+  Float_t gain_cathode = 0.0f;
   Int_t n_actual = TMath::Min(Int_t(chans.size()), kMaxChannels);
   for (Int_t k = 0; k < n_actual; k++) {
     const ChannelCal &c = chans[k];
@@ -568,6 +595,14 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans) {
     fit_adc[k] = Float_t(c.fit_adc);
     fit_sigma[k] = Float_t(c.fit_sigma_adc);
     fit_n[k] = c.n_samples;
+    if (c.side == 'S' && c.strip >= 0 && c.strip <= 17)
+      gain_left[c.strip] = gain[k];
+    else if (c.side == 'L' && c.strip >= 1 && c.strip <= 16)
+      gain_left[c.strip] = gain[k];
+    else if (c.side == 'R' && c.strip >= 1 && c.strip <= 16)
+      gain_right[c.strip] = gain[k];
+    else if (c.side == 'C')
+      gain_cathode = gain[k];
   }
   cal->Branch("Gain", gain, Form("Gain[%d]/F", kMaxChannels));
   cal->Branch("Ok", ok, Form("Ok[%d]/O", kMaxChannels));
@@ -578,6 +613,9 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans) {
   cal->Branch("FitSigmaADC", fit_sigma,
               Form("FitSigmaADC[%d]/F", kMaxChannels));
   cal->Branch("FitN", fit_n, Form("FitN[%d]/L", kMaxChannels));
+  cal->Branch("GainLeft", gain_left, "GainLeft[18]/F");
+  cal->Branch("GainRight", gain_right, "GainRight[18]/F");
+  cal->Branch("GainCathode", &gain_cathode, "GainCathode/F");
   cal->Fill();
   cal->Write("calibration", TObject::kOverwrite);
 }
@@ -627,101 +665,25 @@ void SaveBeamPeakChannelHistograms(
   }
 }
 
-void WriteCalSidecar(const FileSpec &spec,
-                     const std::vector<ChannelCal> &chans) {
+// Writes the per-channel gain table (tree "calibration") into the subfile's own
+// events file. No per-event calibrated tree is produced: downstream readers
+// recover MeV on the fly via gain x raw ADC (EnergyView), so the raw events
+// tree plus this one-row gain table fully determine every calibrated value.
+void WriteCalibrationToEvents(const FileSpec &spec,
+                              const std::vector<ChannelCal> &chans) {
   TString events_subpath = FileSet::EventsName(spec) + ".root";
-  TFile *src = IO::OpenForReading(events_subpath);
-  if (!src || src->IsZombie()) {
-    std::cerr << "Cannot open " << events_subpath << std::endl;
-    if (src)
-      delete src;
+  TFile *f = IO::OpenForWriting(events_subpath, "UPDATE");
+  if (!f || f->IsZombie()) {
+    std::cerr << "Cannot open " << events_subpath << " to write calibration"
+              << std::endl;
+    if (f)
+      delete f;
     return;
   }
-  TTree *events = static_cast<TTree *>(src->Get("events"));
-  if (!events) {
-    std::cerr << "No events tree in " << events_subpath << std::endl;
-    src->Close();
-    delete src;
-    return;
-  }
-  Int_t leftdE_adc[18], rightdE_adc[18], totaldE_adc[18];
-  Int_t cathode_adc = 0;
-  events->SetBranchAddress("LeftdE", leftdE_adc);
-  events->SetBranchAddress("RightdE", rightdE_adc);
-  events->SetBranchAddress("TotaldE", totaldE_adc);
-  events->SetBranchAddress("Cathode", &cathode_adc);
-
-  const ChannelCal *cal_S[18] = {nullptr};
-  const ChannelCal *cal_L[18] = {nullptr};
-  const ChannelCal *cal_R[18] = {nullptr};
-  const ChannelCal *cal_C = nullptr;
-  for (Int_t k = 0; k < Int_t(chans.size()); k++) {
-    const ChannelCal &c = chans[k];
-    if (c.side == 'S')
-      cal_S[c.strip] = &c;
-    else if (c.side == 'L' && c.strip >= 1 && c.strip <= 16)
-      cal_L[c.strip] = &c;
-    else if (c.side == 'R' && c.strip >= 1 && c.strip <= 16)
-      cal_R[c.strip] = &c;
-    else if (c.side == 'C')
-      cal_C = &c;
-  }
-
-  TString sidecar_subpath = FileSet::CalSidecarName(spec);
-  TFile *dst = IO::OpenForWriting(sidecar_subpath, "RECREATE");
-  if (!dst || dst->IsZombie()) {
-    std::cerr << "Cannot create cal sidecar " << sidecar_subpath << std::endl;
-    if (dst)
-      delete dst;
-    src->Close();
-    delete src;
-    return;
-  }
-  dst->cd();
-  TTree *cal_tree = new TTree("events_cal", "Per-event calibrated energies");
-  Float_t leftdE_MeV[18], rightdE_MeV[18], totaldE_MeV[18];
-  Float_t cathode_MeV;
-  cal_tree->Branch("LeftdEMeV", leftdE_MeV, "LeftdEMeV[18]/F");
-  cal_tree->Branch("RightdEMeV", rightdE_MeV, "RightdEMeV[18]/F");
-  cal_tree->Branch("TotaldEMeV", totaldE_MeV, "TotaldEMeV[18]/F");
-  cal_tree->Branch("CathodeMeV", &cathode_MeV, "CathodeMeV/F");
-
-  Long64_t n = events->GetEntries();
-  std::cout << "  writing cal sidecar " << sidecar_subpath << " (" << n
-            << " events)" << std::endl;
-  for (Long64_t j = 0; j < n; j++) {
-    events->GetEntry(j);
-    for (Int_t s = 0; s < 18; s++) {
-      leftdE_MeV[s] = 0.0f;
-      rightdE_MeV[s] = 0.0f;
-      totaldE_MeV[s] = 0.0f;
-    }
-    for (Int_t s = 0; s < 18; s++) {
-      if (s == 0 || s == 17) {
-        const ChannelCal *cS = cal_S[s];
-        if (cS && IsCalibrated(*cS) && totaldE_adc[s] > 0)
-          totaldE_MeV[s] = Float_t(ApplyCal(*cS, Double_t(totaldE_adc[s])));
-      } else {
-        const ChannelCal *cL = cal_L[s];
-        const ChannelCal *cR = cal_R[s];
-        if (cL && IsCalibrated(*cL) && leftdE_adc[s] > 0)
-          leftdE_MeV[s] = Float_t(ApplyCal(*cL, Double_t(leftdE_adc[s])));
-        if (cR && IsCalibrated(*cR) && rightdE_adc[s] > 0)
-          rightdE_MeV[s] = Float_t(ApplyCal(*cR, Double_t(rightdE_adc[s])));
-        totaldE_MeV[s] = leftdE_MeV[s] + rightdE_MeV[s];
-      }
-    }
-    cathode_MeV = (cal_C && IsCalibrated(*cal_C) && cathode_adc > 0)
-                      ? Float_t(ApplyCal(*cal_C, Double_t(cathode_adc)))
-                      : 0.0f;
-    cal_tree->Fill();
-  }
-  cal_tree->Write("events_cal", TObject::kOverwrite);
-  WriteCalibrationTree(dst, chans);
-  dst->Close();
-  delete dst;
-  src->Close();
-  delete src;
+  WriteCalibrationTree(f, chans);
+  std::cout << "  wrote calibration into " << events_subpath << std::endl;
+  f->Close();
+  delete f;
 }
 
 // Per-channel calibrated overlay for one subfile, via AttachCalSidecar (the
@@ -760,16 +722,11 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
       delete h[i];
     return;
   }
-  TFile *cal_file = FileSet::AttachCalSidecar(tree, spec);
   EnergyView ev;
   ev.Attach(tree);
   if (!ev.is_mev) {
     sf->Close();
     delete sf;
-    if (cal_file) {
-      cal_file->Close();
-      delete cal_file;
-    }
     for (Int_t i = 0; i < n_chans; i++)
       delete h[i];
     return;
@@ -795,10 +752,6 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
   }
   sf->Close();
   delete sf;
-  if (cal_file) {
-    cal_file->Close();
-    delete cal_file;
-  }
   std::vector<Int_t> colors = PlottingUtils::GetDefaultColors();
   Double_t y_top = 0;
   for (Int_t i = 0; i < n_chans; i++) {
@@ -943,9 +896,11 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
   for (Int_t i = 0; i < Int_t(chans.size()); i++)
     if (IsCalibrated(chans[i]))
       std::cout << "  " << chans[i].name << " gain=" << Gain(chans[i])
-                << " MeV/ADC" << std::endl;
+                << " MeV/ADC  resolution="
+                << Form("%.2f", ResolutionFWHMPercent(chans[i])) << "% FWHM"
+                << std::endl;
 
-  WriteCalSidecar(spec, chans);
+  WriteCalibrationToEvents(spec, chans);
 
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
@@ -968,7 +923,8 @@ void CalibrateBeam::AggregateEresTomlForRun(
   Int_t n_chans = Int_t(tmpl.size());
 
   for (Int_t s = 0; s < Int_t(specs.size()); s++) {
-    TString cal_sub = FileSet::CalSidecarName(specs[s]);
+    // The calibration tree now lives inside each subfile's events file.
+    TString cal_sub = FileSet::EventsName(specs[s]) + ".root";
     TFile *cf = IO::OpenForReading(cal_sub);
     if (!cf || cf->IsZombie()) {
       if (cf)
@@ -1027,8 +983,9 @@ void CalibrateBeam::AggregateEresTomlForRun(
 
 void CalibrateBeam::Run(const TString &file_label) {
   const TString project_root = Paths::DatasetDir();
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
-                                project_root + "/root_files");
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                Paths::ResultsDir() + "/plots",
+                                Paths::ResultsDir() + "/root_files");
   gROOT->SetBatch(kTRUE);
 
   std::vector<FileSpec> specs;

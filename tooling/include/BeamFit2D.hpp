@@ -53,9 +53,9 @@ public:
                                      const Moments2D &seed, Double_t seed_amp,
                                      const TString &fname, const TString &tag);
 
-  // Shared Strip0-vs-Strip1-long-side beam gate (delta-e-scatter, gate-cache):
-  // GateNSigma() is the ellipse half-width in sigma; BuildGateHist fills the 2D
-  // MeV histogram; FitBigPeak moments-seeds a bigaus on its largest peak.
+  // Strip0-vs-Strip1-long-side beam gate (delta-e-scatter): GateNSigma() is the
+  // ellipse half-width in sigma; BuildGateHist fills the 2D MeV histogram;
+  // FitBigPeak moments-seeds a bigaus on its largest peak.
   static Double_t GateNSigma();
   static TH2F *BuildGateHist(TChain *chain, const TString &name);
   static BeamFit2D FitBigPeak(TH2F *h, const TString &tag);

@@ -1,8 +1,9 @@
 #include "BeamFit2D.hpp"
+#include "Normalization.hpp"
 
 namespace {
-// Strip0-vs-Strip1-long-side beam gate geometry, shared by delta-e-scatter and
-// gate-cache (both fit the same calibration beam ellipse).
+// Strip0-vs-Strip1-long-side beam gate geometry, used by delta-e-scatter to fit
+// the calibration beam ellipse.
 const Double_t kGateMin = 0.0;
 const Double_t kGateMax = 12.0;
 const Int_t kGateBins = 240;
@@ -130,13 +131,8 @@ Double_t BeamFitUtils::GateNSigma() { return kGateNSigma; }
 
 // Pass 1: build the gate H2 (S0 vs L1) for the chain.
 TH2F *BeamFitUtils::BuildGateHist(TChain *chain, const TString &name) {
-  Float_t leftdE[18] = {0};
-  Float_t rightdE[18] = {0};
-  chain->SetBranchStatus("*", 0);
-  chain->SetBranchStatus("LeftdEMeV", 1);
-  chain->SetBranchStatus("RightdEMeV", 1);
-  chain->SetBranchAddress("LeftdEMeV", leftdE);
-  chain->SetBranchAddress("RightdEMeV", rightdE);
+  EnergyView ev;
+  ev.Attach(chain);
 
   TH2F *h = new TH2F(name, ";#DeltaE S0 [MeV];#DeltaE L1 [MeV]", kGateBins,
                      kGateMin, kGateMax, kGateBins, kGateMin, kGateMax);
@@ -145,8 +141,9 @@ TH2F *BeamFitUtils::BuildGateHist(TChain *chain, const TString &name) {
   Long64_t n = chain->GetEntries();
   for (Long64_t j = 0; j < n; j++) {
     chain->GetEntry(j);
-    Double_t x = Double_t(leftdE[1]);
-    Double_t y = Double_t(rightdE[2]);
+    ev.Decode();
+    Double_t x = ev.left[1];
+    Double_t y = ev.right[2];
     if (x > 0 && y > 0)
       h->Fill(x, y);
   }

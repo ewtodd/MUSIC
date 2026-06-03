@@ -2,10 +2,13 @@
 
 #include <cuda_runtime.h>
 #include <thrust/device_vector.h>
+#include <thrust/host_vector.h>
 #include <thrust/sort.h>
 
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <vector>
 
 // Mirrors layout of RawHit in include/BinaryUtils.hpp.
 // The host struct uses ROOT types (UShort_t, ULong64_t, UInt_t) but the
@@ -33,21 +36,39 @@ static_assert(sizeof(RawHitGPU) == 24,
 static_assert(offsetof(RawHitGPU, timestamp) == 8,
               "timestamp must sit at byte offset 8");
 
-struct TimestampLess {
-  __host__ __device__ bool operator()(const RawHitGPU &a,
-                                      const RawHitGPU &b) const {
-    return a.timestamp < b.timestamp;
-  }
-};
-
+// Sort hits by timestamp. Rather than shipping the full 24-byte structs to the
+// device and sorting them with a comparator (which forces thrust into a
+// comparator merge sort needing ~2x the data in scratch), we ship only the
+// 8-byte uint64 timestamp keys plus a 4-byte uint32 index and run a key/value
+// sort -- a primitive-key radix sort. The device footprint per call drops from
+// ~48 B/hit to ~24 B/hit (so more sorts fit concurrently) and H2D/D2H traffic
+// drops from 24 down to 8 (down) + 4 (back) B/hit. The resulting permutation is
+// applied to the host array by a gather; the full structs never touch the GPU.
 extern "C" int gpu_sort_hits_by_timestamp(void *hits, long long n_hits) {
   if (n_hits <= 0)
     return 0;
 
+  // Indices are uint32 to keep the device payload small; a single subfile's hit
+  // count is far below 2^32, but guard anyway and let the caller fall back to
+  // the CPU sort if that ever stops holding.
+  if (static_cast<unsigned long long>(n_hits) > 0xFFFFFFFFULL) {
+    fprintf(stderr, "[GPU sort] n_hits %lld exceeds uint32 index range\n",
+            n_hits);
+    return 6;
+  }
+
   RawHitGPU *host_hits = static_cast<RawHitGPU *>(hits);
 
   try {
-    thrust::device_vector<RawHitGPU> d_hits(host_hits, host_hits + n_hits);
+    thrust::host_vector<uint64_t> h_keys(n_hits);
+    thrust::host_vector<uint32_t> h_idx(n_hits);
+    for (long long i = 0; i < n_hits; i++) {
+      h_keys[i] = host_hits[i].timestamp;
+      h_idx[i] = static_cast<uint32_t>(i);
+    }
+
+    thrust::device_vector<uint64_t> d_keys = h_keys;
+    thrust::device_vector<uint32_t> d_idx = h_idx;
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
@@ -56,7 +77,7 @@ extern "C" int gpu_sort_hits_by_timestamp(void *hits, long long n_hits) {
       return 1;
     }
 
-    thrust::sort(d_hits.begin(), d_hits.end(), TimestampLess());
+    thrust::sort_by_key(d_keys.begin(), d_keys.end(), d_idx.begin());
 
     err = cudaGetLastError();
     if (err != cudaSuccess) {
@@ -65,7 +86,7 @@ extern "C" int gpu_sort_hits_by_timestamp(void *hits, long long n_hits) {
       return 2;
     }
 
-    thrust::copy(d_hits.begin(), d_hits.end(), host_hits);
+    thrust::copy(d_idx.begin(), d_idx.end(), h_idx.begin());
 
     err = cudaGetLastError();
     if (err != cudaSuccess) {
@@ -73,6 +94,13 @@ extern "C" int gpu_sort_hits_by_timestamp(void *hits, long long n_hits) {
               cudaGetErrorString(err));
       return 3;
     }
+
+    // Gather the hits into sorted order on the host.
+    std::vector<RawHitGPU> sorted(n_hits);
+    for (long long i = 0; i < n_hits; i++)
+      sorted[i] = host_hits[h_idx[i]];
+    std::memcpy(host_hits, sorted.data(),
+                static_cast<size_t>(n_hits) * sizeof(RawHitGPU));
   } catch (const std::exception &e) {
     fprintf(stderr, "[GPU sort] exception: %s\n", e.what());
     return 4;

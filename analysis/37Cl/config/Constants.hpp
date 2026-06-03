@@ -13,7 +13,7 @@
 
 namespace Constants {
 
-const std::vector<Int_t> RUN_NUMBERS = {12, 13, 14, 15, 16, 17, 20, 37};
+const std::vector<Int_t> RUN_NUMBERS = {37};
 
 const TString COMPASS_BASE_DIR = "/run/media/e-work/B16A-129A/LabData/MUSIC/";
 const Int_t N_FILES = -1;
@@ -57,7 +57,7 @@ const Bool_t USE_TIME_WINDOW_EVENTS = kFALSE;
 const Double_t EVENT_TIME_WINDOW_US = 8.0;
 
 const Bool_t USE_GPU_ACCELERATION = kTRUE;
-const Int_t MAX_GPU_CONCURRENT_SORTS = 5;
+const Int_t MAX_GPU_CONCURRENT_SORTS = 10;
 
 const Double_t STRIP_E_MIN_MEV = 1;
 const Double_t STRIP_E_MAX_MEV = 3.5;

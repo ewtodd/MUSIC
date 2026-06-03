@@ -109,10 +109,11 @@ inline void FillSubfilePeaks(const TString &events_path,
     return;
   }
 
-  Int_t leftdE[18], rightdE[18], totaldE[18];
-  t->SetBranchAddress("LeftdE", leftdE);
+  // Raw-ADC drift diagnostic. Guard strips (side 'S', index 0/17) and left ends
+  // (side 'L') both live in Left_0_17_dE; right ends in RightdE.
+  UShort_t left_0_17_dE[18], rightdE[18];
+  t->SetBranchAddress("Left_0_17_dE", left_0_17_dE);
   t->SetBranchAddress("RightdE", rightdE);
-  t->SetBranchAddress("TotaldE", totaldE);
 
   std::vector<TH1D *> hists(chans.size(), nullptr);
   for (Int_t i = 0; i < Int_t(chans.size()); i++) {
@@ -127,9 +128,8 @@ inline void FillSubfilePeaks(const TString &events_path,
     t->GetEntry(j);
     for (Int_t i = 0; i < Int_t(chans.size()); i++) {
       const Channel &c = chans[i];
-      Int_t v = (c.side == 'S')
-                    ? totaldE[c.strip]
-                    : (c.side == 'L' ? leftdE[c.strip] : rightdE[c.strip]);
+      Int_t v = (c.side == 'R') ? Int_t(rightdE[c.strip])
+                                : Int_t(left_0_17_dE[c.strip]);
       if (v > 0)
         hists[i]->Fill(Double_t(v));
     }
@@ -376,9 +376,9 @@ void DriftOneRun(Int_t run, const std::vector<FileSpec> &specs) {
 
 void DiagnoseSubfileDrift::Run() {
   ROOT::EnableThreadSafety();
-  const TString project_root = Paths::DatasetDir();
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
-                                project_root + "/root_files");
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                Paths::ResultsDir() + "/plots",
+                                Paths::ResultsDir() + "/root_files");
 
   std::vector<FileSpec> all_specs = FileSet::BuildFileSpecs();
   for (Int_t r = 0; r < Int_t(Constants::RUN_NUMBERS.size()); r++) {

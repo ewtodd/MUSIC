@@ -13,9 +13,9 @@ struct RunFitInfo {
 } // namespace
 
 void SiCalibration::Run() {
-  const TString project_root = Paths::DatasetDir();
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
-                                project_root + "/root_files");
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                Paths::ResultsDir() + "/plots",
+                                Paths::ResultsDir() + "/root_files");
 
   TFile *fit_file = IO::OpenForReading(SiCalib::FIT_RESULTS_FILE);
   if (!fit_file || fit_file->IsZombie()) {

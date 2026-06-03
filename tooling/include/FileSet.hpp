@@ -32,22 +32,18 @@ public:
   static TString RawRootName(const FileSpec &s);
   static TString ShiftFriendName(const FileSpec &s);
   static TString EventsName(const FileSpec &s);
-  static TString CalSidecarName(const FileSpec &s);
   static TString FileLabel(const FileSpec &s);
-
-  // Attach the per-subfile calibration sidecar as a TTree friend so EnergyView
-  // (via FindBranch) sees TotaldEMeV/etc. Returns the opened sidecar TFile
-  // (caller closes after the events file is done) or nullptr if no sidecar.
-  static TFile *AttachCalSidecar(TTree *events, const FileSpec &spec);
 
   static FileSpec ResolveFileSpec(const TString &file_label);
 
-  // Group every configured subfile's cal sidecar (tree "events_cal") by run
-  // number into one TChain per run. Subfiles whose sidecar is missing on disk
-  // are skipped with a warning. run_order receives the run numbers in
-  // first-seen order; the caller owns and deletes the returned chains.
+  // Group every configured subfile's events tree by run number into one TChain
+  // per run. Each chain carries the per-subfile "calibration" gain table in its
+  // files, so an EnergyView attached to the chain calibrates on the fly and
+  // reloads gains at each file boundary. Subfiles missing on disk are skipped
+  // with a warning. run_order receives the run numbers in first-seen order; the
+  // caller owns and deletes the returned chains.
   static std::map<Int_t, TChain *>
-  GroupCalSidecarsByRun(std::vector<Int_t> &run_order);
+  GroupEventsByRun(std::vector<Int_t> &run_order);
 
   // Stride for visiting at most max_points entries spread across n_total (so a
   // scan covers the whole chain rather than just its head). <=0 max_points

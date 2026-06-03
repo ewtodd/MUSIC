@@ -184,11 +184,10 @@ struct EventCounters {
 };
 
 void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
-                   Int_t *leftdE_branch, Int_t *rightdE_branch,
-                   Int_t *totaldE_branch, Int_t *hits_branch,
-                   Int_t &cathode_branch, Int_t &grid_branch,
-                   UInt_t &flags_or_branch, TH2F *h_music, TH2F *h_music_clean,
-                   TH2F *h_music_flagged, TH1F *h_mult,
+                   UShort_t *left_0_17_branch, UShort_t *rightdE_branch,
+                   UShort_t *hits_branch, Short_t &cathode_branch,
+                   Short_t &grid_branch, UInt_t &flags_or_branch, TH2F *h_music,
+                   TH2F *h_music_clean, TH2F *h_music_flagged, TH1F *h_mult,
                    TH2F *h2_totalE_vs_stripE[18], TH2F *h2_totalE_vs_L[18],
                    TH2F *h2_totalE_vs_R[18], TH2F *h2_totalE_vs_cathode,
                    TH1F *h1_stripE[18], TH1F *h1_L[18], TH1F *h1_R[18],
@@ -236,14 +235,18 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
     Bool_t reject = Constants::REJECT_FLAGGED_EVENTS && has_any_flag;
     if (!reject) {
       for (Int_t k = 0; k < 18; k++) {
-        leftdE_branch[k] = e.leftdE[k];
-        rightdE_branch[k] = e.rightdE[k];
-        totaldE_branch[k] = e.totaldE[k];
+        left_0_17_branch[k] = UShort_t(e.leftdE[k]);
+        rightdE_branch[k] = UShort_t(e.rightdE[k]);
       }
+      // Guard strips are single-ended: their energy lives in totaldE[0]/[17]
+      // (leftdE/rightdE are 0 there). Park them in the left array at 0/17 so
+      // the recompute total[s] = left_0_17[s] + rightdE[s] reproduces them too.
+      left_0_17_branch[0] = UShort_t(e.totaldE[0]);
+      left_0_17_branch[17] = UShort_t(e.totaldE[17]);
       for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++)
-        hits_branch[k] = e.hits[k];
-      cathode_branch = e.cathode;
-      grid_branch = e.grid;
+        hits_branch[k] = UShort_t(e.hits[k]);
+      cathode_branch = Short_t(e.cathode);
+      grid_branch = Short_t(e.grid);
       flags_or_branch = e.flags_or;
       output_tree->Fill();
 
@@ -324,19 +327,29 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     return kFALSE;
   }
 
-  Int_t leftdE[18], rightdE[18], totaldE[18];
-  Int_t hits_arr[36];
-  Int_t cathode, grid;
+  // ADC energies are 14-bit unsigned at the source; store them as UShort_t, not
+  // Int_t. Index 0/17 of left_0_17_dE hold the single-ended guard strips
+  // (Strip0/Strip17), indices 1..16 the left ends of the split anodes; the
+  // right ends live in rightdE (which is 0 at 0/17). The full per-strip deposit
+  // is recomputed as left_0_17_dE[s] + rightdE[s] on read -- it holds for all
+  // 18 indices since rightdE is 0 at the guards -- so no TotaldE branch is
+  // stored.
+  UShort_t left_0_17_dE[18], rightdE[18];
+  UShort_t hits_arr[36];
+  // 14-bit ADC (<=16383), so Short_t holds every value with room to spare while
+  // preserving Cathode's -1 "no cathode hit" sentinel (Grid is non-negative but
+  // shares the type for symmetry). Unsplit anode/guard values are non-negative,
+  // hence the UShort_t arrays above.
+  Short_t cathode, grid;
   UInt_t flags_or;
 
   TTree *output_tree = new TTree("events", "MUSIC events");
-  output_tree->Branch("LeftdE", leftdE, "LeftdE[18]/I");
-  output_tree->Branch("RightdE", rightdE, "RightdE[18]/I");
-  output_tree->Branch("TotaldE", totaldE, "TotaldE[18]/I");
+  output_tree->Branch("Left_0_17_dE", left_0_17_dE, "Left_0_17_dE[18]/s");
+  output_tree->Branch("RightdE", rightdE, "RightdE[18]/s");
   Bool_t use_per_channel = Constants::USE_NEAREST_TO_GRID;
-  output_tree->Branch("Hits", hits_arr, "Hits[36]/I");
-  output_tree->Branch("Cathode", &cathode, "Cathode/I");
-  output_tree->Branch("Grid", &grid, "Grid/I");
+  output_tree->Branch("Hits", hits_arr, "Hits[36]/s");
+  output_tree->Branch("Cathode", &cathode, "Cathode/S");
+  output_tree->Branch("Grid", &grid, "Grid/S");
   output_tree->Branch("FlagsOR", &flags_or, "FlagsOR/i");
 
   // Large baskets + disable auto-flush so ZSTD compresses in big chunks
@@ -521,7 +534,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
         anchor_ts = h.timestamp;
         have_cur = kTRUE;
       } else if (h.timestamp - anchor_ts > window_ps) {
-        FinalizeEvent(cur_event, pc_cur, output_tree, leftdE, rightdE, totaldE,
+        FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
                       hits_arr, cathode, grid, flags_or, h_music, h_music_clean,
                       h_music_flagged, h_mult, h2_totalE_vs_stripE,
                       h2_totalE_vs_L, h2_totalE_vs_R, h2_totalE_vs_cathode,
@@ -540,7 +553,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
                   << std::endl;
     }
     if (have_cur) {
-      FinalizeEvent(cur_event, pc_cur, output_tree, leftdE, rightdE, totaldE,
+      FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
                     hits_arr, cathode, grid, flags_or, h_music, h_music_clean,
                     h_music_flagged, h_mult, h2_totalE_vs_stripE,
                     h2_totalE_vs_L, h2_totalE_vs_R, h2_totalE_vs_cathode,
@@ -600,8 +613,8 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
           pending.clear();
 
           // prev_event is now complete: finalize, Fill(), and discard.
-          FinalizeEvent(prev_event, pc_prev, output_tree, leftdE, rightdE,
-                        totaldE, hits_arr, cathode, grid, flags_or, h_music,
+          FinalizeEvent(prev_event, pc_prev, output_tree, left_0_17_dE, rightdE,
+                        hits_arr, cathode, grid, flags_or, h_music,
                         h_music_clean, h_music_flagged, h_mult,
                         h2_totalE_vs_stripE, h2_totalE_vs_L, h2_totalE_vs_R,
                         h2_totalE_vs_cathode, h1_stripE, h1_L, h1_R, h1_cathode,
@@ -651,7 +664,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
                   pending[p].energy, pending[p].timestamp, pending[p].flags);
       }
       pending.clear();
-      FinalizeEvent(cur_event, pc_cur, output_tree, leftdE, rightdE, totaldE,
+      FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
                     hits_arr, cathode, grid, flags_or, h_music, h_music_clean,
                     h_music_flagged, h_mult, h2_totalE_vs_stripE,
                     h2_totalE_vs_L, h2_totalE_vs_R, h2_totalE_vs_cathode,

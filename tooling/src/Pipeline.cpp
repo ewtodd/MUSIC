@@ -152,8 +152,9 @@ void Pipeline::Run() {
   ROOT::EnableThreadSafety();
   GpuAccel::Init();
   const TString project_root = Paths::DatasetDir();
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
-                                project_root + "/root_files");
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                Paths::ResultsDir() + "/plots",
+                                Paths::ResultsDir() + "/root_files");
 
   TString log_path = project_root + "/pipeline_fused.log";
   std::ofstream log_file(log_path.Data());

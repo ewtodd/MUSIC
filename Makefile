@@ -74,7 +74,7 @@ endif
 
 # Binary "foo-bar" is built from tooling/mains/main_foo_bar.cpp (dashes->underscores).
 BINS := pipeline calibrate-beam traces delta-e-scatter \
-        strip-sum-scatter gate-cache diag-timing diag-events diag-subfile-drift strip-scatter-overlay
+        strip-sum-scatter diag-timing diag-events diag-subfile-drift strip-scatter-overlay
 
 # Si-detector calibration / stopping-power binaries. These need a per-dataset
 # Si config (analysis/<DATASET>/config/SiCalibConstants.hpp); datasets without

@@ -36,33 +36,19 @@ void TraceCreator::BuildMeVSummaryHistograms(const TString &input_filename,
     delete input_file;
     return;
   }
-  TFile *cal_file =
-      (spec.run >= 0) ? FileSet::AttachCalSidecar(input_tree, spec) : nullptr;
-  if (!cal_file) {
-    std::cout << "[" << file_label
-              << "] no cal sidecar; skipping MeV summary build" << std::endl;
-    input_file->Close();
-    delete input_file;
-    return;
-  }
-
   EnergyView ev;
   ev.Attach(input_tree);
   if (!ev.is_mev) {
-    std::cerr << "[" << file_label
-              << "] cal sidecar attached but no MeV branches; aborting"
+    std::cout << "[" << file_label
+              << "] no calibration in events file; skipping MeV summary build"
               << std::endl;
     input_file->Close();
     delete input_file;
-    cal_file->Close();
-    delete cal_file;
     return;
   }
 
   UInt_t flags_or = 0;
-  Int_t cathode_raw = 0;
   input_tree->SetBranchAddress("FlagsOR", &flags_or);
-  input_tree->SetBranchAddress("Cathode", &cathode_raw);
 
   const Double_t strip_e_min = Constants::STRIP_E_MIN_MEV;
   const Double_t strip_e_max = Constants::STRIP_E_MAX_MEV;
@@ -110,7 +96,7 @@ void TraceCreator::BuildMeVSummaryHistograms(const TString &input_filename,
         h_music_clean->Fill(Double_t(s), ev.total[s]);
       h2_strip[s]->Fill(ev.total[s], event_total);
     }
-    if (cathode_raw != -1)
+    if (ev.cathode_adc != -1)
       h2_cath->Fill(ev.cathode, event_total);
   }
 
@@ -140,8 +126,6 @@ void TraceCreator::BuildMeVSummaryHistograms(const TString &input_filename,
 
   input_file->Close();
   delete input_file;
-  cal_file->Close();
-  delete cal_file;
 }
 
 TGraph *TraceCreator::BuildEventTrace(const EnergyView &ev) {
@@ -182,8 +166,6 @@ void TraceCreator::BuildTraces(std::vector<TString> input_filenames,
     }
 
     FileSpec spec = FileSet::ResolveFileSpec(file_label);
-    TFile *cal_file =
-        (spec.run >= 0) ? FileSet::AttachCalSidecar(input_tree, spec) : nullptr;
 
     EnergyView ev;
     ev.Attach(input_tree);
@@ -258,13 +240,9 @@ void TraceCreator::BuildTraces(std::vector<TString> input_filenames,
       delete TraceRight;
     }
 
+    Bool_t had_cal = ev.is_mev;
     input_file->Close();
     delete input_file;
-    Bool_t had_cal = (cal_file != nullptr);
-    if (cal_file) {
-      cal_file->Close();
-      delete cal_file;
-    }
     if (had_cal)
       BuildMeVSummaryHistograms(input_filename, file_label, spec);
     std::cout << "Finished processing " << input_filename << std::endl;

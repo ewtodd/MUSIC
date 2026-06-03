@@ -113,10 +113,8 @@ void StripScatterOverlay::MakeOverlay(
       continue;
     }
     TTree *tree = static_cast<TTree *>(f->Get("events_MeV"));
-    if (!tree)
-      tree = static_cast<TTree *>(f->Get("events_cal"));
     if (!tree) {
-      std::cerr << "No events tree in: " << filepaths[i] << std::endl;
+      std::cerr << "No events_MeV tree in: " << filepaths[i] << std::endl;
       f->Close();
       continue;
     }
@@ -196,9 +194,9 @@ TString StripScatterOverlay::PrettyLabel(const TString &tag) {
 }
 
 void StripScatterOverlay::Run() {
-  const TString project_root = Paths::DatasetDir();
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
-                                project_root + "/root_files");
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                Paths::ResultsDir() + "/plots",
+                                Paths::ResultsDir() + "/root_files");
 
   std::vector<RemixSim::SimFileSpec> all_specs = RemixSim::BuildFileSpecs();
 

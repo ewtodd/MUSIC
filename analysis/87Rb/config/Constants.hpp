@@ -59,7 +59,7 @@ const Bool_t USE_TIME_WINDOW_EVENTS = kTRUE;
 const Double_t EVENT_TIME_WINDOW_US = 8.0;
 
 const Bool_t USE_GPU_ACCELERATION = kTRUE;
-const Int_t MAX_GPU_CONCURRENT_SORTS = 4;
+const Int_t MAX_GPU_CONCURRENT_SORTS = 8;
 
 const Double_t STRIP_E_MIN_MEV = 9;
 const Double_t STRIP_E_MAX_MEV = 17;

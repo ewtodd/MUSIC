@@ -330,15 +330,15 @@ BeamFit2D StripSumScatter::FillRun(Int_t run, TChain *chain,
 }
 
 void StripSumScatter::Run() {
-  const TString project_root = Paths::DatasetDir();
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
-                                project_root + "/root_files");
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                Paths::ResultsDir() + "/plots",
+                                Paths::ResultsDir() + "/root_files");
   gROOT->SetBatch(kTRUE);
 
-  // Group cal sidecars by run; each run becomes one TChain over events_cal.
+  // Group events trees by run; each run becomes one TChain (EnergyView
+  // calibrates on the fly, reloading per-subfile gains at each file boundary).
   std::vector<Int_t> run_order;
-  std::map<Int_t, TChain *> chain_by_run =
-      FileSet::GroupCalSidecarsByRun(run_order);
+  std::map<Int_t, TChain *> chain_by_run = FileSet::GroupEventsByRun(run_order);
 
   // One aggregate histogram over all runs. Each run is gated with its own beam
   // ellipse (the per-run calibration leaves residual epoch-to-epoch shifts),
