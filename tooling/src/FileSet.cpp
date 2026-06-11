@@ -7,16 +7,16 @@ TString FileSet::CompassBinPath(const FileSpec &s) {
          Form("run_%d/RAW/DataR_run_%d%s.BIN", s.run, s.run, s.suffix.Data());
 }
 
-std::vector<TString> FileSet::DiscoverRunSuffixes(Int_t run) {
+namespace {
+std::vector<TString> DiscoverSuffixesIn(const TString &dir,
+                                        const TString &prefix,
+                                        const TString &ext) {
   std::vector<TString> suffixes;
-  TString dir = Constants::COMPASS_BASE_DIR + Form("run_%d/RAW/", run);
   void *dirp = gSystem->OpenDirectory(dir);
   if (!dirp) {
-    std::cerr << "DiscoverRunSuffixes: cannot open " << dir << std::endl;
+    std::cerr << "DiscoverSuffixesIn: cannot open " << dir << std::endl;
     return suffixes;
   }
-  TString prefix = Form("DataR_run_%d", run);
-  TString ext = ".BIN";
   const Char_t *name;
   while ((name = gSystem->GetDirEntry(dirp))) {
     TString fname(name);
@@ -50,12 +50,14 @@ std::vector<TString> FileSet::DiscoverRunSuffixes(Int_t run) {
   return suffixes;
 }
 
-std::vector<FileSpec> FileSet::BuildFileSpecs() {
+std::vector<FileSpec> BuildSpecsImpl(Bool_t processed) {
   std::vector<FileSpec> specs;
   for (Int_t r = 0; r < Int_t(Constants::RUN_NUMBERS.size()); r++) {
     Int_t run = Constants::RUN_NUMBERS[r];
     if (Constants::N_FILES < 0) {
-      std::vector<TString> suffixes = DiscoverRunSuffixes(run);
+      std::vector<TString> suffixes =
+          processed ? FileSet::DiscoverProcessedRunSuffixes(run)
+                    : FileSet::DiscoverRunSuffixes(run);
       for (Int_t k = 0; k < Int_t(suffixes.size()); k++) {
         FileSpec s;
         s.run = run;
@@ -74,6 +76,44 @@ std::vector<FileSpec> FileSet::BuildFileSpecs() {
         specs.push_back(s);
       }
     }
+  }
+  return specs;
+}
+} // namespace
+
+std::vector<TString> FileSet::DiscoverRunSuffixes(Int_t run) {
+  return DiscoverSuffixesIn(Constants::COMPASS_BASE_DIR +
+                                Form("run_%d/RAW/", run),
+                            Form("DataR_run_%d", run), ".BIN");
+}
+
+std::vector<TString> FileSet::DiscoverProcessedRunSuffixes(Int_t run) {
+  return DiscoverSuffixesIn(IO::GetRootFilesBaseDir(),
+                            Form("Events_Run%d", run), ".root");
+}
+
+std::vector<FileSpec> FileSet::BuildFileSpecs() {
+  return BuildSpecsImpl(kFALSE);
+}
+
+std::vector<FileSpec> FileSet::BuildProcessedFileSpecs() {
+  return BuildSpecsImpl(kTRUE);
+}
+
+std::vector<FileSpec> FileSet::BuildRawOrProcessedFileSpecs() {
+  std::vector<FileSpec> specs = BuildFileSpecs();
+  std::vector<FileSpec> processed = BuildProcessedFileSpecs();
+  for (Int_t k = 0; k < Int_t(processed.size()); k++) {
+    Bool_t already = kFALSE;
+    for (Int_t j = 0; j < Int_t(specs.size()); j++) {
+      if (specs[j].run == processed[k].run &&
+          specs[j].suffix == processed[k].suffix) {
+        already = kTRUE;
+        break;
+      }
+    }
+    if (!already)
+      specs.push_back(processed[k]);
   }
   return specs;
 }
@@ -97,7 +137,7 @@ TString FileSet::FileLabel(const FileSpec &s) {
 std::map<Int_t, TChain *>
 FileSet::GroupEventsByRun(std::vector<Int_t> &run_order) {
   std::map<Int_t, TChain *> chain_by_run;
-  std::vector<FileSpec> all_specs = BuildFileSpecs();
+  std::vector<FileSpec> all_specs = BuildProcessedFileSpecs();
   for (Int_t i = 0; i < Int_t(all_specs.size()); i++) {
     const FileSpec &s = all_specs[i];
     TString full = IO::GetRootFilesBaseDir() + "/" + EventsName(s) + ".root";

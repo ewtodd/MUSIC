@@ -1,0 +1,92 @@
+[gas]
+species = "4He"     # Fill gas: 4He, 3He, Ar, CF4, CH4, P10, iC4H10
+pressure = 220.0    # Torr
+temperature = 293.0 # K
+
+[beam]
+species = "37Cl"  # Use "AEl" notation
+energy = 92.0     # Beam KE at the accelerator (before entrance window) [MeV]
+energy_fwhm = 0.9 # Beam energy FWHM at accelerator [MeV]
+dedx_scale = 1.0  # Beam stopping power scale factor
+
+[target]
+species = "4He"
+compound = "41K"
+
+[windows.entrance]
+# mg/cm^2 areal density; -1 disables
+material = "Ti"
+thickness_mg_cm2 = 0.9
+
+[windows.exit]
+# mg/cm^2 areal density; -1 disables
+material = "Ti"
+thickness_mg_cm2 = 1.3
+
+[windows.degrader]
+thickness_um = -1
+
+[detector]
+eloss_bins = 555            # Number of bins for y axis
+max_eloss = 10.0            # Max y value [MeV]
+strip = 3                  # -1 for unreacted beam
+# Per-channel readout noise σ [MeV]. -1 on a given channel disables noise
+# there. Mutually exclusive with a scalar `eres` key in [detector].
+[detector.eres]
+Cathode = 1.8674009245800391
+L1 = 0.17561789466421374
+L10 = -1.0
+L11 = 0.14420320763631711
+L12 = -1.0
+L13 = 0.16080288815892896
+L14 = -1.0
+L15 = 0.16090960009479183
+L16 = -1.0
+L2 = -1.0
+L3 = 0.1625475331364612
+L4 = -1.0
+L5 = 0.15757710352220844
+L6 = -1.0
+L7 = 0.14430205100914861
+L8 = -1.0
+L9 = 0.14337639622308096
+R1 = -1.0
+R10 = 0.18963636272662399
+R11 = -1.0
+R12 = 0.18774561593325245
+R13 = -1.0
+R14 = 0.18381557020901163
+R15 = -1.0
+R16 = 0.18066112090453501
+R2 = 0.18610194436246097
+R3 = -1.0
+R4 = 0.18564491061610688
+R5 = -1.0
+R6 = 0.18985206683680644
+R7 = -1.0
+R8 = 0.18985573007328505
+R9 = -1.0
+S0 = 0.12916576783656453
+S17 = 0.30248445055481454
+
+[[reaction.step]]
+[reaction.step.evap]
+name = "4He"
+color = 2
+
+[reaction.step.res]
+name = "37Cl"
+color = 4
+dedx_scale = 1.0
+
+[run]
+n_events = 100000
+threads = 32
+wait = 0
+update = 0
+max_time = 2000.0                                                                # ns
+sim_step = 0.001                                                                 # cm
+method = 0
+output = "/home/e-work/MUSIC/analysis/37Cl/sim_root_files/traces_37Cl_aa_eres_s3.root"
+file_opt = "recreate"
+print_opt = 0

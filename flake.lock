@@ -104,22 +104,6 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1780243769,
-        "narHash": "sha256-x5UQuRsH3MqI0U9afaXSNqzTPSeZlRLvFAav2Ux1pNw=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "331800de5053fcebacf6813adb5db9c9dca22a0c",
-        "type": "github"
-      },
-      "original": {
-        "owner": "NixOS",
-        "ref": "nixos-unstable",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
-    "nixpkgs_2": {
-      "locked": {
         "lastModified": 1778443072,
         "narHash": "sha256-zi7/fsqM/kFdNuED//4WOCUtezGtKKqRNORjMvfwjnA=",
         "owner": "NixOS",
@@ -138,7 +122,10 @@
       "inputs": {
         "agenix": "agenix",
         "flake-utils": "flake-utils",
-        "nixpkgs": "nixpkgs",
+        "nixpkgs": [
+          "utils",
+          "nixpkgs"
+        ],
         "utils": "utils"
       }
     },
@@ -190,11 +177,11 @@
     "utils": {
       "inputs": {
         "flake-utils": "flake-utils_2",
-        "nixpkgs": "nixpkgs_2"
+        "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1780343590,
-        "narHash": "sha256-KMoGxxmJKu0CvoWQ8LltoZj+HkbV7tvDJy/WSqoPLkc=",
+        "lastModified": 1781128267,
+        "narHash": "sha256-5e2HzxHPU0KQRf42pR4s7P9xW7oD8q4ZzOY4zkImvus=",
         "path": "/home/e-work/Analysis-Utilities",
         "type": "path"
       },

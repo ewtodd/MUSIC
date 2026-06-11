@@ -1,0 +1,98 @@
+[gas]
+species = "4He"     # Fill gas: 4He, 3He, Ar, CF4, CH4, P10, iC4H10
+pressure = 555.0    # Torr
+temperature = 293.0 # K
+
+[beam]
+species = "87Rb"  # Use "AEl" notation
+energy = 401.07   # Beam KE at the accelerator (before entrance window) [MeV]
+energy_fwhm = 0.9 # Beam energy FWHM at accelerator [MeV]
+dedx_scale = 1.0  # Beam stopping power scale factor
+
+[target]
+species = "4He"
+compound = "91Y"
+
+[windows.entrance]
+# mg/cm^2 areal density; -1 disables
+material = "Ti"
+thickness_mg_cm2 = 1.3
+dedx_scale = 1.08367  # calibrated to measured 46.9 MeV Ti-window loss
+
+[windows.exit]
+# mg/cm^2 areal density; -1 disables
+material = "Ti"
+thickness_mg_cm2 = 1.3
+dedx_scale = 1.08367  # calibrated to measured 46.9 MeV Ti-window loss
+
+[windows.degrader]
+thickness_um = -1
+
+[detector]
+eloss_bins = 555            # Number of bins for y axis
+max_eloss = 10.0            # Max y value [MeV]
+strip = 9
+# Per-channel noise as %FWHM of the channel's energy deposit. -1 on a given
+# channel disables noise there. Mutually exclusive with a scalar `eres` key
+# in [detector].
+[detector.eres]
+Cathode = -1.0
+L1 = 8.148637269951676
+L10 = -1.0
+L11 = 10.806363059659104
+L12 = -1.0
+L13 = 10.724339987165052
+L14 = -1.0
+L15 = 11.045604884529068
+L16 = -1.0
+L2 = -1.0
+L3 = 11.561250354980796
+L4 = -1.0
+L5 = 10.878283936108975
+L6 = -1.0
+L7 = 10.325840514545064
+L8 = -1.0
+L9 = 10.813998688401114
+R1 = -1.0
+R10 = 6.8520194057689423
+R11 = -1.0
+R12 = 6.3371673945904989
+R13 = -1.0
+R14 = 6.0167426819952805
+R15 = -1.0
+R16 = 5.3097669170521433
+R2 = 5.1902604010511864
+R3 = -1.0
+R4 = 8.2243347023151561
+R5 = -1.0
+R6 = 7.598730171047813
+R7 = -1.0
+R8 = 7.5613461570293046
+R9 = -1.0
+S0 = 9.7578760083132661
+S17 = 5.3501756239959777
+
+[physics]
+straggling = false
+
+[[reaction.step]]
+[reaction.step.evap]
+name = "4He"
+color = 2
+
+[reaction.step.res]
+name = "87Rb"
+color = 4
+dedx_scale = 1.0
+
+[run]
+n_events = 100000
+threads = 32
+wait = 0
+update = 0
+max_time = 2000.0                                                       # ns
+sim_step = 0.001                                                        # cm
+method = 0
+output = "/home/e-work/MUSIC/analysis/87Rb/sim_root_files/traces_87Rb_aa_eres_s9.root"
+file_opt = "recreate"
+print_opt = 0

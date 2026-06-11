@@ -13,9 +13,9 @@
 
 namespace Constants {
 
-const std::vector<Int_t> RUN_NUMBERS = {12, 13, 14, 15, 16, 17, 20, 37};
+const std::vector<Int_t> RUN_NUMBERS = {16, 17}; //{16, 17, 20, 37};
 
-const TString COMPASS_BASE_DIR = "/run/media/e-work/B16A-129A/LabData/MUSIC/";
+const TString COMPASS_BASE_DIR = "/labdata/MUSIC/37Cl/";
 const Int_t N_FILES = -1;
 
 const TString SIM_BEAM_FILE = "traces_37Cl_beam.root";
@@ -30,17 +30,15 @@ const Double_t TIMING_MAX_ENERGY = 1500;
 const Double_t TIMING_OVERLAP_MARGIN_S = 1.0;
 const Double_t TIMING_THRESH_DT_US = 175.0;
 const Double_t TIMING_MAX_ABS_SHIFT_S = 1.5;
-// Whether to apply the beam-pattern inter-board time sync. On for 37Cl.
 const Bool_t TIMING_DO_BOARD_SYNC = kTRUE;
 
 const Int_t MAX_TRACE_SAVES = 10;
 
 const Bool_t REJECT_FLAGGED_EVENTS = kTRUE;
 
-// Post EventBuilder + CalibrateBeam only!
-const Bool_t IGNORE_SHORT_STRIPS = kFALSE;
-const Bool_t IGNORE_STRIP_0 = kFALSE;
-const Bool_t IGNORE_STRIP_17 = kFALSE;
+const Bool_t IGNORE_SHORT_STRIPS = kTRUE;
+const Bool_t IGNORE_STRIP_0 = kTRUE;
+const Bool_t IGNORE_STRIP_17 = kTRUE;
 
 const Bool_t SKIP_EXISTING = kTRUE;
 const Bool_t RUN_TRACES = kTRUE;
@@ -59,28 +57,34 @@ const Double_t EVENT_TIME_WINDOW_US = 8.0;
 const Bool_t USE_GPU_ACCELERATION = kTRUE;
 const Int_t MAX_GPU_CONCURRENT_SORTS = 10;
 
-const Double_t STRIP_E_MIN_MEV = 1;
-const Double_t STRIP_E_MAX_MEV = 4.5;
+const Double_t STRIP_DE_OVERVIEW_MIN_NORMED = 0;
+const Double_t STRIP_DE_OVERVIEW_MAX_NORMED = 10;
+const Double_t STRIP_DE_MIN_NORMED = 1;
+const Double_t STRIP_DE_MAX_NORMED = 4;
+const Double_t CATHODE_E_MAX_NORMED = 300;
+const Double_t TOTAL_E_MIN_NORMED = 10.0;
+const Double_t TOTAL_E_MAX_NORMED = 150.0;
 
-const Double_t CATHODE_E_MAX_MEV = 300;
-const Double_t TOTAL_E_MIN_MEV = 10.0;
-const Double_t TOTAL_E_MAX_MEV = 150.0;
-
-const Double_t NORM_MUSIC_MEV = 2.30;
-
-const Int_t STRIP_SUM_CANDIDATE_REACTION_STRIP = 9;
+const Bool_t STRIP_SUM_RERUN_SIM = kFALSE;
+const Int_t STRIP_SUM_CANDIDATE_REACTION_STRIP = 7;
 const Double_t STRIP_SUM_XMIN = 20;
 const Double_t STRIP_SUM_XMAX = 60;
 const Int_t STRIP_SUM_XBINS = 300;
 const Double_t STRIP_SUM_YMIN = 10;
 const Double_t STRIP_SUM_YMAX = 20;
 const Int_t STRIP_SUM_YBINS = 300;
-
-const Int_t REACTION_STRIP_MIN = 7;
+const std::map<Int_t, std::pair<Double_t, Double_t>> STRIP_SUM_Y_RANGE = {
+    {3, {10, 20}}, {4, {10, 20}}, {5, {10, 20}}, {6, {10, 20}}, {7, {10, 18}},
+    {8, {10, 20}}, {9, {9, 18}},  {10, {7, 20}}, {11, {7, 20}}, {12, {5, 20}},
+    {13, {3, 15}}, {14, {3, 15}}, {15, {0, 10}}};
+const Int_t REACTION_STRIP_MIN = 3;
 const Int_t REACTION_STRIP_MAX = 15;
+const Bool_t STRIP_SUM_APPLY_SMOOTHNESS = kFALSE;
+const Bool_t STRIP_SUM_GATE_S3_S4 = kTRUE;
+const Bool_t STRIP_SUM_GATE_S5_S6 = kFALSE;
 
 const Double_t STRIP_E_MIN_ADC = 0.0;
-const Double_t STRIP_E_MAX_ADC = 5500.0;
+const Double_t STRIP_E_MAX_ADC = 3000.0;
 const Double_t TOTAL_E_MIN_ADC = 0.0;
 const Double_t TOTAL_E_MAX_ADC = 60000.0;
 

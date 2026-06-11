@@ -7,9 +7,10 @@ void Traces::Run(const TString &file_label) {
 
   std::vector<FileSpec> specs;
   if (file_label.IsNull()) {
-    specs = FileSet::BuildFileSpecs();
+    specs = FileSet::BuildProcessedFileSpecs();
     if (specs.empty()) {
-      std::cerr << "No file specs from FileSet::BuildFileSpecs()" << std::endl;
+      std::cerr << "No file specs from FileSet::BuildProcessedFileSpecs()"
+                << std::endl;
       return;
     }
   } else {

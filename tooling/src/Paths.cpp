@@ -13,13 +13,6 @@
 #define MUSIC_DATASET_DIR ""
 #endif
 
-TString Paths::ProjectRootOf(const char *file) {
-  TString path = file;
-  path.ReplaceAll("/./", "/");
-  TString src_dir = gSystem->DirName(path);
-  return gSystem->DirName(src_dir);
-}
-
 TString Paths::DatasetName() { return TString(MUSIC_DATASET_NAME); }
 
 TString Paths::ResultsDir() {

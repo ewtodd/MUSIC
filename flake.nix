@@ -1,7 +1,12 @@
 {
   description = "MUSIC analysis monorepo (one tooling, per-dataset config)";
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Follow Analysis-Utilities' nixpkgs so both flakes share one interpreter
+    # and toolchain: its pythonPackage is then importable from this flake's
+    # python3.withPackages (a foreign-python module would be silently
+    # dropped), and the C++ here compiles with the same stdenv that built
+    # ROOT.
+    nixpkgs.follows = "utils/nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
     agenix = {
       url = "github:ryantm/agenix";
@@ -34,6 +39,7 @@
         mkClaudeLinks = false;
         analysis-utils =
           if !isCUDA then utils.packages.${system}.default else utils.packages.${system}.cuda;
+        analysis-utils-py = utils.packages.${system}.pythonPackage;
         root = if !isCUDA then pkgs.root else utils.packages.${system}.rootCuda;
         agenixPkg = agenix.packages.${system}.default;
         clangdConfigFile = (pkgs.formats.yaml { }).generate "dot-clangd" {
@@ -66,6 +72,17 @@
               pkgs.bash
               pkgs.tomlplusplus
               agenixPkg
+              (pkgs.python3.withPackages (
+                python-pkgs: with python-pkgs; [
+                  numpy
+                  pandas
+                  shap
+                  packaging
+                  torch-bin
+                  xgboost
+                  analysis-utils-py
+                ]
+              ))
             ]
             ++ pkgs.lib.optionals isCUDA [
               pkgs.cudaPackages.cuda_nvcc
@@ -119,7 +136,7 @@
         devShells = {
           "87Rb" = mkDatasetShell "87Rb";
           "37Cl" = mkDatasetShell "37Cl";
-          default = mkDatasetShell "37Cl";
+          default = mkDatasetShell "87Rb";
         };
       }
     );

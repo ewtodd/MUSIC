@@ -73,16 +73,7 @@ SRC_OBJS := $(filter-out $(SI_SRC_OBJS),$(SRC_OBJS))
 endif
 
 # Binary "foo-bar" is built from tooling/mains/main_foo_bar.cpp (dashes->underscores).
-BINS := pipeline calibrate-beam traces delta-e-scatter \
-        strip-sum-scatter diag-timing diag-events diag-subfile-drift strip-scatter-overlay
-
-# Si-detector calibration / stopping-power binaries. These need a per-dataset
-# Si config (analysis/<DATASET>/config/SiCalibConstants.hpp); datasets without
-# one (e.g. 87Rb) simply don't build them, instead of failing the build.
-SI_BINS := si-fits si-calibration calc-stopping-power plot-stopping-power
-ifneq ($(wildcard $(CFG_DIR)/SiCalibConstants.hpp),)
-BINS += $(SI_BINS)
-endif
+BINS := pipeline calibrate-beam traces strip-sum-scatter 
 
 BIN_PATHS := $(addprefix $(BIN_DIR)/,$(BINS))
 
@@ -99,7 +90,7 @@ gpu:
 # explicit prerequisites means a config change rebuilds everything -- no make
 # clean. SiCalibConstants.hpp is wildcard'd so datasets without it still build.
 # (Absolute source path so __FILE__ expands to one; ProjectRootOf relies on it.)
-CFG_HEADERS := $(CFG_DIR)/Constants.hpp $(wildcard $(CFG_DIR)/SiCalibConstants.hpp)
+CFG_HEADERS := $(CFG_DIR)/Constants.hpp 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp $(CFG_HEADERS) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c -o $@ $(abspath $<)
 

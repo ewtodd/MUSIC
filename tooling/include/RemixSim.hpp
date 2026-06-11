@@ -11,17 +11,11 @@
 #include <string>
 #include <vector>
 
-// Sim-side ("Remix") pipeline support. Enumerates one sim FileSpec per control
-// file under <dataset>/control that writes a traces_<iso>_ output, and resolves
-// the on-disk sim ROOT paths under <dataset>/sim_root_files. The shared
-// g_plot_mutex lives in FileSet.hpp; this header does NOT redeclare it.
-//
-// Sim-side data-blob constants (strip ranges etc.) live in namespace Remix in
-// RemixConstants.hpp; this class holds only the sim-pipeline behaviour.
 class RemixSim {
 public:
-  // One sim file. `tag` becomes both the on-disk basename
-  // (sim_root_files/traces_<iso>_<tag>.root) and the plot subdirectory leaf.
+  // `tag` becomes both the on-disk
+  // basename(sim_root_files/traces_<iso>_<tag>.root) and the plot subdirectory
+  // leaf.
   struct SimFileSpec {
     TString tag;
   };

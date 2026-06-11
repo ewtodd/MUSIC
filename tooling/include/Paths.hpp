@@ -25,10 +25,6 @@ public:
   // per-machine deployment choice, redirectable without a rebuild.
   static TString ResultsDir();
 
-  // Legacy: derive a repo-relative root from a source __FILE__. Retained for
-  // any non-dataset use; dataset code should use DatasetDir().
-  static TString ProjectRootOf(const char *file);
-
 private:
   static void PrintBanner(const TString &dataset_dir);
 };

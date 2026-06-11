@@ -30,3 +30,8 @@ result
 analysis/*/bin/
 .clangd
 \#*\#
+
+# ML artifacts (generated)
+analysis/*/models/
+analysis/*/ml_cache/
+*.pt

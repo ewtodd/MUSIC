@@ -46,79 +46,90 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
   TString file_label = FileSet::FileLabel(spec);
   std::chrono::steady_clock::time_point t_total =
       std::chrono::steady_clock::now();
+  std::chrono::steady_clock::time_point t0;
   Double_t t_parse = 0, t_timing = 0, t_apply = 0, t_events = 0, t_cal = 0,
            t_traces = 0;
 
-  if (Constants::SKIP_EXISTING &&
-      FusedExists(FileSet::EventsName(spec) + ".root")) {
+  // SKIP_EXISTING skips the expensive data processing (binary read, timing,
+  // event build, calibration) when the events file already exists -- but the
+  // plots below are still (re)made from that existing file.
+  const Bool_t skip_processing =
+      Constants::SKIP_EXISTING &&
+      FusedExists(FileSet::EventsName(spec) + ".root");
+
+  if (skip_processing) {
     std::lock_guard<std::mutex> lock(fused_log_mutex);
-    std::cout << "[skip] " << file_label << " events file exists" << std::endl;
-    return kTRUE;
+    std::cout << "[skip-build] " << file_label
+              << " events exist; re-making plots only" << std::endl;
+  } else {
+    TString bin_path = FileSet::CompassBinPath(spec);
+    if (gSystem->AccessPathName(bin_path)) {
+      std::lock_guard<std::mutex> lock(fused_log_mutex);
+      std::cerr << "[fail] " << file_label << " BIN missing: " << bin_path
+                << std::endl;
+      return kFALSE;
+    }
+
+    UShort_t use_header = (spec.suffix == "") ? 0 : run_header;
+
+    PrintMemUsage((TString("before binary read ") + file_label).Data());
+
+    t0 = std::chrono::steady_clock::now();
+    std::pair<std::vector<RawHit>, UShort_t> parsed =
+        InitUtils::ConvertCoMPASSBinToHits(bin_path, use_header);
+    t_parse = FusedSecSince(t0);
+
+    PrintMemUsage((TString("after binary read ") + file_label).Data());
+
+    std::vector<RawHit> &hits = parsed.first;
+    if (hits.empty() || parsed.second == 0) {
+      std::lock_guard<std::mutex> lock(fused_log_mutex);
+      std::cerr << "[fail] " << file_label << " parse produced no hits"
+                << std::endl;
+      return kFALSE;
+    }
+    if (spec.suffix == "")
+      BinaryToRoot::WriteHeaderSidecar(spec.run, parsed.second);
+
+    t0 = std::chrono::steady_clock::now();
+    TimeShiftResult shift_result = Timing::CalcTimeShiftsBeamMethodFromHits(
+        hits, file_label, Constants::TIMING_REF_BOARD,
+        Constants::TIMING_REF_BOARD_CHANNELS, Constants::TIMING_MIN_ENERGY,
+        Constants::TIMING_MAX_ENERGY, Constants::TIMING_OVERLAP_MARGIN_S,
+        Constants::TIMING_THRESH_DT_US);
+    t_timing = FusedSecSince(t0);
+
+    PrintMemUsage((TString("after timing ") + file_label).Data());
+
+    t0 = std::chrono::steady_clock::now();
+    Timing::ApplyShiftsInPlace(hits, shift_result.board_shifts);
+    Timing::SortHitsByTimestamp(hits);
+    t_apply = FusedSecSince(t0);
+
+    PrintMemUsage((TString("after apply+sort ") + file_label).Data());
+
+    t0 = std::chrono::steady_clock::now();
+    Bool_t build_ok = EventBuilder::BuildEventsFromSortedHits(
+        hits, slot_map, FileSet::EventsName(spec), file_label);
+    t_events = FusedSecSince(t0);
+
+    PrintMemUsage((TString("after event build ") + file_label).Data());
+
+    std::vector<RawHit>().swap(hits);
+
+    PrintMemUsage((TString("after hits free ") + file_label).Data());
+
+    if (!build_ok) {
+      std::lock_guard<std::mutex> lock(fused_log_mutex);
+      std::cerr << "[fail] " << file_label << " event build failed"
+                << std::endl;
+      return kFALSE;
+    }
   }
 
-  TString bin_path = FileSet::CompassBinPath(spec);
-  if (gSystem->AccessPathName(bin_path)) {
-    std::lock_guard<std::mutex> lock(fused_log_mutex);
-    std::cerr << "[fail] " << file_label << " BIN missing: " << bin_path
-              << std::endl;
-    return kFALSE;
-  }
-
-  UShort_t use_header = (spec.suffix == "") ? 0 : run_header;
-
-  PrintMemUsage((TString("before binary read ") + file_label).Data());
-
-  std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
-  std::pair<std::vector<RawHit>, UShort_t> parsed =
-      InitUtils::ConvertCoMPASSBinToHits(bin_path, use_header);
-  t_parse = FusedSecSince(t0);
-
-  PrintMemUsage((TString("after binary read ") + file_label).Data());
-
-  std::vector<RawHit> &hits = parsed.first;
-  if (hits.empty() || parsed.second == 0) {
-    std::lock_guard<std::mutex> lock(fused_log_mutex);
-    std::cerr << "[fail] " << file_label << " parse produced no hits"
-              << std::endl;
-    return kFALSE;
-  }
-  if (spec.suffix == "")
-    BinaryToRoot::WriteHeaderSidecar(spec.run, parsed.second);
-
-  t0 = std::chrono::steady_clock::now();
-  TimeShiftResult shift_result = Timing::CalcTimeShiftsBeamMethodFromHits(
-      hits, file_label, Constants::TIMING_REF_BOARD,
-      Constants::TIMING_REF_BOARD_CHANNELS, Constants::TIMING_MIN_ENERGY,
-      Constants::TIMING_MAX_ENERGY, Constants::TIMING_OVERLAP_MARGIN_S,
-      Constants::TIMING_THRESH_DT_US);
-  t_timing = FusedSecSince(t0);
-
-  PrintMemUsage((TString("after timing ") + file_label).Data());
-
-  t0 = std::chrono::steady_clock::now();
-  Timing::ApplyShiftsInPlace(hits, shift_result.board_shifts);
-  Timing::SortHitsByTimestamp(hits);
-  t_apply = FusedSecSince(t0);
-
-  PrintMemUsage((TString("after apply+sort ") + file_label).Data());
-
-  t0 = std::chrono::steady_clock::now();
-  Bool_t build_ok = EventBuilder::BuildEventsFromSortedHits(
-      hits, slot_map, FileSet::EventsName(spec), file_label);
-  t_events = FusedSecSince(t0);
-
-  PrintMemUsage((TString("after event build ") + file_label).Data());
-
-  std::vector<RawHit>().swap(hits);
-
-  PrintMemUsage((TString("after hits free ") + file_label).Data());
-
-  if (!build_ok) {
-    std::lock_guard<std::mutex> lock(fused_log_mutex);
-    std::cerr << "[fail] " << file_label << " event build failed" << std::endl;
-    return kFALSE;
-  }
-
+  // Calibration reads the events file (freshly built or pre-existing) plus the
+  // sim anchors and re-derives the same gains, so it runs in
+  // plot-only mode too, regenerating the calibration diagnostic histograms.
   if (!sim_chans.empty()) {
     t0 = std::chrono::steady_clock::now();
     CalibrateBeam::CalibrateBeamOneSubfile(spec, sim_chans);
@@ -163,18 +174,29 @@ void Pipeline::Run() {
   Int_t saved_error_level = gErrorIgnoreLevel;
   gErrorIgnoreLevel = kError;
 
-  std::vector<FileSpec> specs = FileSet::BuildFileSpecs();
+  std::vector<FileSpec> specs = FileSet::BuildRawOrProcessedFileSpecs();
   Int_t n_specs = Int_t(specs.size());
 
   std::set<Int_t> unique_runs;
   for (Int_t k = 0; k < n_specs; k++)
     unique_runs.insert(specs[k].run);
 
-  std::cout << "Phase A: gathering global headers for " << unique_runs.size()
-            << " run(s)..." << std::endl;
+  // The global header is only consumed when a subfile is (re)built from its
+  // BIN; a run whose subfiles are all already processed runs plot-only and
+  // never touches the raw dir, so skip its header gather entirely.
+  std::set<Int_t> runs_needing_header;
+  for (Int_t k = 0; k < n_specs; k++) {
+    Bool_t will_build = !(Constants::SKIP_EXISTING &&
+                          FusedExists(FileSet::EventsName(specs[k]) + ".root"));
+    if (will_build)
+      runs_needing_header.insert(specs[k].run);
+  }
+
+  std::cout << "Phase A: gathering global headers for "
+            << runs_needing_header.size() << " run(s)..." << std::endl;
   std::map<Int_t, UShort_t> run_headers;
-  for (std::set<Int_t>::const_iterator it = unique_runs.begin();
-       it != unique_runs.end(); ++it) {
+  for (std::set<Int_t>::const_iterator it = runs_needing_header.begin();
+       it != runs_needing_header.end(); ++it) {
     UShort_t h;
     if (!EnsureRunHeaderFused(*it, h)) {
       std::cerr << "Header gather FAILED for run " << *it << std::endl;

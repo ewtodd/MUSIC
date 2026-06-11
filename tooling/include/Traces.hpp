@@ -4,6 +4,7 @@
 #include "Constants.hpp"
 #include "FileSet.hpp"
 #include "InitUtils.hpp"
+#include "Paths.hpp"
 #include "TraceCreator.hpp"
 #include <TString.h>
 #include <iostream>

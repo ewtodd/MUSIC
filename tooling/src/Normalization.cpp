@@ -7,11 +7,12 @@ Bool_t EnergyView::Attach(TTree *t) {
   t->SetBranchAddress("RightdE", rightdE_adc);
   t->SetBranchAddress("Cathode", &cathode_adc);
   // Materialize the first tree so GetCurrentFile() resolves for a TChain (it is
-  // null until a tree is loaded); this makes is_mev correct right after Attach.
+  // null until a tree is loaded); this makes is_normed correct right after
+  // Attach.
   t->LoadTree(0);
   LoadGains();
   loaded_tree_ = t->GetTreeNumber();
-  return is_mev;
+  return is_normed;
 }
 
 void EnergyView::LoadGains() {
@@ -20,7 +21,7 @@ void EnergyView::LoadGains() {
     gain_right[s] = 0.0f;
   }
   gain_cathode = 0.0f;
-  is_mev = kFALSE;
+  is_normed = kFALSE;
   if (!tree_)
     return;
   TFile *f = tree_->GetCurrentFile();
@@ -39,7 +40,7 @@ void EnergyView::LoadGains() {
     gain_right[s] = gr[s];
   }
   gain_cathode = gc;
-  is_mev = kTRUE;
+  is_normed = kTRUE;
 }
 
 void EnergyView::Decode() {
@@ -53,14 +54,15 @@ void EnergyView::Decode() {
       loaded_tree_ = tn;
     }
   }
-  if (is_mev) {
+  if (is_normed) {
     for (Int_t s = 0; s < 18; s++) {
       left[s] = Double_t(gain_left[s]) * Double_t(left_0_17_adc[s]);
       right[s] = Double_t(gain_right[s]) * Double_t(rightdE_adc[s]);
       total[s] = left[s] + right[s];
     }
-    // Guard the -1 "no cathode" sentinel: uncalibrated/absent -> 0 MeV (matches
-    // the old per-event cal, which only applied the gain when cathode_adc > 0).
+    // Guard the -1 "no cathode" sentinel: uncalibrated/absent -> 0 a.u.
+    // (matches the old per-event cal, which only applied the gain when
+    // cathode_adc > 0).
     cathode = (cathode_adc > 0) ? Double_t(gain_cathode) * Double_t(cathode_adc)
                                 : 0.0;
   } else {
@@ -82,16 +84,6 @@ void EnergyView::Decode() {
       }
     }
   }
-  if (Constants::IGNORE_STRIP_0) {
-    left[0] = 0.0;
-    right[0] = 0.0;
-    total[0] = 0.0;
-  }
-  if (Constants::IGNORE_STRIP_17) {
-    left[17] = 0.0;
-    right[17] = 0.0;
-    total[17] = 0.0;
-  }
 }
 
-const char *EnergyView::Unit() const { return is_mev ? "MeV" : "ADC"; }
+const char *EnergyView::Unit() const { return is_normed ? "a.u." : "ADC"; }

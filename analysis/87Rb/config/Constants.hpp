@@ -2,7 +2,6 @@
 #define CONSTANTS_HPP
 
 #include "ChannelTiming.hpp"
-#include "Paths.hpp"
 #include "SlotLayout.hpp"
 #include <Rtypes.h>
 #include <TString.h>
@@ -11,11 +10,13 @@
 #include <utility>
 #include <vector>
 
+class Paths;
+
 namespace Constants {
 
 const std::vector<Int_t> RUN_NUMBERS = {16, 20};
 
-const TString COMPASS_BASE_DIR = "/home/e-work/LabData/MUSIC/87Rb/";
+const TString COMPASS_BASE_DIR = "/labdata/MUSIC/87Rb/";
 const Int_t N_FILES = -1;
 
 const TString SIM_BEAM_FILE = "traces_87Rb_beam.root";
@@ -30,23 +31,23 @@ const Double_t TIMING_MAX_ENERGY = 1500;
 const Double_t TIMING_OVERLAP_MARGIN_S = 1.0;
 const Double_t TIMING_THRESH_DT_US = 175.0;
 const Double_t TIMING_MAX_ABS_SHIFT_S = 1.5;
-// Whether to apply the beam-pattern inter-board time sync. Off for 87Rb: the
-// inter-board offsets are rate-dependent and the scan latches onto spurious
-// matches in the repeating beam/spill DT pattern, so the boards are used as-is.
+
+// 87Rb has boards already hardware synced; trying to calculate correction is
+// wrong
 const Bool_t TIMING_DO_BOARD_SYNC = kFALSE;
 
 const Int_t MAX_TRACE_SAVES = 10;
 
 const Bool_t REJECT_FLAGGED_EVENTS = kTRUE;
 
-// Post EventBuilder + CalibrateBeam only!
+// Does not apply to raw data conversion to events
 const Bool_t IGNORE_SHORT_STRIPS = kFALSE;
 const Bool_t IGNORE_STRIP_0 = kFALSE;
 const Bool_t IGNORE_STRIP_17 = kFALSE;
 
 const Bool_t SKIP_EXISTING = kTRUE;
 const Bool_t RUN_TRACES = kTRUE;
-const Bool_t SAVE_PLOTS = kFALSE;
+const Bool_t SAVE_PLOTS = kTRUE;
 
 const Bool_t SKIP_CALIBRATION = kFALSE;
 
@@ -61,24 +62,35 @@ const Double_t EVENT_TIME_WINDOW_US = 8.0;
 const Bool_t USE_GPU_ACCELERATION = kTRUE;
 const Int_t MAX_GPU_CONCURRENT_SORTS = 8;
 
-const Double_t STRIP_E_MIN_MEV = 9;
-const Double_t STRIP_E_MAX_MEV = 15.5;
-const Double_t CATHODE_E_MAX_MEV = 300;
-const Double_t TOTAL_E_MIN_MEV = 10.0;
-const Double_t TOTAL_E_MAX_MEV = 400.0;
+const Double_t STRIP_DE_OVERVIEW_MIN_NORMED = 0.8;
+const Double_t STRIP_DE_OVERVIEW_MAX_NORMED = 5;
+const Double_t STRIP_DE_MIN_NORMED = 0.8;
+const Double_t STRIP_DE_MAX_NORMED = 1.3;
+const Double_t CATHODE_E_MAX_NORMED = 300;
+const Double_t TOTAL_E_MIN_NORMED = 10.0;
+const Double_t TOTAL_E_MAX_NORMED = 400.0;
 
-const Double_t NORM_MUSIC_MEV = 12;
-
-const Int_t STRIP_SUM_CANDIDATE_REACTION_STRIP = 6;
-const Double_t STRIP_SUM_XMIN = 150;
-const Double_t STRIP_SUM_XMAX = 230;
+const Bool_t STRIP_SUM_RERUN_SIM = kFALSE;
+const Int_t STRIP_SUM_CANDIDATE_REACTION_STRIP = 3;
+const Double_t STRIP_SUM_XMIN = 14;
+const Double_t STRIP_SUM_XMAX = 18;
 const Int_t STRIP_SUM_XBINS = 300;
-const Double_t STRIP_SUM_YMIN = 60;
-const Double_t STRIP_SUM_YMAX = 90;
+const Double_t STRIP_SUM_YMIN = 0;
+const Double_t STRIP_SUM_YMAX = 100;
 const Int_t STRIP_SUM_YBINS = 300;
+
+const std::map<Int_t, std::pair<Double_t, Double_t>> STRIP_SUM_Y_RANGE = {
+    {3, {5, 7.5}},  {4, {5, 7.5}},  {5, {5, 7.5}}, {6, {5, 7.5}},
+    {7, {5, 7.5}},  {8, {5, 7.5}},  {9, {5, 7.5}}, {10, {5, 7.5}},
+    {11, {5, 7.5}}, {12, {3.5, 6}}, {13, {2, 5}},  {14, {2, 5}},
+    {15, {1, 4}}};
 
 const Int_t REACTION_STRIP_MIN = 3;
 const Int_t REACTION_STRIP_MAX = 15;
+
+const Bool_t STRIP_SUM_APPLY_SMOOTHNESS = kTRUE;
+const Bool_t STRIP_SUM_GATE_S3_S4 = kFALSE;
+const Bool_t STRIP_SUM_GATE_S5_S6 = kFALSE;
 
 const Double_t STRIP_E_MIN_ADC = 0.0;
 const Double_t STRIP_E_MAX_ADC = 12000;

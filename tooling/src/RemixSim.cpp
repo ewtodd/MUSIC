@@ -5,7 +5,7 @@ Bool_t RemixSim::SimFileSpecTagLess(const SimFileSpec &a,
   return a.tag.CompareTo(b.tag) < 0;
 }
 
-TString RemixSim::ControlDir() { return Paths::DatasetDir() + "/control"; }
+TString RemixSim::ControlDir() { return Paths::DatasetDir() + "/sim_control"; }
 
 TString RemixSim::TagFromControlFile(const TString &filepath) {
   std::ifstream in(filepath.Data());

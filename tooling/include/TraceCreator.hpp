@@ -25,15 +25,13 @@ public:
   static void WriteH2CanvasToFile(TFile *file, TH2F *h,
                                   const TString &save_name,
                                   const TString &subdir);
-  // Per-event trace: total #DeltaE vs strip index (0-17, honouring the
-  // IGNORE_STRIP_0/17 config). Caller owns the returned graph.
   static TGraph *BuildEventTrace(const EnergyView &ev);
   // Same trace from a raw per-strip total[18] array (e.g. a cached event).
   // Caller owns the returned graph.
   static TGraph *BuildTraceFromTotals(const Double_t *total);
-  static void BuildMeVSummaryHistograms(const TString &input_filename,
-                                        const TString &file_label,
-                                        const FileSpec &spec);
+  static void BuildNormedSummaryHistograms(const TString &input_filename,
+                                           const TString &file_label,
+                                           const FileSpec &spec);
   static void BuildTraces(std::vector<TString> input_filenames,
                           std::vector<TString> file_labels,
                           Bool_t save_plots = kTRUE, Bool_t reprocess = kFALSE);

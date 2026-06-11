@@ -14,15 +14,15 @@ void TraceCreator::WriteH2CanvasToFile(TFile *file, TH2F *h,
   delete c;
 }
 
-void TraceCreator::BuildMeVSummaryHistograms(const TString &input_filename,
-                                             const TString &file_label,
-                                             const FileSpec &spec) {
+void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
+                                                const TString &file_label,
+                                                const FileSpec &spec) {
   TString input_filepath = input_filename + ".root";
 
   TFile *input_file = IO::OpenForWriting(input_filepath, "UPDATE");
   if (!input_file || input_file->IsZombie()) {
     std::cerr << "[" << file_label
-              << "] cannot open UPDATE for MeV summary: " << input_filepath
+              << "] cannot open UPDATE for normed summary: " << input_filepath
               << std::endl;
     if (input_file)
       delete input_file;
@@ -30,7 +30,7 @@ void TraceCreator::BuildMeVSummaryHistograms(const TString &input_filename,
   }
   TTree *input_tree = static_cast<TTree *>(input_file->Get("events"));
   if (!input_tree) {
-    std::cerr << "[" << file_label << "] no events tree for MeV summary"
+    std::cerr << "[" << file_label << "] no events tree for normed summary"
               << std::endl;
     input_file->Close();
     delete input_file;
@@ -38,10 +38,11 @@ void TraceCreator::BuildMeVSummaryHistograms(const TString &input_filename,
   }
   EnergyView ev;
   ev.Attach(input_tree);
-  if (!ev.is_mev) {
-    std::cout << "[" << file_label
-              << "] no calibration in events file; skipping MeV summary build"
-              << std::endl;
+  if (!ev.is_normed) {
+    std::cout
+        << "[" << file_label
+        << "] no calibration in events file; skipping normed summary build"
+        << std::endl;
     input_file->Close();
     delete input_file;
     return;
@@ -50,45 +51,50 @@ void TraceCreator::BuildMeVSummaryHistograms(const TString &input_filename,
   UInt_t flags_or = 0;
   input_tree->SetBranchAddress("FlagsOR", &flags_or);
 
-  const Double_t strip_e_min = Constants::STRIP_E_MIN_MEV;
-  const Double_t strip_e_max = Constants::STRIP_E_MAX_MEV;
-  const Double_t total_e_min = Constants::TOTAL_E_MIN_MEV;
-  const Double_t total_e_max = Constants::TOTAL_E_MAX_MEV;
-  const Double_t cathode_e_max = Constants::CATHODE_E_MAX_MEV;
+  const Double_t strip_e_min = Constants::STRIP_DE_OVERVIEW_MIN_NORMED;
+  const Double_t strip_e_max = Constants::STRIP_DE_OVERVIEW_MAX_NORMED;
+  const Double_t strip_de_min = Constants::STRIP_DE_MIN_NORMED;
+  const Double_t strip_de_max = Constants::STRIP_DE_MAX_NORMED;
+  const Double_t total_e_min = Constants::TOTAL_E_MIN_NORMED;
+  const Double_t total_e_max = Constants::TOTAL_E_MAX_NORMED;
+  const Double_t cathode_e_max = Constants::CATHODE_E_MAX_NORMED;
+  const Int_t s_lo = Constants::IGNORE_STRIP_0 ? 1 : 0;
+  const Int_t s_hi = Constants::IGNORE_STRIP_17 ? 16 : 17;
 
-  TH2F *h_music = new TH2F(
-      "hMUSIC_MeV", "MUSIC strip energies (complete events);Strip;Energy [MeV]",
-      18, -0.5, 17.5, 400, strip_e_min, strip_e_max);
+  TH2F *h_music =
+      new TH2F("hMUSIC_Normed",
+               "MUSIC strip energies (complete events);Strip;#DeltaE [a.u.]",
+               18, -0.5, 17.5, 400, strip_e_min, strip_e_max);
   TH2F *h_music_clean =
-      new TH2F("hMUSICClean_MeV",
-               "MUSIC strip energies (complete, no flags);Strip;Energy [MeV]",
+      new TH2F("hMUSICClean_Normed",
+               "MUSIC strip energies (complete, no flags);Strip;#DeltaE [a.u.]",
                18, -0.5, 17.5, 400, strip_e_min, strip_e_max);
   TH2F *h_music_flagged =
-      new TH2F("hMUSICFlagged_MeV",
-               "MUSIC strip energies (complete, flagged);Strip;Energy [MeV]",
+      new TH2F("hMUSICFlagged_Normed",
+               "MUSIC strip energies (complete, flagged);Strip;#DeltaE [a.u.]",
                18, -0.5, 17.5, 400, strip_e_min, strip_e_max);
   TH2F *h2_strip[18];
   for (Int_t s = 0; s < 18; s++) {
     h2_strip[s] =
-        new TH2F(Form("h2_totalE_vs_stripE_s%d_MeV", s),
-                 Form(";Strip %d #DeltaE [MeV];Total #DeltaE [MeV]", s), 200,
-                 strip_e_min, strip_e_max, 400, total_e_min, total_e_max);
+        new TH2F(Form("h2_totalE_vs_stripE_s%d_Normed", s),
+                 Form(";Strip %d #DeltaE [a.u.];Total #DeltaE [a.u.]", s), 200,
+                 strip_de_min, strip_de_max, 400, total_e_min, total_e_max);
   }
-  TH2F *h2_cath = new TH2F("h2_totalE_vs_cathode_MeV",
-                           ";Cathode #DeltaE [MeV];Total #DeltaE [MeV]", 200,
+  TH2F *h2_cath = new TH2F("h2_totalE_vs_cathode_Normed",
+                           ";Cathode #DeltaE [a.u.];Total #DeltaE [a.u.]", 200,
                            0.0, cathode_e_max, 400, total_e_min, total_e_max);
 
   Long64_t n_entries = input_tree->GetEntries();
-  std::cout << "[" << file_label << "] rebuilding MeV summary over "
+  std::cout << "[" << file_label << "] rebuilding normed summary over "
             << n_entries << " events..." << std::endl;
   for (Long64_t j = 0; j < n_entries; j++) {
     input_tree->GetEntry(j);
     ev.Decode();
     Double_t event_total = 0.0;
-    for (Int_t s = 0; s < 18; s++)
+    for (Int_t s = s_lo; s <= s_hi; s++)
       event_total += ev.total[s];
     Bool_t has_any_flag = (flags_or != 0);
-    for (Int_t s = 0; s < 18; s++) {
+    for (Int_t s = s_lo; s <= s_hi; s++) {
       h_music->Fill(Double_t(s), ev.total[s]);
       if (has_any_flag)
         h_music_flagged->Fill(Double_t(s), ev.total[s]);
@@ -102,18 +108,18 @@ void TraceCreator::BuildMeVSummaryHistograms(const TString &input_filename,
 
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
-    TString music_subdir = "events_nearest_mev/" + file_label;
-    TString trace_subdir = "trace_summary_mev/" + file_label;
-    WriteH2CanvasToFile(input_file, h_music, "music_strip_energies_mev",
+    TString music_subdir = "events_nearest_normed/" + file_label;
+    TString trace_subdir = "trace_summary_normed/" + file_label;
+    WriteH2CanvasToFile(input_file, h_music, "music_strip_energies_normed",
                         music_subdir);
     WriteH2CanvasToFile(input_file, h_music_clean,
-                        "music_strip_energies_clean_mev", music_subdir);
+                        "music_strip_energies_clean_normed", music_subdir);
     WriteH2CanvasToFile(input_file, h_music_flagged,
-                        "music_strip_energies_flagged_mev", music_subdir);
-    for (Int_t s = 0; s < 18; s++)
+                        "music_strip_energies_flagged_normed", music_subdir);
+    for (Int_t s = s_lo; s <= s_hi; s++)
       WriteH2CanvasToFile(input_file, h2_strip[s],
-                          Form("totalE_vs_stripE_s%d_mev", s), trace_subdir);
-    WriteH2CanvasToFile(input_file, h2_cath, "totalE_vs_cathode_mev",
+                          Form("totalE_vs_stripE_s%d_normed", s), trace_subdir);
+    WriteH2CanvasToFile(input_file, h2_cath, "totalE_vs_cathode_normed",
                         trace_subdir);
   }
 
@@ -171,15 +177,16 @@ void TraceCreator::BuildTraces(std::vector<TString> input_filenames,
 
     EnergyView ev;
     ev.Attach(input_tree);
-    if (!ev.is_mev)
-      std::cerr << "[" << file_label
-                << "] WARNING: no MeV branches; using uncalibrated ADC values"
-                << std::endl;
+    if (!ev.is_normed)
+      std::cerr
+          << "[" << file_label
+          << "] WARNING: no calibration; using raw ADC; using uncalibrated ADC values"
+          << std::endl;
     const char *unit = ev.Unit();
-    const Double_t strip_e_min =
-        ev.is_mev ? Constants::STRIP_E_MIN_MEV : Constants::STRIP_E_MIN_ADC;
-    const Double_t strip_e_max =
-        ev.is_mev ? Constants::STRIP_E_MAX_MEV : Constants::STRIP_E_MAX_ADC;
+    const Double_t strip_e_min = ev.is_normed ? Constants::STRIP_DE_MIN_NORMED
+                                              : Constants::STRIP_E_MIN_ADC;
+    const Double_t strip_e_max = ev.is_normed ? Constants::STRIP_DE_MAX_NORMED
+                                              : Constants::STRIP_E_MAX_ADC;
 
     Long64_t n_entries = input_tree->GetEntries();
     Long64_t n_to_save =
@@ -242,11 +249,11 @@ void TraceCreator::BuildTraces(std::vector<TString> input_filenames,
       delete TraceRight;
     }
 
-    Bool_t had_cal = ev.is_mev;
+    Bool_t had_cal = ev.is_normed;
     input_file->Close();
     delete input_file;
     if (had_cal)
-      BuildMeVSummaryHistograms(input_filename, file_label, spec);
+      BuildNormedSummaryHistograms(input_filename, file_label, spec);
     std::cout << "Finished processing " << input_filename << std::endl;
   }
 }

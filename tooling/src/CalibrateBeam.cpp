@@ -1,12 +1,18 @@
 #include "CalibrateBeam.hpp"
 
 const Int_t kMaxChannels = 35;
-// Axis-aligned gate half-widths for the Strip1-vs-Strip0 beam ellipse: tight
-// horizontally (Strip0), loose vertically (Strip1).
-const Double_t kEllipseNSigmaX = 1.0;
-const Double_t kEllipseNSigmaY = 3.0;
+const Double_t kEllipseNSigmaX = 1.5;
+const Double_t kEllipseNSigmaY = 1.5;
 const Long64_t kMinSamples = 200;
 const Long64_t kSampleCap = 20000;
+
+// Defined below; forward-declared so both beam-peak fitters and the beam_peak
+// diagnostic plot share one histogram recipe regardless of definition order.
+void RobustPeakSeed(const std::vector<Float_t> &v, Double_t &mode,
+                    Double_t &sigma);
+TH1F *MakeBeamPeakHist(const TString &name, const TString &title,
+                       const std::vector<Float_t> &v, Double_t mode,
+                       Double_t sigma);
 
 TString CalibrateBeam::DefaultSimBeamPath(const TString &project_root) {
   TString p = project_root + "/sim_root_files/" + Constants::SIM_BEAM_FILE;
@@ -68,22 +74,14 @@ Bool_t IsBeamdEChannel(const ChannelCal &c) {
 }
 
 // Standard ("normMUSIC") calibration: each beam-dE channel's beam-peak ADC is
-// scaled to the common reference NORM_MUSIC_MEV by a single gain through the
-// origin. Calibrated dE is normalized to a common beam value, not absolute --
-// which is what the PID / summed-dE analysis needs. sim_mu_mev>0 selects the
-// channels that have a sim beam anchor (the long sides); the sim energy itself
-// is no longer the calibration target.
+// scaled to 1 a.u. by a single gain through the origin. The normalization
+// target is arbitrary (PID only, no physical meaning), so it is hardcoded.
 Bool_t IsCalibrated(const ChannelCal &c) {
   return c.sim_mu_mev > 0 && c.fit_adc > 0;
 }
 
-Double_t Gain(const ChannelCal &c) {
-  return Constants::NORM_MUSIC_MEV / c.fit_adc;
-}
+Double_t Gain(const ChannelCal &c) { return 1.0 / c.fit_adc; }
 
-// Energy resolution at the beam peak as percent FWHM. Scale-invariant (the gain
-// cancels), so it is computed straight from the ADC-domain fit: FWHM = 2.3548 *
-// sigma, %FWHM = 100 * FWHM / centroid.
 Double_t ResolutionFWHMPercent(const ChannelCal &c) {
   if (c.fit_adc <= 0)
     return 0.0;
@@ -95,10 +93,7 @@ inline Double_t ApplyCal(const ChannelCal &c, Double_t adc) {
   return Gain(c) * adc;
 }
 
-// Beam selection: the beam is the dominant population in Strip1 dE vs Strip0
-// dE, so we take the largest peak there and gate on a 2D ellipse built from
-// local moments (no L-strip-sum gate, no TF2).
-BeamFit2D FindBeamGateStp1VsStp0(const FileSpec &spec, const TString &run_label,
+BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
                                  const TString &plot_subdir,
                                  Bool_t save_plot = kTRUE) {
   BeamFit2D out;
@@ -117,29 +112,30 @@ BeamFit2D FindBeamGateStp1VsStp0(const FileSpec &spec, const TString &run_label,
     return out;
   }
   // Raw ADC, read before any calibration exists (this fit produces it), so read
-  // the branches directly. Strip0 = Left_0_17_dE[0]; strip1 total = L1 + R1.
+  // the branches directly. strip1 total = L1 + R1; strip2 total = L2 + R2.
   UShort_t left_0_17_adc[18], rightdE_adc[18];
   tree->SetBranchAddress("Left_0_17_dE", left_0_17_adc);
   tree->SetBranchAddress("RightdE", rightdE_adc);
 
-  TH2F *h = new TH2F(Form("h2_stp1_vs_stp0_%s", run_label.Data()),
-                     ";Strip0 #DeltaE [ADC];Strip1 #DeltaE [ADC]", 256, 0.0,
-                     16384.0, 256, 0.0, 16384.0);
+  TH2F *h = new TH2F(Form("h2_stp2_vs_stp1_%s", run_label.Data()),
+                     ";Strip1 #DeltaE [ADC];Strip2 #DeltaE [ADC]", 256, 0.0,
+                     Constants::STRIP_E_MAX_ADC, 256, 0.0,
+                     Constants::STRIP_E_MAX_ADC);
   h->SetDirectory(nullptr);
   Long64_t n = tree->GetEntries();
   for (Long64_t j = 0; j < n; j++) {
     tree->GetEntry(j);
-    Int_t stp0 = Int_t(left_0_17_adc[0]);
     Int_t stp1 = Int_t(left_0_17_adc[1]) + Int_t(rightdE_adc[1]);
-    if (stp0 > 0 && stp1 > 0)
-      h->Fill(Double_t(stp0), Double_t(stp1));
+    Int_t stp2 = Int_t(left_0_17_adc[2]) + Int_t(rightdE_adc[2]);
+    if (stp1 > 0 && stp2 > 0)
+      h->Fill(Double_t(stp1), Double_t(stp2));
   }
   sf->Close();
   delete sf;
 
   if (h->GetEntries() < 100) {
     std::cerr << "  " << run_label
-              << ": too few events for Strip1-vs-Strip0 beam gate" << std::endl;
+              << ": too few events for Strip2-vs-Strip1 beam gate" << std::endl;
     delete h;
     return out;
   }
@@ -170,7 +166,7 @@ BeamFit2D FindBeamGateStp1VsStp0(const FileSpec &spec, const TString &run_label,
   out.sigma_y = m.sigma_y;
   out.rho = m.rho;
   out.ok = kTRUE;
-  std::cout << "  beam gate (Strip1 vs Strip0): mu=(" << out.mu_x << ","
+  std::cout << "  beam gate (Strip2 vs Strip1): mu=(" << out.mu_x << ","
             << out.mu_y << ") sigma=(" << out.sigma_x << "," << out.sigma_y
             << ") rho=" << out.rho << std::endl;
 
@@ -185,7 +181,7 @@ BeamFit2D FindBeamGateStp1VsStp0(const FileSpec &spec, const TString &run_label,
     e->SetLineWidth(2);
     e->Draw();
     if (Constants::SAVE_PLOTS)
-      PlottingUtils::SaveFigure(cv, "beam_gate_stp1_vs_stp0", plot_subdir,
+      PlottingUtils::SaveFigure(cv, "beam_gate_stp2_vs_stp1", plot_subdir,
                                 PlotSaveOptions::kLINEAR);
     delete cv;
   }
@@ -193,69 +189,59 @@ BeamFit2D FindBeamGateStp1VsStp0(const FileSpec &spec, const TString &run_label,
   return out;
 }
 
-// Upstream normEsegment peak extraction: locate the beam peak with
+// Legacy/secondary peak extraction: locate the beam peak with
 // TSpectrum::Search(hist, sigma=2, "", threshold=0.9), then fit a plain "gaus"
 // in a window [peak*0.9, peak*1.1] around the found position. Returns the
-// fitted centroid (peak_adc, = upstream gCalib->GetParameter(1)) and sigma
-// (sigma_adc, = GetParameter(2)). Returns kFALSE on failure; the caller falls
-// back to median/IQR. The samples are already beam-gated by the 2D ellipse, so
-// the threshold=0.9 search returns essentially the single beam peak.
+// fitted centroid (peak_adc) and sigma (sigma_adc). Returns kFALSE on failure.
+// Uses the shared MakeBeamPeakHist binning so a drawn fit matches the
+// diagnostic plot.
 Bool_t FitTSpectrumGaussianPeak(const std::vector<Float_t> &v,
                                 const TString &fname, Double_t &peak_adc,
                                 Double_t &sigma_adc, TF1 *&fit_out) {
   fit_out = nullptr;
   if (v.size() < kMinSamples)
     return kFALSE;
-  Float_t lo = v[0], hi = v[0];
-  for (Int_t j = 1; j < Int_t(v.size()); j++) {
-    if (v[j] < lo)
-      lo = v[j];
-    if (v[j] > hi)
-      hi = v[j];
-  }
-  Double_t pad = 0.05 * (Double_t(hi) - Double_t(lo));
-  if (pad < 1.0)
-    pad = 1.0;
-  const Int_t nbins = 100;
-  Double_t xlo = Double_t(lo) - pad;
-  Double_t xhi = Double_t(hi) + pad;
-  TH1F h(fname + "_h", "", nbins, xlo, xhi);
-  h.SetDirectory(nullptr);
-  for (Int_t j = 0; j < Int_t(v.size()); j++)
-    h.Fill(Double_t(v[j]));
-
-  // Upstream peak finder: sigma=2 bins, threshold=0.9 (only peaks within 90% of
-  // the tallest survive). "nodraw" suppresses the marker polymarker so nothing
-  // leaks onto the batch canvases.
-  TSpectrum spec;
-  Int_t npeaks = spec.Search(&h, 2, "nodraw", 0.9);
-  if (npeaks < 1)
+  Double_t mode = 0.0, rsigma = 0.0;
+  RobustPeakSeed(v, mode, rsigma);
+  if (!(mode > 0.0) || !(rsigma > 0.0))
     return kFALSE;
+  TH1F *h = MakeBeamPeakHist(fname + "_h", "", v, mode, rsigma);
+  Double_t xlo = h->GetXaxis()->GetXmin();
+  Double_t xhi = h->GetXaxis()->GetXmax();
+
+  // Peak finder: sigma=2 bins, threshold=0.9 (only peaks within 90% of the
+  // tallest survive). "nodraw" suppresses the marker polymarker.
+  TSpectrum spec;
+  Int_t npeaks = spec.Search(h, 2, "nodraw", 0.9);
+  if (npeaks < 1) {
+    delete h;
+    return kFALSE;
+  }
   Double_t *xpeaks = spec.GetPositionX();
-  // Take the tallest of the returned peaks as the beam peak. (Upstream takes
-  // index 0; with threshold=0.9 there is usually only one, but selecting by
-  // bin content is robust to TSpectrum's position ordering.)
+  // Take the tallest of the returned peaks as the beam peak (robust to
+  // TSpectrum's position ordering).
   Int_t best = 0;
-  Double_t best_val = h.GetBinContent(h.FindBin(xpeaks[0]));
+  Double_t best_val = h->GetBinContent(h->FindBin(xpeaks[0]));
   for (Int_t p = 1; p < npeaks; p++) {
-    Double_t val = h.GetBinContent(h.FindBin(xpeaks[p]));
+    Double_t val = h->GetBinContent(h->FindBin(xpeaks[p]));
     if (val > best_val) {
       best_val = val;
       best = p;
     }
   }
   Double_t peak_pos = xpeaks[best];
-  if (!(peak_pos > 0))
+  if (!(peak_pos > 0)) {
+    delete h;
     return kFALSE;
+  }
 
-  // Gaussian fit in the upstream [peak*0.9, peak*1.1] window around the peak.
   Double_t fit_lo = peak_pos * 0.9;
   Double_t fit_hi = peak_pos * 1.1;
   if (fit_lo < xlo)
     fit_lo = xlo;
   if (fit_hi > xhi)
     fit_hi = xhi;
-  Double_t bw = h.GetBinWidth(1);
+  Double_t bw = h->GetBinWidth(1);
   Double_t sigma_seed = (fit_hi - fit_lo) / 4.0;
   if (sigma_seed < bw)
     sigma_seed = bw;
@@ -265,13 +251,15 @@ Bool_t FitTSpectrumGaussianPeak(const std::vector<Float_t> &v,
   f->SetParameters(best_val, peak_pos, sigma_seed);
   f->SetParLimits(1, fit_lo, fit_hi);
   f->SetParLimits(2, bw, fit_hi - fit_lo);
-  TFitResultPtr r = h.Fit(f, "QSRNL");
+  TFitResultPtr r = h->Fit(f, "QSRNL");
   if (!r.Get() || !r->IsValid()) {
     delete f;
+    delete h;
     return kFALSE;
   }
   peak_adc = f->GetParameter(1);
   sigma_adc = std::fabs(f->GetParameter(2));
+  delete h;
   if (!(peak_adc > 0) || !(sigma_adc > 0)) {
     delete f;
     return kFALSE;
@@ -306,6 +294,124 @@ inline Double_t InterquartileRange(std::vector<Float_t> &v) {
   std::nth_element(v.begin(), v.begin() + i3, v.end());
   Double_t q3 = Double_t(v[i3]);
   return q3 - q1;
+}
+
+// Robust peak/width estimate used to seed the beam-peak Gaussian fit, and as
+// the fallback anchor when the fit fails. Histograms only the
+// 5th-95th-percentile core so outlier ADC values can't stretch the binning,
+// takes the modal bin centre as the peak and IQR/1.349 as the width. Peak-like:
+// unlike the raw sample mean it is not pulled up by the straggling beam-dE
+// tail.
+void RobustPeakSeed(const std::vector<Float_t> &v, Double_t &mode,
+                    Double_t &sigma) {
+  mode = 0.0;
+  sigma = 0.0;
+  Int_t n = Int_t(v.size());
+  if (n < 4)
+    return;
+  std::vector<Float_t> s(v);
+  std::sort(s.begin(), s.end());
+  Int_t i_lo = Int_t(0.05 * n);
+  Int_t i_hi = Int_t(0.95 * n);
+  Int_t i_q1 = Int_t(0.25 * n);
+  Int_t i_q3 = Int_t(0.75 * n);
+  if (i_hi >= n)
+    i_hi = n - 1;
+  Double_t p_lo = Double_t(s[i_lo]);
+  Double_t p_hi = Double_t(s[i_hi]);
+  Double_t med = Double_t(s[n / 2]);
+  sigma = (Double_t(s[i_q3]) - Double_t(s[i_q1])) / 1.349;
+  if (!(sigma > 0.0))
+    sigma = 0.05 * (med > 0.0 ? med : 1.0);
+  if (!(p_hi > p_lo)) {
+    mode = med;
+    return;
+  }
+  const Int_t nbins = 100;
+  TH1F h("robust_peak_seed_h", "", nbins, p_lo, p_hi);
+  h.SetDirectory(nullptr);
+  for (Int_t j = 0; j < n; j++)
+    if (Double_t(s[j]) >= p_lo && Double_t(s[j]) <= p_hi)
+      h.Fill(Double_t(s[j]));
+  mode = h.GetBinCenter(h.GetMaximumBin());
+  if (!(mode > 0.0))
+    mode = med;
+}
+
+// Per-channel beam-peak ADC histogram, shared by the fitters and the beam_peak
+// diagnostic plot so a fitted Gaussian's amplitude (counts per bin) always
+// matches the histogram it is drawn over. Range and bin count come from the
+// robust mode/width (mode +/- 4 sigma, ~6 bins/sigma, never finer than 1 ADC),
+// so the binning is chosen consistently per channel instead of from a fixed
+// count over the outlier-stretched min..max range. Caller owns the histogram.
+TH1F *MakeBeamPeakHist(const TString &name, const TString &title,
+                       const std::vector<Float_t> &v, Double_t mode,
+                       Double_t sigma) {
+  Double_t xlo = mode - 4.0 * sigma;
+  Double_t xhi = mode + 4.0 * sigma;
+  if (xlo < 0.0)
+    xlo = 0.0;
+  Double_t bin_target = TMath::Max(1.0, sigma / 6.0);
+  Int_t nbins = Int_t((xhi - xlo) / bin_target);
+  if (nbins < 20)
+    nbins = 20;
+  if (nbins > 200)
+    nbins = 200;
+  TH1F *h = new TH1F(name, title, nbins, xlo, xhi);
+  h->SetDirectory(nullptr);
+  for (Int_t j = 0; j < Int_t(v.size()); j++)
+    h->Fill(Double_t(v[j]));
+  return h;
+}
+
+// Beam-peak Gaussian fit, robustly seeded: estimate the peak/width from the
+// percentile-clipped mode (RobustPeakSeed), then fit "gaus" over only the peak
+// core (mode +/- 2 sigma) so the straggling tail can't drag the centroid. This
+// is the primary fit; the old TSpectrum-seeded fit is kept as a secondary
+// attempt in ReduceToAnchors.
+Bool_t FitBeamPeakGaussian(const std::vector<Float_t> &v, const TString &fname,
+                           Double_t &peak_adc, Double_t &sigma_adc,
+                           TF1 *&fit_out) {
+  fit_out = nullptr;
+  if (v.size() < kMinSamples)
+    return kFALSE;
+  Double_t mode = 0.0, rsigma = 0.0;
+  RobustPeakSeed(v, mode, rsigma);
+  if (!(mode > 0.0) || !(rsigma > 0.0))
+    return kFALSE;
+
+  TH1F *h = MakeBeamPeakHist(fname + "_h", "", v, mode, rsigma);
+  Double_t xlo = h->GetXaxis()->GetXmin();
+  Double_t xhi = h->GetXaxis()->GetXmax();
+  Double_t bw = h->GetBinWidth(1);
+  Double_t fit_lo = mode - 2.0 * rsigma;
+  Double_t fit_hi = mode + 2.0 * rsigma;
+  if (fit_lo < xlo)
+    fit_lo = xlo;
+  if (fit_hi > xhi)
+    fit_hi = xhi;
+  Double_t amp_seed = h->GetBinContent(h->FindBin(mode));
+
+  TF1 *f = new TF1(fname, "gaus", fit_lo, fit_hi);
+  f->SetNpx(1000);
+  f->SetParameters(amp_seed, mode, rsigma);
+  f->SetParLimits(1, fit_lo, fit_hi);
+  f->SetParLimits(2, bw, fit_hi - fit_lo);
+  TFitResultPtr r = h->Fit(f, "QSRNL");
+  if (!r.Get() || !r->IsValid()) {
+    delete f;
+    delete h;
+    return kFALSE;
+  }
+  peak_adc = f->GetParameter(1);
+  sigma_adc = std::fabs(f->GetParameter(2));
+  delete h;
+  if (!(peak_adc > 0.0) || !(sigma_adc > 0.0)) {
+    delete f;
+    return kFALSE;
+  }
+  fit_out = f;
+  return kTRUE;
 }
 
 // Fit a Gaussian to the bucket and return (mu, sigma). Falls back to
@@ -343,7 +449,8 @@ Bool_t FitGaussianMuSigma(const std::vector<Float_t> &v, const TString &fname,
 }
 
 // Load sim per-channel anchors from the events_MeV tree by Gaussian-fitting
-// the nonzero per-strip MeV deposit. Falls back to median/IQR on fit failure.
+// the nonzero per-strip normalized (a.u.) deposit. Falls back to median/IQR on
+// fit failure.
 Bool_t LoadSimMeans(const TString &sim_path, std::vector<ChannelCal> &chans) {
   TFile *f = TFile::Open(sim_path);
   if (!f || f->IsZombie()) {
@@ -359,11 +466,13 @@ Bool_t LoadSimMeans(const TString &sim_path, std::vector<ChannelCal> &chans) {
     delete f;
     return kFALSE;
   }
-  Float_t leftdE[18], rightdE[18], totaldE[18];
+  // Sim events_MeV mirrors the experimental events layout: single-ended guard
+  // strips (S, index 0/17) and left ends (L) live in Left_0_17_dE; right ends
+  // (R) in RightdE; no TotaldE branch (a strip total is left+right).
+  Float_t left_0_17_dE[18], rightdE[18];
   Float_t cathode = 0;
-  t->SetBranchAddress("LeftdE", leftdE);
+  t->SetBranchAddress("Left_0_17_dE", left_0_17_dE);
   t->SetBranchAddress("RightdE", rightdE);
-  t->SetBranchAddress("TotaldE", totaldE);
   t->SetBranchAddress("Cathode", &cathode);
 
   std::vector<std::vector<Float_t>> buckets(chans.size());
@@ -373,10 +482,8 @@ Bool_t LoadSimMeans(const TString &sim_path, std::vector<ChannelCal> &chans) {
     for (Int_t i = 0; i < Int_t(chans.size()); i++) {
       const ChannelCal &c = chans[i];
       Float_t v = 0.0f;
-      if (c.side == 'S')
-        v = totaldE[c.strip];
-      else if (c.side == 'L')
-        v = leftdE[c.strip];
+      if (c.side == 'S' || c.side == 'L')
+        v = left_0_17_dE[c.strip];
       else if (c.side == 'R')
         v = rightdE[c.strip];
       else if (c.side == 'C')
@@ -443,7 +550,7 @@ void CollectAnchorSamplesOneSubfile(
   }
   // Raw ADC, pre-calibration. Guard strips (S) and left ends (L) live in
   // Left_0_17_dE; right ends in RightdE. Strip totals are L+R; the gate uses
-  // Strip0 (=Left_0_17_dE[0]) and the strip1 total (L1+R1).
+  // the strip1 total (L1+R1) and the strip2 total (L2+R2).
   UShort_t left_0_17_adc[18], rightdE_adc[18];
   Short_t cathode_adc = 0;
   tree->SetBranchAddress("Left_0_17_dE", left_0_17_adc);
@@ -453,8 +560,8 @@ void CollectAnchorSamplesOneSubfile(
   Long64_t n = tree->GetEntries();
   for (Long64_t j = 0; j < n; j++) {
     tree->GetEntry(j);
-    Double_t x = Double_t(left_0_17_adc[0]);
-    Double_t y = Double_t(left_0_17_adc[1]) + Double_t(rightdE_adc[1]);
+    Double_t x = Double_t(left_0_17_adc[1]) + Double_t(rightdE_adc[1]);
+    Double_t y = Double_t(left_0_17_adc[2]) + Double_t(rightdE_adc[2]);
     if (x <= 0 || y <= 0)
       continue;
     if (!BeamFitUtils::InEllipseXY(beam, x, y, kEllipseNSigmaX,
@@ -499,31 +606,43 @@ void ReduceToAnchors(std::vector<ChannelCal> &chans,
       c.fit_sigma_adc = 0;
       continue;
     }
-    // Sample mean kept only as the fallback anchor if the TSpectrum+Gaussian
-    // fit fails.
-    Double_t mean_adc = 0.0;
-    for (Int_t j = 0; j < Int_t(v.size()); j++)
-      mean_adc += Double_t(v[j]);
-    mean_adc /= Double_t(v.size());
-
     if (c.side == 'C') {
       // Cathode: median + IQR (asymmetric tail, no clean peak).
       c.fit_adc = Median(v);
       c.fit_sigma_adc = InterquartileRange(v) / 1.349;
     } else {
-      // Upstream recipe: anchor = Gaussian centroid around the TSpectrum peak;
-      // sigma = Gaussian width. Mean + IQR fallback on fit failure.
-      TString fname =
-          Form("f_tspec_gaus_%s_%s", c.name.Data(), run_label.Data());
+      // Primary: robust mode-seeded Gaussian fit of the peak core. Secondary:
+      // the legacy TSpectrum-seeded fit. Last resort: the robust mode itself
+      // (peak-like), never the tail-biased sample mean.
       Double_t peak = 0, sig = 0;
       TF1 *fit = nullptr;
-      if (FitTSpectrumGaussianPeak(v, fname, peak, sig, fit)) {
+      TString fname =
+          Form("f_peak_gaus_%s_%s", c.name.Data(), run_label.Data());
+      TString fname2 =
+          Form("f_tspec_gaus_%s_%s", c.name.Data(), run_label.Data());
+      if (FitBeamPeakGaussian(v, fname, peak, sig, fit)) {
+        c.fit_adc = peak;
+        c.fit_sigma_adc = sig;
+        fits_out[i] = fit;
+      } else if (FitTSpectrumGaussianPeak(v, fname2, peak, sig, fit)) {
         c.fit_adc = peak;
         c.fit_sigma_adc = sig;
         fits_out[i] = fit;
       } else {
-        c.fit_adc = mean_adc;
-        c.fit_sigma_adc = InterquartileRange(v) / 1.349;
+        // Both fits failed; anchor on the robust mode. Still "calibrated", but
+        // no fit curve is drawn -- flag it, tagged long/short, since a
+        // long-side fallback is a real miscalibration risk.
+        Double_t mode = 0.0, rsigma = 0.0;
+        RobustPeakSeed(v, mode, rsigma);
+        c.fit_adc = mode;
+        c.fit_sigma_adc = rsigma;
+        TString kind = (c.side == 'S')                 ? "guard"
+                       : (c.side == LongSide(c.strip)) ? "long"
+                                                       : "short";
+        std::cerr << "  [fit-fallback " << kind << "] " << c.name
+                  << ": peak fit failed; using mode anchor "
+                  << Form("%.1f", c.fit_adc) << " ADC (n=" << c.n_samples << ")"
+                  << std::endl;
       }
     }
     std::cout << "  " << c.name << " anchor[ADC]=" << c.fit_adc
@@ -554,7 +673,7 @@ void WriteEresTomlRaw(const TString &out_subpath,
   // The eres calibration TOML is a small, version-controlled input (a control
   // file), not bulk output: write it into the repo's control/ dir alongside the
   // other Calibration_Run*_eres.toml, regardless of where root_files point.
-  TString out_dir = Paths::DatasetDir() + "/control";
+  TString out_dir = Paths::DatasetDir() + "/sim_control";
   gSystem->mkdir(out_dir, kTRUE);
   TString out_full = out_dir + "/" + out_subpath;
   std::ofstream f(out_full.Data());
@@ -581,7 +700,7 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans) {
   // Per-strip gains laid out to match the events tree exactly: GainLeft[s]
   // multiplies Left_0_17_dE[s] (s=0/17 are the single-ended guards, s=1..16 the
   // left ends), GainRight[s] multiplies RightdE[s] (0 at the guards). This is
-  // what EnergyView reads to calibrate on the fly -- no per-event MeV is
+  // what EnergyView reads to calibrate on the fly -- no per-event a.u. is
   // stored.
   Float_t gain_left[18] = {0}, gain_right[18] = {0};
   Float_t gain_cathode = 0.0f;
@@ -632,23 +751,13 @@ void SaveBeamPeakChannelHistograms(
     const std::vector<Float_t> &v = samples[i];
     if (Long64_t(v.size()) < kMinSamples)
       continue;
-    Float_t lo = v[0], hi = v[0];
-    for (Int_t j = 1; j < Int_t(v.size()); j++) {
-      if (v[j] < lo)
-        lo = v[j];
-      if (v[j] > hi)
-        hi = v[j];
-    }
-    Double_t pad = 0.05 * (Double_t(hi) - Double_t(lo));
-    if (pad < 1.0)
-      pad = 1.0;
-    const Int_t nbins = 75;
-    TH1F *h = new TH1F(Form("h_beam_peak_%s", c.name.Data()),
-                       Form(";%s #DeltaE [ADC];Counts", c.name.Data()), nbins,
-                       Double_t(lo) - pad, Double_t(hi) + pad);
-    h->SetDirectory(nullptr);
-    for (Int_t j = 0; j < Int_t(v.size()); j++)
-      h->Fill(Double_t(v[j]));
+    // Same binning recipe the fit used, so the overlaid Gaussian's amplitude
+    // matches this histogram exactly.
+    Double_t mode = 0.0, sigma = 0.0;
+    RobustPeakSeed(v, mode, sigma);
+    TH1F *h = MakeBeamPeakHist(Form("h_beam_peak_%s", c.name.Data()),
+                               Form(";%s #DeltaE [ADC];Counts", c.name.Data()),
+                               v, mode, sigma);
     TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
     PlottingUtils::ConfigureAndDrawHistogram(h, kBlack);
     TF1 *fit = fits[i];
@@ -667,7 +776,7 @@ void SaveBeamPeakChannelHistograms(
 
 // Writes the per-channel gain table (tree "calibration") into the subfile's own
 // events file. No per-event calibrated tree is produced: downstream readers
-// recover MeV on the fly via gain x raw ADC (EnergyView), so the raw events
+// recover a.u. on the fly via gain x raw ADC (EnergyView), so the raw events
 // tree plus this one-row gain table fully determine every calibrated value.
 void WriteCalibrationToEvents(const FileSpec &spec,
                               const std::vector<ChannelCal> &chans) {
@@ -694,15 +803,15 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
                              const TString &file_label) {
   const Int_t n_chans = Int_t(chans.size());
   const Int_t nbins = 300;
-  const Double_t emin = Constants::STRIP_E_MIN_MEV;
-  const Double_t emax = Constants::STRIP_E_MAX_MEV;
+  const Double_t emin = Constants::STRIP_DE_MIN_NORMED;
+  const Double_t emax = Constants::STRIP_DE_MAX_NORMED;
   std::vector<TH1D *> h(n_chans, nullptr);
   for (Int_t i = 0; i < n_chans; i++) {
     if (!IsBeamdEChannel(chans[i]))
       continue;
     TString hname =
         Form("h_dynrange_%s_%s", file_label.Data(), chans[i].name.Data());
-    h[i] = new TH1D(hname, ";#DeltaE [MeV];Counts", nbins, emin, emax);
+    h[i] = new TH1D(hname, ";#DeltaE [a.u.];Counts", nbins, emin, emax);
     h[i]->SetDirectory(nullptr);
   }
   TString sub = FileSet::EventsName(spec) + ".root";
@@ -724,7 +833,7 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
   }
   EnergyView ev;
   ev.Attach(tree);
-  if (!ev.is_mev) {
+  if (!ev.is_normed) {
     sf->Close();
     delete sf;
     for (Int_t i = 0; i < n_chans; i++)
@@ -791,7 +900,7 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
 }
 
 // Overlay (one color per channel, log-y) of ONLY the events used for
-// calibration: the beam anchor samples, converted to MeV via each channel's
+// calibration: the beam anchor samples, converted to a.u. via each channel's
 // gain. Same axes/style as SaveDynamicRangeOverlay but restricted to
 // calibration events rather than the full spectrum.
 void CalibrateBeam::SaveCalibSampleOverlay(
@@ -800,8 +909,8 @@ void CalibrateBeam::SaveCalibSampleOverlay(
     const TString &plot_subdir, const TString &file_label) {
   const Int_t n_chans = Int_t(chans.size());
   const Int_t nbins = 300;
-  const Double_t emin = Constants::STRIP_E_MIN_MEV;
-  const Double_t emax = Constants::STRIP_E_MAX_MEV;
+  const Double_t emin = Constants::STRIP_DE_MIN_NORMED;
+  const Double_t emax = Constants::STRIP_DE_MAX_NORMED;
   std::vector<TH1D *> h(n_chans, nullptr);
   for (Int_t i = 0; i < n_chans; i++) {
     const ChannelCal &c = chans[i];
@@ -809,13 +918,13 @@ void CalibrateBeam::SaveCalibSampleOverlay(
       continue;
     TString hname =
         Form("h_calibrange_%s_%s", file_label.Data(), c.name.Data());
-    h[i] = new TH1D(hname, ";#DeltaE [MeV];Counts", nbins, emin, emax);
+    h[i] = new TH1D(hname, ";#DeltaE [a.u.];Counts", nbins, emin, emax);
     h[i]->SetDirectory(nullptr);
     const std::vector<Float_t> &v = samples[i];
     for (Int_t j = 0; j < Int_t(v.size()); j++) {
-      Double_t mev = ApplyCal(c, Double_t(v[j]));
-      if (mev > 0)
-        h[i]->Fill(mev);
+      Double_t val = ApplyCal(c, Double_t(v[j]));
+      if (val > 0)
+        h[i]->Fill(val);
     }
   }
 
@@ -872,10 +981,10 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
   BeamFit2D beam;
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
-    beam = FindBeamGateStp1VsStp0(spec, file_label, plot_subdir);
+    beam = FindBeamGateStp2VsStp1(spec, file_label, plot_subdir);
   }
   if (!beam.ok) {
-    std::cerr << "  " << file_label << ": Strip1-vs-Strip0 beam gate failed"
+    std::cerr << "  " << file_label << ": Strip2-vs-Strip1 beam gate failed"
               << std::endl;
     return;
   }
@@ -893,10 +1002,39 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
     delete peak_fits[i];
   peak_fits.clear();
 
+  // Every channel that failed to calibrate is silently forced to gain 0 (reads
+  // 0 a.u. and drops out of the strip total), so spell out which ones and why.
+  // The long/short tag makes a long-side failure -- the dominant signal, which
+  // should never starve -- easy to spot: grep "[uncalibrated long]".
+  for (Int_t i = 0; i < Int_t(chans.size()); i++) {
+    const ChannelCal &c = chans[i];
+    if (IsCalibrated(c))
+      continue;
+    TString kind;
+    if (c.side == 'C')
+      kind = "cathode";
+    else if (c.side == 'S')
+      kind = "guard";
+    else
+      kind = (c.side == LongSide(c.strip)) ? "long" : "short";
+    TString why;
+    if (c.sim_mu_mev <= 0.0)
+      why = "no sim anchor (<50 sim entries)";
+    else if (c.n_samples < kMinSamples)
+      why =
+          Form("too few beam samples (%lld < %lld)", c.n_samples, kMinSamples);
+    else
+      why = Form("bad exp anchor (fit_adc=%.1f)", c.fit_adc);
+    std::cerr << "  [uncalibrated " << kind << "] " << c.name << " -> gain 0; "
+              << why << " (beam n=" << c.n_samples
+              << ", sim mu=" << Form("%.3f", c.sim_mu_mev) << " MeV)"
+              << std::endl;
+  }
+
   for (Int_t i = 0; i < Int_t(chans.size()); i++)
     if (IsCalibrated(chans[i]))
       std::cout << "  " << chans[i].name << " gain=" << Gain(chans[i])
-                << " MeV/ADC  resolution="
+                << " a.u./ADC  resolution="
                 << Form("%.2f", ResolutionFWHMPercent(chans[i])) << "% FWHM"
                 << std::endl;
 
@@ -917,7 +1055,7 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
 void CalibrateBeam::AggregateEresTomlForRun(
     Int_t run, const std::vector<FileSpec> &specs) {
   const Int_t n_eres = 35;
-  std::vector<std::vector<Double_t>> sigma_per_chan(n_eres);
+  std::vector<std::vector<Double_t>> fwhm_per_chan(n_eres);
 
   std::vector<ChannelCal> tmpl = BuildChannels();
   Int_t n_chans = Int_t(tmpl.size());
@@ -937,10 +1075,10 @@ void CalibrateBeam::AggregateEresTomlForRun(
       delete cf;
       continue;
     }
-    Float_t gain[kMaxChannels] = {0};
+    Float_t fit_adc[kMaxChannels] = {0};
     Float_t fit_sigma[kMaxChannels] = {0};
     Bool_t ok[kMaxChannels] = {0};
-    t->SetBranchAddress("Gain", gain);
+    t->SetBranchAddress("FitADC", fit_adc);
     t->SetBranchAddress("Ok", ok);
     t->SetBranchAddress("FitSigmaADC", fit_sigma);
     if (t->GetEntries() < 1) {
@@ -954,12 +1092,16 @@ void CalibrateBeam::AggregateEresTomlForRun(
       if (!ok[i])
         continue;
       Double_t sig_adc = fit_sigma[i];
-      if (sig_adc <= 0 || gain[i] <= 0)
+      if (sig_adc <= 0 || fit_adc[i] <= 0)
         continue;
-      Double_t sigma_mev = Double_t(sig_adc) * Double_t(gain[i]);
+      // Relative resolution in % FWHM, straight from the raw-ADC peak fit —
+      // independent of the normMUSIC gain/normalization by construction.
+      const Double_t kFwhmPerSigma = 2.0 * TMath::Sqrt(2.0 * TMath::Log(2.0));
+      Double_t fwhm_pct =
+          100.0 * kFwhmPerSigma * Double_t(sig_adc) / Double_t(fit_adc[i]);
       Int_t idx = ChannelToEresIndex(tmpl[i]);
       if (idx >= 0 && idx < n_eres)
-        sigma_per_chan[idx].push_back(sigma_mev);
+        fwhm_per_chan[idx].push_back(fwhm_pct);
     }
     cf->Close();
     delete cf;
@@ -969,14 +1111,14 @@ void CalibrateBeam::AggregateEresTomlForRun(
   for (Int_t i = 0; i < n_eres; i++)
     eres_vals[i] = -1.0;
   for (Int_t i = 0; i < n_eres; i++) {
-    std::vector<Double_t> &v = sigma_per_chan[i];
+    std::vector<Double_t> &v = fwhm_per_chan[i];
     if (v.empty())
       continue;
     std::sort(v.begin(), v.end());
     size_t m = v.size();
     eres_vals[i] = (m % 2 == 1) ? v[m / 2] : 0.5 * (v[m / 2 - 1] + v[m / 2]);
   }
-  std::cout << "Run " << run << ": writing per-channel sigma (MeV) medians"
+  std::cout << "Run " << run << ": writing per-channel %FWHM medians"
             << std::endl;
   WriteEresTomlRaw(Form("Calibration_Run%d_eres.toml", run), eres_vals);
 }
@@ -990,9 +1132,10 @@ void CalibrateBeam::Run(const TString &file_label) {
 
   std::vector<FileSpec> specs;
   if (file_label.IsNull()) {
-    specs = FileSet::BuildFileSpecs();
+    specs = FileSet::BuildProcessedFileSpecs();
     if (specs.empty()) {
-      std::cerr << "No file specs from FileSet::BuildFileSpecs()" << std::endl;
+      std::cerr << "No file specs from FileSet::BuildProcessedFileSpecs()"
+                << std::endl;
       return;
     }
   } else {

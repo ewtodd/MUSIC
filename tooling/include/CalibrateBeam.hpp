@@ -7,6 +7,7 @@
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
 #include "Normalization.hpp"
+#include "Paths.hpp"
 #include "PlottingUtils.hpp"
 #include <Rtypes.h>
 #include <TCanvas.h>
