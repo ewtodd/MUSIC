@@ -13,7 +13,66 @@
 
 namespace Constants {
 
-const std::vector<Int_t> RUN_NUMBERS = {16, 17}; //{16, 17, 20, 37};
+struct StripSumScatterConfig {
+  const Int_t REACTION_STRIP_MIN = 3;
+  const Int_t REACTION_STRIP_MAX = 15;
+
+  const Int_t REQUIRE_SMOOTHNESS_END_STRIP = 12;
+  const Double_t REQUIRE_SMOOTHNESS_MAX_STEP = 1.2;
+
+  const Double_t BEAM_FLAT_TOL = 1.0;
+  const Double_t REAC_JUMP_MIN = 0.1;
+  const Double_t REAC_JUMP_MAX = 2.0;
+  const Double_t STRIP_17_MAX = 1.0;
+
+  const Double_t PILEUP_THRESHOLD = 1.75;
+  const Double_t NOISE_THRESHOLD = 0.85;
+
+  const Double_t TRIGGER_CFD_FRAC = 0.30;
+  const Int_t PLATEAU_POST = 3;
+  const Int_t CLUSTER_SMOOTH_WINDOW = 1;
+  const Int_t SEED_HALF_BINS = 40;
+
+  const Int_t SAVGOL_HALF = 2;
+
+  const Int_t TRACES_PER_CLASS = 40;
+
+  // windows to use in sum
+  const Int_t X_LO = 1;
+  const Int_t X_HI = 16;
+
+  // fitting for beam gate
+  const Int_t GATE_STRIP_X = 1;
+  const Int_t GATE_STRIP_Y = 2;
+  const Double_t GATE_NSIGMA_X = 3.0;
+  const Double_t GATE_NSIGMA_Y = 3.0;
+  const Double_t GATE_MIN = 0.0;
+  const Double_t GATE_MAX = 3.0;
+  const Int_t GATE_BINS = 240;
+
+  const Double_t XMIN = 20;
+  const Double_t XMAX = 60;
+  const Int_t XBINS = 300;
+  const Double_t YMIN = 10;
+  const Double_t YMAX = 20;
+  const Int_t YBINS = 300;
+
+  const std::map<Int_t, std::pair<Double_t, Double_t>> Y_RANGE = {
+      {3, {10, 20}}, {4, {10, 20}}, {5, {10, 20}}, {6, {10, 20}}, {7, {10, 18}},
+      {8, {10, 20}}, {9, {9, 18}},  {10, {7, 20}}, {11, {7, 20}}, {12, {5, 20}},
+      {13, {3, 15}}, {14, {3, 15}}, {15, {0, 10}}};
+
+  const Long64_t SAMPLE_MAX_POINTS = 2000000;
+
+  const Bool_t RERUN_SIM = kFALSE;
+  const Int_t CANDIDATE_REAC_STRIP = 7;
+
+  const Bool_t REQUIRE_SMOOTHNESS = kFALSE;
+  const Bool_t REQUIRE_GATE_S3_S4 = kTRUE;
+  const Bool_t REQUIRE_GATE_S5_S6 = kFALSE;
+};
+
+const std::vector<Int_t> RUN_NUMBERS = {16, 17, 20, 37};
 
 const TString COMPASS_BASE_DIR = "/labdata/MUSIC/37Cl/";
 const Int_t N_FILES = -1;
@@ -65,23 +124,7 @@ const Double_t CATHODE_E_MAX_NORMED = 300;
 const Double_t TOTAL_E_MIN_NORMED = 10.0;
 const Double_t TOTAL_E_MAX_NORMED = 150.0;
 
-const Bool_t STRIP_SUM_RERUN_SIM = kFALSE;
-const Int_t STRIP_SUM_CANDIDATE_REACTION_STRIP = 7;
-const Double_t STRIP_SUM_XMIN = 20;
-const Double_t STRIP_SUM_XMAX = 60;
-const Int_t STRIP_SUM_XBINS = 300;
-const Double_t STRIP_SUM_YMIN = 10;
-const Double_t STRIP_SUM_YMAX = 20;
-const Int_t STRIP_SUM_YBINS = 300;
-const std::map<Int_t, std::pair<Double_t, Double_t>> STRIP_SUM_Y_RANGE = {
-    {3, {10, 20}}, {4, {10, 20}}, {5, {10, 20}}, {6, {10, 20}}, {7, {10, 18}},
-    {8, {10, 20}}, {9, {9, 18}},  {10, {7, 20}}, {11, {7, 20}}, {12, {5, 20}},
-    {13, {3, 15}}, {14, {3, 15}}, {15, {0, 10}}};
-const Int_t REACTION_STRIP_MIN = 3;
-const Int_t REACTION_STRIP_MAX = 15;
-const Bool_t STRIP_SUM_APPLY_SMOOTHNESS = kFALSE;
-const Bool_t STRIP_SUM_GATE_S3_S4 = kTRUE;
-const Bool_t STRIP_SUM_GATE_S5_S6 = kFALSE;
+const StripSumScatterConfig STRIP_SUM_SCATTER_CONFIG;
 
 const Double_t STRIP_E_MIN_ADC = 0.0;
 const Double_t STRIP_E_MAX_ADC = 3000.0;

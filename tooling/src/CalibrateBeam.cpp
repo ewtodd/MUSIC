@@ -73,9 +73,10 @@ Bool_t IsBeamdEChannel(const ChannelCal &c) {
   return c.side == LongSide(c.strip);
 }
 
-// Standard ("normMUSIC") calibration: each beam-dE channel's beam-peak ADC is
-// scaled to 1 a.u. by a single gain through the origin. The normalization
-// target is arbitrary (PID only, no physical meaning), so it is hardcoded.
+//  each beam-dE channel's beam-peak ADC is scaled to 1 a.u. by a single gain
+//  through the origin
+// it was found that linear/polynomial gain didn't change the results
+
 Bool_t IsCalibrated(const ChannelCal &c) {
   return c.sim_mu_mev > 0 && c.fit_adc > 0;
 }
@@ -189,85 +190,6 @@ BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
   return out;
 }
 
-// Legacy/secondary peak extraction: locate the beam peak with
-// TSpectrum::Search(hist, sigma=2, "", threshold=0.9), then fit a plain "gaus"
-// in a window [peak*0.9, peak*1.1] around the found position. Returns the
-// fitted centroid (peak_adc) and sigma (sigma_adc). Returns kFALSE on failure.
-// Uses the shared MakeBeamPeakHist binning so a drawn fit matches the
-// diagnostic plot.
-Bool_t FitTSpectrumGaussianPeak(const std::vector<Float_t> &v,
-                                const TString &fname, Double_t &peak_adc,
-                                Double_t &sigma_adc, TF1 *&fit_out) {
-  fit_out = nullptr;
-  if (v.size() < kMinSamples)
-    return kFALSE;
-  Double_t mode = 0.0, rsigma = 0.0;
-  RobustPeakSeed(v, mode, rsigma);
-  if (!(mode > 0.0) || !(rsigma > 0.0))
-    return kFALSE;
-  TH1F *h = MakeBeamPeakHist(fname + "_h", "", v, mode, rsigma);
-  Double_t xlo = h->GetXaxis()->GetXmin();
-  Double_t xhi = h->GetXaxis()->GetXmax();
-
-  // Peak finder: sigma=2 bins, threshold=0.9 (only peaks within 90% of the
-  // tallest survive). "nodraw" suppresses the marker polymarker.
-  TSpectrum spec;
-  Int_t npeaks = spec.Search(h, 2, "nodraw", 0.9);
-  if (npeaks < 1) {
-    delete h;
-    return kFALSE;
-  }
-  Double_t *xpeaks = spec.GetPositionX();
-  // Take the tallest of the returned peaks as the beam peak (robust to
-  // TSpectrum's position ordering).
-  Int_t best = 0;
-  Double_t best_val = h->GetBinContent(h->FindBin(xpeaks[0]));
-  for (Int_t p = 1; p < npeaks; p++) {
-    Double_t val = h->GetBinContent(h->FindBin(xpeaks[p]));
-    if (val > best_val) {
-      best_val = val;
-      best = p;
-    }
-  }
-  Double_t peak_pos = xpeaks[best];
-  if (!(peak_pos > 0)) {
-    delete h;
-    return kFALSE;
-  }
-
-  Double_t fit_lo = peak_pos * 0.9;
-  Double_t fit_hi = peak_pos * 1.1;
-  if (fit_lo < xlo)
-    fit_lo = xlo;
-  if (fit_hi > xhi)
-    fit_hi = xhi;
-  Double_t bw = h->GetBinWidth(1);
-  Double_t sigma_seed = (fit_hi - fit_lo) / 4.0;
-  if (sigma_seed < bw)
-    sigma_seed = bw;
-
-  TF1 *f = new TF1(fname, "gaus", fit_lo, fit_hi);
-  f->SetNpx(1000);
-  f->SetParameters(best_val, peak_pos, sigma_seed);
-  f->SetParLimits(1, fit_lo, fit_hi);
-  f->SetParLimits(2, bw, fit_hi - fit_lo);
-  TFitResultPtr r = h->Fit(f, "QSRNL");
-  if (!r.Get() || !r->IsValid()) {
-    delete f;
-    delete h;
-    return kFALSE;
-  }
-  peak_adc = f->GetParameter(1);
-  sigma_adc = std::fabs(f->GetParameter(2));
-  delete h;
-  if (!(peak_adc > 0) || !(sigma_adc > 0)) {
-    delete f;
-    return kFALSE;
-  }
-  fit_out = f;
-  return kTRUE;
-}
-
 inline Double_t Median(std::vector<Float_t> &v) {
   if (v.empty())
     return 0.0;
@@ -367,8 +289,7 @@ TH1F *MakeBeamPeakHist(const TString &name, const TString &title,
 // Beam-peak Gaussian fit, robustly seeded: estimate the peak/width from the
 // percentile-clipped mode (RobustPeakSeed), then fit "gaus" over only the peak
 // core (mode +/- 2 sigma) so the straggling tail can't drag the centroid. This
-// is the primary fit; the old TSpectrum-seeded fit is kept as a secondary
-// attempt in ReduceToAnchors.
+// is the primary (and only) fit in ReduceToAnchors.
 Bool_t FitBeamPeakGaussian(const std::vector<Float_t> &v, const TString &fname,
                            Double_t &peak_adc, Double_t &sigma_adc,
                            TF1 *&fit_out) {
@@ -588,10 +509,9 @@ void CollectAnchorSamplesOneSubfile(
 
 // Cathode uses median + IQR/1.349 (asymmetric tail not as clean and the user
 // prefers to keep cathode on the existing approach). All other channels
-// (S guard strips + L/R long anodes) use the upstream normEsegment recipe:
-// TSpectrum locates the beam peak, a Gaussian is fit in a [peak*0.9, peak*1.1]
-// window, and the fitted centroid is the gain anchor while the sigma is the
-// detector resolution. Fall back to mean + IQR/1.349 on fit failure.
+// (S guard strips + L/R long anodes) use a robust mode-seeded Gaussian fit
+// over the peak core (mode ± 2σ), anchored to the fitted centroid. Fall back
+// to the robust mode itself on fit failure.
 void ReduceToAnchors(std::vector<ChannelCal> &chans,
                      std::vector<std::vector<Float_t>> &samples,
                      std::vector<TF1 *> &fits_out, const TString &run_label) {
@@ -611,25 +531,19 @@ void ReduceToAnchors(std::vector<ChannelCal> &chans,
       c.fit_adc = Median(v);
       c.fit_sigma_adc = InterquartileRange(v) / 1.349;
     } else {
-      // Primary: robust mode-seeded Gaussian fit of the peak core. Secondary:
-      // the legacy TSpectrum-seeded fit. Last resort: the robust mode itself
-      // (peak-like), never the tail-biased sample mean.
+      // Primary: robust mode-seeded Gaussian fit of the peak core. Last
+      // resort: the robust mode itself (peak-like), never the tail-biased
+      // sample mean.
       Double_t peak = 0, sig = 0;
       TF1 *fit = nullptr;
       TString fname =
           Form("f_peak_gaus_%s_%s", c.name.Data(), run_label.Data());
-      TString fname2 =
-          Form("f_tspec_gaus_%s_%s", c.name.Data(), run_label.Data());
       if (FitBeamPeakGaussian(v, fname, peak, sig, fit)) {
         c.fit_adc = peak;
         c.fit_sigma_adc = sig;
         fits_out[i] = fit;
-      } else if (FitTSpectrumGaussianPeak(v, fname2, peak, sig, fit)) {
-        c.fit_adc = peak;
-        c.fit_sigma_adc = sig;
-        fits_out[i] = fit;
       } else {
-        // Both fits failed; anchor on the robust mode. Still "calibrated", but
+        // Fit failed; anchor on the robust mode. Still "calibrated", but
         // no fit curve is drawn -- flag it, tagged long/short, since a
         // long-side fallback is a real miscalibration risk.
         Double_t mode = 0.0, rsigma = 0.0;

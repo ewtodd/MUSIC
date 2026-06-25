@@ -8,10 +8,6 @@
     # ROOT.
     nixpkgs.follows = "utils/nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
-    agenix = {
-      url = "github:ryantm/agenix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     utils = {
       url = "/home/e-work/Analysis-Utilities";
     };
@@ -21,7 +17,6 @@
       self,
       nixpkgs,
       flake-utils,
-      agenix,
       utils,
     }:
     flake-utils.lib.eachDefaultSystem (
@@ -36,12 +31,10 @@
           };
         };
         isCUDA = true;
-        mkClaudeLinks = false;
         analysis-utils =
           if !isCUDA then utils.packages.${system}.default else utils.packages.${system}.cuda;
         analysis-utils-py = utils.packages.${system}.pythonPackage;
         root = if !isCUDA then pkgs.root else utils.packages.${system}.rootCuda;
-        agenixPkg = agenix.packages.${system}.default;
         clangdConfigFile = (pkgs.formats.yaml { }).generate "dot-clangd" {
           CompileFlags.Add = [
             "--cuda-gpu-arch=sm_120"
@@ -71,11 +64,12 @@
               root
               pkgs.bash
               pkgs.tomlplusplus
-              agenixPkg
               (pkgs.python3.withPackages (
                 python-pkgs: with python-pkgs; [
                   numpy
                   pandas
+                  scikit-learn
+                  scipy
                   shap
                   packaging
                   torch-bin
@@ -116,15 +110,6 @@
               export ROOT_INCLUDE_PATH="$git_root/tooling/include:$MUSIC_DATASET_DIR/config''${ROOT_INCLUDE_PATH:+:$ROOT_INCLUDE_PATH}"
               export LD_LIBRARY_PATH="$git_root/tooling/gpu''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-              ${pkgs.lib.optionalString mkClaudeLinks ''
-                mkdir -p "$flake_root/.claude"
-                (
-                  cd "$git_root/secrets"
-                  ${agenixPkg}/bin/agenix -d settings.json.age \
-                    -i "$HOME/.ssh/id_ed25519"
-                ) > "$flake_root/.claude/settings.json"
-                chmod 644 "$flake_root/.claude/settings.json"
-              ''}
               alias wipe-analysis='rm -r analysis/${dataset}/plots analysis/${dataset}/root_files'
               alias wipe-plots='rm -r analysis/${dataset}/plots'
               alias wipe-root='rm -r analysis/${dataset}/root_files'

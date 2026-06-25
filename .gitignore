@@ -1,7 +1,11 @@
+*.toml 
+*.srim
 upstream
 *.log
 *.html
 CLAUDE.md
+QWEN.md 
+.qwen 
 .claude
 .claude/settings.json
 secrets/settings.json

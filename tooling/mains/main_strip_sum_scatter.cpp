@@ -1,6 +1,7 @@
 #include "StripSumScatter.hpp"
 
 int main() {
-  StripSumScatter::Run();
+  StripSumScatter scatter;
+  scatter.Run();
   return 0;
 }

@@ -12,8 +12,7 @@ struct EnergyView {
   Float_t gain_left[18], gain_right[18], gain_cathode;
   Bool_t is_normed; // a calibration tree was found -> Decode() yields a.u.
 
-  // decoded per-event values (a.u. if is_normed, else raw ADC promoted to
-  // Double_t)
+  // decoded per-event values (a.u. if is_normed, else raw ADC
   Double_t left[18], right[18], total[18];
   Double_t cathode;
 
