@@ -15,7 +15,7 @@ StripSumScatter::~StripSumScatter() {
 }
 
 Int_t StripSumScatter::ReacIndex(Int_t reac) {
-  return reac - Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
+  return reac - Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
 }
 
 Int_t StripSumScatter::YLoOf(Int_t reac) { return reac + 1; }
@@ -39,49 +39,67 @@ Bool_t StripSumScatter::AllStripsFired(const EnergyView &ev) {
 }
 
 Bool_t StripSumScatter::PassesReaction(const EnergyView &ev, Int_t reac) {
-  const Double_t kBeamFlatTol =
-      Constants::STRIP_SUM_SCATTER_CONFIG.BEAM_FLAT_TOL;
   const Double_t kReacJumpMin =
-      Constants::STRIP_SUM_SCATTER_CONFIG.REAC_JUMP_MIN;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REAC_JUMP_MIN;
   const Double_t kReacJumpMax =
-      Constants::STRIP_SUM_SCATTER_CONFIG.REAC_JUMP_MAX;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REAC_JUMP_MAX;
   const Double_t kSmoothMaxStep =
-      Constants::STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS_MAX_STEP;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS_MAX_STEP;
   const Int_t kSmoothHiStrip =
-      Constants::STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS_END_STRIP;
-  const Double_t kStrip17Max = Constants::STRIP_SUM_SCATTER_CONFIG.STRIP_17_MAX;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS_END_STRIP;
+  const Double_t kStrip17Max =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.STRIP_17_MAX;
 
   if (!AllStripsFired(ev))
     return kFALSE;
-  for (Int_t s = 0; s < reac; s++)
-    if (TMath::Abs(ev.total[s] - 1.0) > kBeamFlatTol)
-      return kFALSE;
   Double_t reac_jump = ev.total[reac] - ev.total[reac - 1];
   if (!(reac_jump > kReacJumpMin && reac_jump < kReacJumpMax))
     return kFALSE;
   if (!(ev.total[reac] > 1.0 + kReacJumpMin &&
         ev.total[reac] < 1.0 + kReacJumpMax))
     return kFALSE;
-  if (Constants::STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS)
+  if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS)
     for (Int_t s = reac + 1; s <= kSmoothHiStrip; s++)
       if (TMath::Abs(ev.total[s] - ev.total[s - 1]) > kSmoothMaxStep)
         return kFALSE;
+  if (Constants::cfg.IGNORE_STRIP_17)
+    return kTRUE;
   return ev.total[17] < kStrip17Max;
 }
 
-Bool_t StripSumScatter::IsBeamFlat(const EnergyView &ev) {
-  const Double_t kBeamFlatTol =
-      Constants::STRIP_SUM_SCATTER_CONFIG.BEAM_FLAT_TOL;
+Bool_t StripSumScatter::IsPureBeam(const EnergyView &ev,
+                                   const BeamEllipses &be) {
+  if (!be.ok)
+    return kFALSE;
   if (!AllStripsFired(ev))
     return kFALSE;
-  for (Int_t s = 1; s <= 16; s++)
-    if (TMath::Abs(ev.total[s] - 1.0) > kBeamFlatTol)
+  // Must pass BOTH the (s0,s1) entrance AND (s16,s17) exit ellipses.
+  if (!PassesGate(be.s0_s1, ev, 0, 1))
+    return kFALSE;
+  if (be.use_s15_s16) {
+    if (!PassesGate(be.s15_s16, ev, 15, 16))
       return kFALSE;
+  } else {
+    if (!PassesGate(be.s16_s17, ev, 16, 17))
+      return kFALSE;
+  }
   return kTRUE;
 }
 
 Bool_t StripSumScatter::IsPileup(const EnergyView &ev) {
-  const Double_t kThresh = Constants::STRIP_SUM_SCATTER_CONFIG.PILEUP_THRESHOLD;
+  if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REJECT_PILEUP) {
+    const Double_t kThresh =
+        Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PILEUP_THRESH_PY;
+    const Int_t kMinStrips =
+        Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PILEUP_MIN_STRIPS;
+    Int_t n = 0;
+    for (Int_t s = 1; s <= 16; s++)
+      if (ev.total[s] >= kThresh && ++n >= kMinStrips)
+        return kTRUE;
+    return kFALSE;
+  }
+  const Double_t kThresh =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PILEUP_THRESHOLD;
   Int_t n = 0;
   for (Int_t s = 1; s <= 16; s++)
     if (ev.total[s] >= kThresh && ++n >= 2)
@@ -90,10 +108,36 @@ Bool_t StripSumScatter::IsPileup(const EnergyView &ev) {
 }
 
 Bool_t StripSumScatter::IsNoise(const EnergyView &ev) {
-  const Double_t kThresh = Constants::STRIP_SUM_SCATTER_CONFIG.NOISE_THRESHOLD;
+  if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REJECT_NOISE) {
+    const Double_t kThresh =
+        Constants::cfg.STRIP_SUM_SCATTER_CONFIG.NOISE_THRESH_PY;
+    const Int_t kMinStrips =
+        Constants::cfg.STRIP_SUM_SCATTER_CONFIG.NOISE_MIN_STRIPS;
+    Int_t n = 0;
+    for (Int_t s = 1; s <= 16; s++)
+      if (ev.total[s] <= kThresh && ++n >= kMinStrips)
+        return kTRUE;
+    return kFALSE;
+  }
+  const Double_t kThresh =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.NOISE_THRESHOLD;
   Int_t n = 0;
   for (Int_t s = 1; s <= 16; s++)
     if (ev.total[s] <= kThresh && ++n >= 3)
+      return kTRUE;
+  return kFALSE;
+}
+
+Bool_t StripSumScatter::IsOffbeam(const EnergyView &ev) {
+  const Double_t kDist = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.OFFBEAM_DIST;
+  const Int_t kMinStrips =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.OFFBEAM_MIN_STRIPS;
+  // Use flat normed beam level (1.0) as reference, matching Python which
+  // computes beam reference after these pre-filters.
+  const Double_t kBeamRef = 1.0;
+  Int_t n = 0;
+  for (Int_t s = 1; s <= 16; s++)
+    if (TMath::Abs(ev.total[s] - kBeamRef) >= kDist && ++n >= kMinStrips)
       return kTRUE;
   return kFALSE;
 }
@@ -108,15 +152,15 @@ Double_t StripSumScatter::SumRange(const Double_t *total, Int_t lo, Int_t hi) {
 std::vector<GateSpec> StripSumScatter::ActiveGates() {
   std::vector<GateSpec> gates;
   GateSpec g;
-  g.sx = Constants::STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_X;
-  g.sy = Constants::STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_Y;
+  g.sx = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_X;
+  g.sy = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_Y;
   gates.push_back(g);
-  if (Constants::STRIP_SUM_SCATTER_CONFIG.REQUIRE_GATE_S3_S4) {
+  if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_GATE_S3_S4) {
     g.sx = 3;
     g.sy = 4;
     gates.push_back(g);
   }
-  if (Constants::STRIP_SUM_SCATTER_CONFIG.REQUIRE_GATE_S5_S6) {
+  if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_GATE_S5_S6) {
     g.sx = 5;
     g.sy = 6;
     gates.push_back(g);
@@ -126,9 +170,9 @@ std::vector<GateSpec> StripSumScatter::ActiveGates() {
 
 TString StripSumScatter::CacheName() {
   TString name = "StripSumScatter_cache";
-  if (Constants::STRIP_SUM_SCATTER_CONFIG.REQUIRE_GATE_S3_S4)
+  if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_GATE_S3_S4)
     name += "_g34";
-  if (Constants::STRIP_SUM_SCATTER_CONFIG.REQUIRE_GATE_S5_S6)
+  if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_GATE_S5_S6)
     name += "_g56";
   name += ".root";
   return name;
@@ -141,9 +185,9 @@ Bool_t StripSumScatter::PassesGate(const BeamFit2D &gate, const EnergyView &ev,
   if (!(g0 > 0.0 && g1 > 0.0))
     return kFALSE;
   const Double_t kGateNSigmaX =
-      Constants::STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X;
   const Double_t kGateNSigmaY =
-      Constants::STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y;
   return BeamFitUtils::InEllipseXY(gate, g0, g1, kGateNSigmaX, kGateNSigmaY);
 }
 
@@ -152,14 +196,14 @@ StripSumScatter::FindBeamGate(TChain *chain, Int_t sx, Int_t sy,
                               const std::vector<GateSpec> &prior_specs,
                               const std::vector<BeamFit2D> &prior_gates,
                               const TString &tag, const TString &subdir) {
-  const Int_t kGateBins = Constants::STRIP_SUM_SCATTER_CONFIG.GATE_BINS;
-  const Double_t kGateMin = Constants::STRIP_SUM_SCATTER_CONFIG.GATE_MIN;
-  const Double_t kGateMax = Constants::STRIP_SUM_SCATTER_CONFIG.GATE_MAX;
+  const Int_t kGateBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_BINS;
+  const Double_t kGateMin = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_MIN;
+  const Double_t kGateMax = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_MAX;
   const Int_t kSeedHalfBins =
-      Constants::STRIP_SUM_SCATTER_CONFIG.SEED_HALF_BINS;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SEED_HALF_BINS;
   const Double_t kSeedFrac = 0.3;
   const Long64_t kSampleMaxPoints =
-      Constants::STRIP_SUM_SCATTER_CONFIG.SAMPLE_MAX_POINTS;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SAMPLE_MAX_POINTS;
 
   BeamFit2D out;
   EnergyView ev;
@@ -218,9 +262,9 @@ StripSumScatter::FindBeamGate(TChain *chain, Int_t sx, Int_t sy,
   out.ok = kTRUE;
 
   const Double_t kGateNSigmaX =
-      Constants::STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X;
   const Double_t kGateNSigmaY =
-      Constants::STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y;
 
   std::lock_guard<std::mutex> lock(g_plot_mutex);
   TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
@@ -468,10 +512,11 @@ Int_t StripSumScatter::FindTrigger(const Double_t *td, const Double_t *base,
   const Int_t s_lo = 2;
   const Int_t s_hi = 16;
 
-  const Double_t frac = Constants::STRIP_SUM_SCATTER_CONFIG.TRIGGER_CFD_FRAC;
+  const Double_t frac =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TRIGGER_CFD_FRAC;
 
   const Double_t nsigma =
-      Constants::STRIP_SUM_SCATTER_CONFIG.TRIGGER_NSIGMA * beam_sigma;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TRIGGER_NSIGMA * beam_sigma;
 
   Double_t peak_signal = -1.0e30;
 
@@ -524,10 +569,10 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
       "RMS_{8-17}(#DeltaE#minusbeam) [a.u.]"};
   const char *clabel[NC] = {"beam", "(a,a')", "(a,n)"};
 
-  const Int_t kXLo = Constants::STRIP_SUM_SCATTER_CONFIG.X_LO;
-  const Int_t kXHi = Constants::STRIP_SUM_SCATTER_CONFIG.X_HI;
+  const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
+  const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
   const Int_t kClusterSmoothWindow =
-      Constants::STRIP_SUM_SCATTER_CONFIG.CLUSTER_SMOOTH_WINDOW;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.CLUSTER_SMOOTH_WINDOW;
 
   // Per (class, variable) value lists for raw traces.
   std::vector<Double_t> vals_raw[NC][NV];
@@ -570,6 +615,32 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
   Double_t beam_sigma =
       (beam_npt > 0) ? TMath::Sqrt(beam_sumsq / beam_npt) : 0.0;
 
+  // Count triggers over ALL reservoir events (not just classified subset) so
+  // the numbers are directly comparable to the Python pipeline.
+  Long64_t triggered = 0, no_trigger = 0;
+  Double_t td_all[18];
+  for (std::size_t k = 0; k < m_reservoir.size(); k++) {
+    for (Int_t s = 0; s < 18; s++)
+      td_all[s] = Double_t(m_reservoir[k].total[s]);
+    if (FindTrigger(td_all, base, beam_sigma) >= 0)
+      triggered++;
+    else
+      no_trigger++;
+  }
+  const Double_t reac_onset_gate =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TRIGGER_NSIGMA * beam_sigma;
+  const Double_t cf_frac =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TRIGGER_CFD_FRAC;
+  std::cout << "  beam reference: mean+RMS of " << nbeam
+            << " pure-beam events (fitted s0,s1 & s16,s17 ellipses); "
+            << Form("noise sigma=%.4f", beam_sigma) << std::endl;
+  std::cout << Form("  reaction onset: gate %g-sigma = %.4f, CF fraction %g; "
+                    "triggered %lld of %lld (no trigger: %lld)",
+                    Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TRIGGER_NSIGMA,
+                    reac_onset_gate, cf_frac, (long long)triggered,
+                    (long long)m_reservoir.size(), (long long)no_trigger)
+            << std::endl;
+
   for (std::size_t k = 0; k < m_reservoir.size(); k++) {
     const TraceEvt &e = m_reservoir[k];
     Double_t td[18];
@@ -600,7 +671,8 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
     // Plateau excess: beam-subtracted sum over a sliding window that tracks
     // the trigger (reacstrip+1 .. reacstrip+PLATEAU_POST). 0 when no trigger.
     // Out-of-range strips are dropped from the sum.
-    const Int_t kPlateauPost = Constants::STRIP_SUM_SCATTER_CONFIG.PLATEAU_POST;
+    const Int_t kPlateauPost =
+        Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PLATEAU_POST;
     Double_t plateau = 0.0;
     if (has_trig)
       for (Int_t d = 1; d <= kPlateauPost; d++) {
@@ -821,41 +893,44 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
 
 TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
                                           std::map<Int_t, TChain *> &chains) {
-  const Int_t kReacMin = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
-  const Int_t kReacMax = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
-  const Double_t kBeamFlatTol =
-      Constants::STRIP_SUM_SCATTER_CONFIG.BEAM_FLAT_TOL;
+  const Int_t kReacMin =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
+  const Int_t kReacMax =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
   const Double_t kReacJumpMin =
-      Constants::STRIP_SUM_SCATTER_CONFIG.REAC_JUMP_MIN;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REAC_JUMP_MIN;
   const Double_t kReacJumpMax =
-      Constants::STRIP_SUM_SCATTER_CONFIG.REAC_JUMP_MAX;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REAC_JUMP_MAX;
   const Int_t kSmoothHiStrip =
-      Constants::STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS_END_STRIP;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS_END_STRIP;
   const Double_t kSmoothMaxStep =
-      Constants::STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS_MAX_STEP;
-  const Double_t kStrip17Max = Constants::STRIP_SUM_SCATTER_CONFIG.STRIP_17_MAX;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS_MAX_STEP;
+  const Double_t kStrip17Max =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.STRIP_17_MAX;
 
-  const Int_t kGateStripX = Constants::STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_X;
-  const Int_t kGateStripY = Constants::STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_Y;
+  const Int_t kGateStripX =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_X;
+  const Int_t kGateStripY =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_Y;
   const Double_t kGateNSigmaX =
-      Constants::STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X;
   const Double_t kGateNSigmaY =
-      Constants::STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y;
-  const Int_t kGateBins = Constants::STRIP_SUM_SCATTER_CONFIG.GATE_BINS;
-  const Double_t kGateMin = Constants::STRIP_SUM_SCATTER_CONFIG.GATE_MIN;
-  const Double_t kGateMax = Constants::STRIP_SUM_SCATTER_CONFIG.GATE_MAX;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y;
+  const Int_t kGateBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_BINS;
+  const Double_t kGateMin = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_MIN;
+  const Double_t kGateMax = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_MAX;
 
-  const Double_t kXMin = Constants::STRIP_SUM_SCATTER_CONFIG.XMIN;
-  const Double_t kXMax = Constants::STRIP_SUM_SCATTER_CONFIG.XMAX;
-  const Int_t kXBins = Constants::STRIP_SUM_SCATTER_CONFIG.XBINS;
-  const Int_t kYBins = Constants::STRIP_SUM_SCATTER_CONFIG.YBINS;
+  const Double_t kXMin = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMIN;
+  const Double_t kXMax = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMAX;
+  const Int_t kXBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XBINS;
+  const Int_t kYBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.YBINS;
 
   TString s = Form(
-      "v8 reac[%d,%d] flatTol=%.3f jump[%.3f,%.3f] smooth=%d,%d "
+      "v9 reac[%d,%d] jump[%.3f,%.3f] smooth=%d,%d "
       "step=%.3f s17=%.3f gate[s%d,s%d,%.2f,%.2f,%d,%.3f,%.3f] x[%.3f,%.3f,%d] "
       "ybins=%d",
-      kReacMin, kReacMax, kBeamFlatTol, kReacJumpMin, kReacJumpMax,
-      Int_t(Constants::STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS),
+      kReacMin, kReacMax, kReacJumpMin, kReacJumpMax,
+      Int_t(Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS),
       kSmoothHiStrip, kSmoothMaxStep, kStrip17Max, kGateStripX, kGateStripY,
       kGateNSigmaX, kGateNSigmaY, kGateBins, kGateMin, kGateMax, kXMin, kXMax,
       kXBins, kYBins);
@@ -870,8 +945,9 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
   for (Int_t reac = kReacMin; reac <= kReacMax; reac++)
     s += Form(
         " y%d[%.3f,%.3f]", reac,
-        y_lo[reac - Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN],
-        y_hi[reac - Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN]);
+        y_lo[reac - Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN],
+        y_hi[reac -
+             Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN]);
   for (std::size_t i = 0; i < run_order.size(); i++) {
     Int_t run = run_order[i];
     s += Form(" r%d:%lld", run, chains[run]->GetEntries());
@@ -880,22 +956,24 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
 }
 
 // Per-reaction-strip y-axis bounds straight from
-// Constants::STRIP_SUM_SCATTER_CONFIG.Y_RANGE (tunable per dataset,
+// Constants::cfg.STRIP_SUM_SCATTER_CONFIG.Y_RANGE (tunable per dataset,
 // per strip); strips absent from the map fall back to YMIN/YMAX. x stays
 // fixed (strip-independent).
 void StripSumScatter::YBounds(Double_t *y_lo, Double_t *y_hi) {
-  const Int_t kReacMin = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
-  const Int_t kReacMax = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
+  const Int_t kReacMin =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
+  const Int_t kReacMax =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
   for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
     Int_t ri = reac - kReacMin;
     std::map<Int_t, std::pair<Double_t, Double_t>>::const_iterator it =
-        Constants::STRIP_SUM_SCATTER_CONFIG.Y_RANGE.find(reac);
-    if (it != Constants::STRIP_SUM_SCATTER_CONFIG.Y_RANGE.end()) {
+        Constants::cfg.STRIP_SUM_SCATTER_CONFIG.Y_RANGE.find(reac);
+    if (it != Constants::cfg.STRIP_SUM_SCATTER_CONFIG.Y_RANGE.end()) {
       y_lo[ri] = it->second.first;
       y_hi[ri] = it->second.second;
     } else {
-      y_lo[ri] = Constants::STRIP_SUM_SCATTER_CONFIG.YMIN;
-      y_hi[ri] = Constants::STRIP_SUM_SCATTER_CONFIG.YMAX;
+      y_lo[ri] = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.YMIN;
+      y_hi[ri] = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.YMAX;
     }
   }
 }
@@ -922,7 +1000,7 @@ TString StripSumScatter::PrettyLabel(const TString &tag) {
 // uncalibrated channel).
 Bool_t StripSumScatter::SimBeamGains(Double_t *gain) {
   const Long64_t kSampleMaxPoints =
-      Constants::STRIP_SUM_SCATTER_CONFIG.SAMPLE_MAX_POINTS;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SAMPLE_MAX_POINTS;
 
   for (Int_t s = 0; s < 18; s++)
     gain[s] = 0.0;
@@ -934,7 +1012,9 @@ Bool_t StripSumScatter::SimBeamGains(Double_t *gain) {
   std::vector<RemixSim::SimFileSpec> specs = RemixSim::BuildFileSpecs();
   for (std::size_t i = 0; i < specs.size(); i++) {
     if (!RemixSim::IsEresTag(specs[i].tag))
-      continue;
+      std::cout << "No eres sim file for " << specs[i].tag << ", using standard"
+                << std::endl;
+
     TString base = RemixSim::TagWithoutStrip(specs[i].tag);
     base.ReplaceAll("_eres", "");
     if (base == "beam") {
@@ -943,7 +1023,8 @@ Bool_t StripSumScatter::SimBeamGains(Double_t *gain) {
     }
   }
   if (file.Length() == 0)
-    file = Paths::DatasetDir() + "/sim_root_files/" + Constants::SIM_BEAM_FILE;
+    file =
+        Paths::DatasetDir() + "/sim_root_files/" + Constants::cfg.SIM_BEAM_FILE;
   TFile *f = IO::OpenForReading(file);
   if (!f || f->IsZombie()) {
     std::cerr << "strip-sum-scatter: cannot open sim beam file " << file
@@ -1002,7 +1083,7 @@ void StripSumScatter::SimTotal(const Float_t *left, const Float_t *right,
                                const Double_t *gain, Double_t *total) {
   for (Int_t s = 0; s < 18; s++)
     total[s] = gain[s] * (Double_t(left[s]) + Double_t(right[s]));
-  if (Constants::IGNORE_SHORT_STRIPS)
+  if (Constants::cfg.IGNORE_SHORT_STRIPS)
     for (Int_t s = 1; s <= 16; s++)
       total[s] =
           gain[s] * ((s % 2) != 0 ? Double_t(left[s]) : Double_t(right[s]));
@@ -1011,8 +1092,8 @@ void StripSumScatter::SimTotal(const Float_t *left, const Float_t *right,
 TGraph *StripSumScatter::SimPopScatter(const TString &file, Int_t reac,
                                        const Double_t *gain,
                                        Long64_t max_points) {
-  const Int_t kXLo = Constants::STRIP_SUM_SCATTER_CONFIG.X_LO;
-  const Int_t kXHi = Constants::STRIP_SUM_SCATTER_CONFIG.X_HI;
+  const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
+  const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
 
   TFile *f = IO::OpenForReading(file);
   if (!f || f->IsZombie()) {
@@ -1093,10 +1174,12 @@ std::vector<TGraph *> StripSumScatter::SimPopTraces(const TString &file,
 // azure, (a,n) red). The beam reference is the same for every strip. Sampled
 // fresh each run (40 traces/file is trivial).
 void StripSumScatter::SimTraceOverlay() {
-  const Int_t kReacMin = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
-  const Int_t kReacMax = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
+  const Int_t kReacMin =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
+  const Int_t kReacMax =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
   const Int_t kTracesPerRegion =
-      Constants::STRIP_SUM_SCATTER_CONFIG.TRACES_PER_CLASS;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TRACES_PER_CLASS;
 
   std::vector<RemixSim::SimFileSpec> specs = RemixSim::BuildFileSpecs();
   if (specs.empty())
@@ -1105,7 +1188,8 @@ void StripSumScatter::SimTraceOverlay() {
   std::vector<TString> beam_files;
   for (std::size_t i = 0; i < specs.size(); i++) {
     if (!RemixSim::IsEresTag(specs[i].tag))
-      continue;
+      std::cout << "No eres sim file for " << specs[i].tag << ", using standard"
+                << std::endl;
     TString base = RemixSim::TagWithoutStrip(specs[i].tag);
     base.ReplaceAll("_eres", "");
     TString file = RemixSim::SimRootPath(specs[i]);
@@ -1144,7 +1228,9 @@ void StripSumScatter::SimTraceOverlay() {
     if (aa_traces.empty() && an_traces.empty())
       continue;
     DrawRegionTraces(Form("sim_region_traces_reac%d", r), "sim_scatter",
-                     beam_traces, aa_traces, an_traces);
+                     beam_traces, aa_traces, an_traces,
+                     Constants::cfg.STRIP_DE_MIN_NORMED,
+                     Constants::cfg.STRIP_DE_MAX_NORMED, "#DeltaE [a.u.]");
     for (std::size_t i = 0; i < aa_traces.size(); i++)
       delete aa_traces[i];
     for (std::size_t i = 0; i < an_traces.size(); i++)
@@ -1164,15 +1250,19 @@ TString StripSumScatter::SimFingerprint(
   // eres file, including beam_eres).
   // v3: normalization hardcoded to 1 a.u. (NORM_MUSIC_MEV removed); bump so
   // overlays cached at other norms rebuild.
-  const Int_t kReacMin = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
-  const Int_t kReacMax = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
-  const Int_t kXLo = Constants::STRIP_SUM_SCATTER_CONFIG.X_LO;
-  const Int_t kXHi = Constants::STRIP_SUM_SCATTER_CONFIG.X_HI;
+  const Int_t kReacMin =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
+  const Int_t kReacMax =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
+  const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
+  const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
 
   TString s = Form("v3 reac[%d,%d] x[%d,%d]", kReacMin, kReacMax, kXLo, kXHi);
   for (std::size_t i = 0; i < specs.size(); i++) {
     if (!RemixSim::IsEresTag(specs[i].tag))
-      continue;
+      std::cout << "No eres sim file for " << specs[i].tag << ", using standard"
+                << std::endl;
+
     TString f = RemixSim::SimRootPath(specs[i]);
     Long_t id = 0, flags = 0, mtime = 0;
     Long64_t size = -1;
@@ -1253,10 +1343,12 @@ void StripSumScatter::WriteSimCache(
 // (sim file sizes/mtimes + window geometry), so re-runs reload them instead of
 // rescanning the sim files.
 void StripSumScatter::SimOverlay() {
-  const Int_t kReacMin = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
-  const Int_t kReacMax = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
-  const Int_t kXLo = Constants::STRIP_SUM_SCATTER_CONFIG.X_LO;
-  const Int_t kXHi = Constants::STRIP_SUM_SCATTER_CONFIG.X_HI;
+  const Int_t kReacMin =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
+  const Int_t kReacMax =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
+  const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
+  const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
 
   std::vector<RemixSim::SimFileSpec> specs = RemixSim::BuildFileSpecs();
   if (specs.empty()) {
@@ -1270,13 +1362,13 @@ void StripSumScatter::SimOverlay() {
   std::map<Int_t, std::vector<TGraph *>>
       by_strip; // strip -> graphs (title=label)
   Bool_t loaded = LoadSimCache(fp, by_strip);
-
   if (!loaded) {
     std::map<Int_t, std::vector<SimPop>> reacted;
     std::vector<SimPop> refs;
     for (std::size_t i = 0; i < specs.size(); i++) {
       if (!RemixSim::IsEresTag(specs[i].tag))
-        continue;
+        std::cout << "No eres sim file for " << specs[i].tag
+                  << ", using standard" << std::endl;
       SimPop p;
       p.file = RemixSim::SimRootPath(specs[i]);
       p.label = PrettyLabel(specs[i].tag);
@@ -1382,8 +1474,10 @@ void StripSumScatter::SimOverlay() {
 
 Bool_t StripSumScatter::TryLoadCache(const TString &cacheName,
                                      const TString &fingerprint) {
-  const Int_t kReacMin = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
-  const Int_t kReacMax = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
+  const Int_t kReacMin =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
+  const Int_t kReacMax =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
 
   TString cache_full = IO::GetRootFilesBaseDir() + TString("/") + cacheName;
   if (gSystem->AccessPathName(cache_full)) {
@@ -1454,8 +1548,10 @@ Bool_t StripSumScatter::TryLoadCache(const TString &cacheName,
 
 void StripSumScatter::WriteCache(const TString &cacheName,
                                  const TString &fingerprint) {
-  const Int_t kReacMin = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
-  const Int_t kReacMax = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
+  const Int_t kReacMin =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
+  const Int_t kReacMax =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
 
   TFile *out = IO::OpenForWriting(cacheName, "RECREATE");
   if (!out || out->IsZombie()) {
@@ -1488,16 +1584,18 @@ void StripSumScatter::WriteCache(const TString &cacheName,
 
 void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
                                    std::map<Int_t, TChain *> &chains) {
-  const Int_t kReacMin = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
-  const Int_t kReacMax = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
-  const Int_t kXLo = Constants::STRIP_SUM_SCATTER_CONFIG.X_LO;
-  const Int_t kXHi = Constants::STRIP_SUM_SCATTER_CONFIG.X_HI;
-  const Int_t kXBins = Constants::STRIP_SUM_SCATTER_CONFIG.XBINS;
-  const Double_t kXMin = Constants::STRIP_SUM_SCATTER_CONFIG.XMIN;
-  const Double_t kXMax = Constants::STRIP_SUM_SCATTER_CONFIG.XMAX;
-  const Int_t kYBins = Constants::STRIP_SUM_SCATTER_CONFIG.YBINS;
+  const Int_t kReacMin =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
+  const Int_t kReacMax =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
+  const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
+  const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
+  const Int_t kXBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XBINS;
+  const Double_t kXMin = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMIN;
+  const Double_t kXMax = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMAX;
+  const Int_t kYBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.YBINS;
   const Int_t kBeamReservoirCap =
-      Constants::STRIP_SUM_SCATTER_CONFIG.TRACES_PER_CLASS * 10;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TRACES_PER_CLASS * 10;
 
   // Compute y-bounds once.
   YBounds(m_yLo, m_yHi);
@@ -1518,13 +1616,71 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
 
   std::vector<GateSpec> activeGates = ActiveGates();
 
+  // Beam classification ellipses: (s0,s1) entrance AND (s16,s17) exit.
+  // Fit on ALL events (no gating) -- matches the Python pipeline.
+  std::map<Int_t, BeamEllipses> beamEllipses;
+  // Scatter filter gates: series-gated (each gate only sees events passing
+  // all prior gates).
   std::map<Int_t, std::vector<BeamFit2D>> gates;
-  std::map<Int_t, Bool_t> gatesOk;
+  std::map<Int_t, Bool_t> ok;
   for (std::size_t i = 0; i < runOrder.size(); i++) {
     Int_t run = runOrder[i];
-    gatesOk[run] = kFALSE;
+    ok[run] = kFALSE;
     if (!chains[run] || chains[run]->GetEntries() == 0)
       continue;
+
+    // --- Beam classification ellipses (no gating) ---
+    BeamEllipses be;
+    be.ok = kFALSE;
+    {
+      std::vector<GateSpec> emptyPrior;
+      std::vector<BeamFit2D> emptyGates;
+      const TString tag = Form("run%d", run);
+      const TString subdir = Form("strip_sum_scatter/run%d", run);
+      be.s0_s1 =
+          FindBeamGate(chains[run], 0, 1, emptyPrior, emptyGates, tag, subdir);
+      if (be.s0_s1.ok)
+        std::cout << "  run " << run << " beam ellipse s0/s1: mu=("
+                  << be.s0_s1.mu_x << "," << be.s0_s1.mu_y << ")" << std::endl;
+      else {
+        std::cerr << "  run " << run
+                  << " beam ellipse s0/s1 failed; skipping run" << std::endl;
+        continue;
+      }
+      if (Constants::cfg.IGNORE_STRIP_17) {
+        be.use_s15_s16 = kTRUE;
+        be.s15_s16 = FindBeamGate(chains[run], 15, 16, emptyPrior, emptyGates,
+                                  tag, subdir);
+        if (be.s15_s16.ok)
+          std::cout << "  run " << run << " beam ellipse s15/s16: mu=("
+                    << be.s15_s16.mu_x << "," << be.s15_s16.mu_y << ")"
+                    << std::endl;
+        else {
+          std::cerr << "  run " << run
+                    << " beam ellipse s15/s16 failed; skipping run"
+                    << std::endl;
+          continue;
+        }
+      } else {
+        be.use_s15_s16 = kFALSE;
+        be.s16_s17 = FindBeamGate(chains[run], 16, 17, emptyPrior, emptyGates,
+                                  tag, subdir);
+        if (be.s16_s17.ok)
+          std::cout << "  run " << run << " beam ellipse s16/s17: mu=("
+                    << be.s16_s17.mu_x << "," << be.s16_s17.mu_y << ")"
+                    << std::endl;
+        else {
+          std::cerr << "  run " << run
+                    << " beam ellipse s16/s17 failed; skipping run"
+                    << std::endl;
+          continue;
+        }
+      }
+      be.ok = kTRUE;
+    }
+    beamEllipses[run] = be;
+
+    // --- Scatter filter gates (series gating) ---
     std::vector<BeamFit2D> runGates;
     std::vector<GateSpec> priorSpecs;
     Bool_t allOk = kTRUE;
@@ -1546,7 +1702,7 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
       priorSpecs.push_back(activeGates[gi]);
     }
     gates[run] = runGates;
-    gatesOk[run] = allOk;
+    ok[run] = allOk;
   }
 
   Long64_t totalGated = 0, totalSeen = 0;
@@ -1555,9 +1711,10 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
   for (std::size_t i = 0; i < runOrder.size(); i++) {
     Int_t run = runOrder[i];
     TChain *chain = chains[run];
-    if (!chain || !gatesOk[run])
+    if (!chain || !ok[run])
       continue;
     const std::vector<BeamFit2D> &runGates = gates[run];
+    const BeamEllipses &runBeam = beamEllipses[run];
 
     EnergyView ev;
     ev.Attach(chain);
@@ -1586,6 +1743,9 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
         continue;
       if (IsNoise(ev))
         continue;
+      if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REJECT_OFFBEAM &&
+          IsOffbeam(ev))
+        continue;
 
       Double_t x = SumRange(ev.total, kXLo, kXHi);
       UInt_t mask = 0;
@@ -1596,10 +1756,10 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
         m_scatter[reac]->Fill(x, SumRange(ev.total, YLoOf(reac), YHiOf(reac)));
       }
 
-      // Keep every reaction-passing event for traces; cap clean flat-beam
-      // events (only ~TRACES_PER_CLASS are ever drawn). The two are mutually
-      // exclusive -- a flat-beam event has no reaction jump.
-      Bool_t beam = (mask == 0) && IsBeamFlat(ev);
+      // Keep every reaction-passing event for traces; cap pure-beam events
+      // (only ~TRACES_PER_CLASS are ever drawn). The two are mutually
+      // exclusive -- a pure-beam event has no reaction jump.
+      Bool_t beam = (mask == 0) && IsPureBeam(ev, runBeam);
       if (mask == 0 && !(beam && nBeamKept < kBeamReservoirCap))
         continue;
       if (beam)
@@ -1614,7 +1774,7 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
       // Mirror IGNORE_SHORT_STRIPS: the normed total keeps only the long side
       // of a split strip, so the raw trace must drop the same side to stay
       // comparable.
-      if (Constants::IGNORE_SHORT_STRIPS)
+      if (Constants::cfg.IGNORE_SHORT_STRIPS)
         for (Int_t s = 1; s <= 16; s++)
           e.total_adc[s] = ((s % 2) != 0) ? Float_t(ev.left_0_17_adc[s])
                                           : Float_t(ev.rightdE_adc[s]);
@@ -1643,10 +1803,12 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
 }
 
 void StripSumScatter::PlotScatters() {
-  const Int_t kXLo = Constants::STRIP_SUM_SCATTER_CONFIG.X_LO;
-  const Int_t kXHi = Constants::STRIP_SUM_SCATTER_CONFIG.X_HI;
-  const Int_t kReacMin = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
-  const Int_t kReacMax = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
+  const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
+  const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
+  const Int_t kReacMin =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
+  const Int_t kReacMax =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
 
   std::lock_guard<std::mutex> lock(g_plot_mutex);
   for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
@@ -1663,12 +1825,14 @@ void StripSumScatter::PlotScatters() {
 }
 
 void StripSumScatter::InteractiveOverlay(Int_t reac) {
-  const Int_t kReacMin = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
-  const Int_t kReacMax = Constants::STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
-  const Int_t kXLo = Constants::STRIP_SUM_SCATTER_CONFIG.X_LO;
-  const Int_t kXHi = Constants::STRIP_SUM_SCATTER_CONFIG.X_HI;
+  const Int_t kReacMin =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
+  const Int_t kReacMax =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
+  const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
+  const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
   const Int_t kTracesPerRegion =
-      Constants::STRIP_SUM_SCATTER_CONFIG.TRACES_PER_CLASS;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TRACES_PER_CLASS;
 
   if (reac < kReacMin || reac > kReacMax) {
     std::cerr << "strip-sum-scatter: candidate reaction strip " << reac
@@ -1752,9 +1916,12 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
             << " (a,a')=" << tr_aa.size() << " (a,n)=" << tr_an.size()
             << std::endl;
   DrawRegionTraces(Form("region_traces_reac%d", reac), "strip_sum_scatter",
-                   tr_beam, tr_aa, tr_an);
+                   tr_beam, tr_aa, tr_an, Constants::cfg.STRIP_DE_MIN_NORMED,
+                   Constants::cfg.STRIP_DE_MAX_NORMED, "#DeltaE [a.u.]");
   DrawRegionMeanTraces(Form("region_mean_traces_reac%d", reac),
-                       "strip_sum_scatter", tr_beam, tr_aa, tr_an);
+                       "strip_sum_scatter", tr_beam, tr_aa, tr_an,
+                       Constants::cfg.STRIP_DE_MIN_NORMED,
+                       Constants::cfg.STRIP_DE_MAX_NORMED, "#DeltaE [a.u.]");
   Double_t adc_y_lo = 0.0, adc_y_hi = 0.0;
   TraceYRange(tr_beam_adc, tr_aa_adc, tr_an_adc, adc_y_lo, adc_y_hi);
   DrawRegionTraces(Form("region_traces_reac%d_adc", reac), "strip_sum_scatter",
@@ -1764,9 +1931,13 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
                        "strip_sum_scatter", tr_beam_adc, tr_aa_adc, tr_an_adc,
                        adc_y_lo, adc_y_hi, "#DeltaE [ADC]");
   DrawRegionTraces(Form("region_traces_reac%d_sg", reac), "strip_sum_scatter",
-                   tr_beam_sg, tr_aa_sg, tr_an_sg);
+                   tr_beam_sg, tr_aa_sg, tr_an_sg,
+                   Constants::cfg.STRIP_DE_MIN_NORMED,
+                   Constants::cfg.STRIP_DE_MAX_NORMED, "#DeltaE [a.u.]");
   DrawRegionMeanTraces(Form("region_mean_traces_reac%d_sg", reac),
-                       "strip_sum_scatter", tr_beam_sg, tr_aa_sg, tr_an_sg);
+                       "strip_sum_scatter", tr_beam_sg, tr_aa_sg, tr_an_sg,
+                       Constants::cfg.STRIP_DE_MIN_NORMED,
+                       Constants::cfg.STRIP_DE_MAX_NORMED, "#DeltaE [a.u.]");
 
   for (std::size_t i = 0; i < tr_an.size(); i++)
     delete tr_an[i];
@@ -1819,13 +1990,13 @@ void StripSumScatter::Run() {
   PlotScatters();
 
   // Optional sim overlays.
-  if (Constants::STRIP_SUM_SCATTER_CONFIG.RERUN_SIM) {
+  if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.RERUN_SIM) {
     SimOverlay();
     SimTraceOverlay();
   }
 
   // Interactive region-trace overlay (requires DISPLAY).
-  Int_t reac = Constants::STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP;
+  Int_t reac = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP;
   InteractiveOverlay(reac);
 
   // Cleanup chains.

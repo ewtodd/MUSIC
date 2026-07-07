@@ -26,7 +26,7 @@
           inherit system;
           config = {
             allowUnfree = true;
-            cudaCapabilities = [ "12.0" ];
+            cudaCapabilities = [ "8.9" ];
             cudaForwardCompat = false;
           };
         };
@@ -37,7 +37,7 @@
         root = if !isCUDA then pkgs.root else utils.packages.${system}.rootCuda;
         clangdConfigFile = (pkgs.formats.yaml { }).generate "dot-clangd" {
           CompileFlags.Add = [
-            "--cuda-gpu-arch=sm_120"
+            "--cuda-gpu-arch=sm_89"
             "--no-cuda-version-check"
           ];
           Diagnostics.Suppress = [
@@ -121,7 +121,7 @@
         devShells = {
           "87Rb" = mkDatasetShell "87Rb";
           "37Cl" = mkDatasetShell "37Cl";
-          default = mkDatasetShell "87Rb";
+          default = mkDatasetShell "37Cl";
         };
       }
     );

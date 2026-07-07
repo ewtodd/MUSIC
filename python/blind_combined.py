@@ -47,23 +47,25 @@ def main():
                            "reaction-strip threshold")
     reac = blind_an._reaction_strip_all(X, beam_ref, beam_sigma)
     X, both, reac = blind_an._apply_prebeam_cut(X, both, reac)
-    X_sg, reac_sg = None, None
+    X_sg, _both, _reac = X, both, reac
     if config.BLIND_SAVITZKY_GOLAY:
         X_sg = data.savgol_filter_trace(X)
-        reac_sg = blind_an._reaction_strip_all(X_sg, beam_ref, beam_sigma)
-        print(f"  SG filter: reac detected {int((reac_sg >= 0).sum())} "
-              f"triggered (vs {int((reac >= 0).sum())} raw)")
     subdir = f"{config.PLOT_SUBDIR}/combined"
-    if config.BLIND_SAVITZKY_GOLAY:
-        blind_an._draw_savgol_sample(X, X_sg, "combined_savgol", subdir)
+
     # Single step: partition by reaction strip, cluster within each slice.
     # Drop only `trig` (constant in a slice); KEEP `noise` (no step 1 here).
-    blind_an.cluster_per_reaction_strip(X, both, reac, beam_ref,
-                                        config.BLIND_COMBINED_STRIPS,
-                                        "combined", drop_flags=("trig",),
-                                        subdir=subdir,
-                                        force_k=config.BLIND_COMBINED_K,
-                                        X_sg=X_sg, reac_sg=reac_sg)
+    blind_an.cluster_per_reaction_strip(
+        X,
+        both,
+        reac,
+        beam_ref,
+        config.BLIND_COMBINED_STRIPS,
+        "combined",
+        drop_flags=("trig", ),
+        subdir=subdir,
+        force_k=config.BLIND_COMBINED_K,
+        X_sg=X_sg,
+    )
     print("done")
 
 

@@ -43,6 +43,16 @@ struct GateSpec {
   Int_t sy;
 };
 
+// Beam classification ellipses: (s0,s1) entrance AND (s16,s17) exit.
+// An event is "pure beam" only if it passes both ellipses.
+struct BeamEllipses {
+  BeamFit2D s0_s1;
+  BeamFit2D s16_s17;
+  BeamFit2D s15_s16;
+  Bool_t ok;
+  Bool_t use_s15_s16;
+};
+
 struct TraceEvt {
   Float_t total[18];
   Float_t total_adc[18]; // raw (un-normalized) ADC sum per strip
@@ -89,9 +99,10 @@ private:
   static void EnableEventBranches(TChain *chain);
   static Bool_t AllStripsFired(const EnergyView &ev);
   static Bool_t PassesReaction(const EnergyView &ev, Int_t reac);
-  static Bool_t IsBeamFlat(const EnergyView &ev);
+  static Bool_t IsPureBeam(const EnergyView &ev, const BeamEllipses &be);
   static Bool_t IsPileup(const EnergyView &ev);
   static Bool_t IsNoise(const EnergyView &ev);
+  static Bool_t IsOffbeam(const EnergyView &ev);
   static Double_t SumRange(const Double_t *total, Int_t lo, Int_t hi);
   static std::vector<GateSpec> ActiveGates();
 
@@ -109,19 +120,16 @@ private:
   static void DrawRegionTraces(const TString &save_name, const TString &subdir,
                                const std::vector<TGraph *> &beam,
                                const std::vector<TGraph *> &aa,
-                               const std::vector<TGraph *> &an,
-                               Double_t y_min = Constants::STRIP_DE_MIN_NORMED,
-                               Double_t y_max = Constants::STRIP_DE_MAX_NORMED,
-                               const char *y_title = "#DeltaE [a.u.]");
+                               const std::vector<TGraph *> &an, Double_t y_min,
+                               Double_t y_max, const char *y_title);
 
-  static void
-  DrawRegionMeanTraces(const TString &save_name, const TString &subdir,
-                       const std::vector<TGraph *> &beam,
-                       const std::vector<TGraph *> &aa,
-                       const std::vector<TGraph *> &an,
-                       Double_t y_min = Constants::STRIP_DE_MIN_NORMED,
-                       Double_t y_max = Constants::STRIP_DE_MAX_NORMED,
-                       const char *y_title = "#DeltaE [a.u.]");
+  static void DrawRegionMeanTraces(const TString &save_name,
+                                   const TString &subdir,
+                                   const std::vector<TGraph *> &beam,
+                                   const std::vector<TGraph *> &aa,
+                                   const std::vector<TGraph *> &an,
+                                   Double_t y_min, Double_t y_max,
+                                   const char *y_title);
 
   static void TraceYRange(const std::vector<TGraph *> &beam,
                           const std::vector<TGraph *> &aa,

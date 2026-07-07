@@ -5,6 +5,7 @@ upstream
 *.html
 CLAUDE.md
 QWEN.md 
+AGENTS.md
 .qwen 
 .claude
 .claude/settings.json

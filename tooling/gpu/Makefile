@@ -1,11 +1,9 @@
 NVCC := nvcc
 
-# Compute capability. The flake pins cudaCapabilities = ["12.0"], so we
-# default to sm_120. Override on the command line if needed:
-#   make GPU_ARCH=89
+# Compute capability. 
 GPU_ARCH ?= $(shell nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d '.')
 ifeq ($(strip $(GPU_ARCH)),)
-GPU_ARCH := 120
+GPU_ARCH := 89
 endif
 
 NVCC_FLAGS := -shared -Xcompiler -fPIC --expt-extended-lambda -O3 \

@@ -28,6 +28,10 @@ class FileSet {
 public:
   static TString CompassBinPath(const FileSpec &s);
   static std::vector<TString> DiscoverRunSuffixes(Int_t run);
+
+  // SOLARIS .sol file path and discovery
+  static TString SolBinPath(const FileSpec &s);
+  static std::vector<TString> DiscoverSolRunSuffixes(Int_t run);
   static std::vector<TString> DiscoverProcessedRunSuffixes(Int_t run);
   static std::vector<FileSpec> BuildFileSpecs();
   static std::vector<FileSpec> BuildProcessedFileSpecs();

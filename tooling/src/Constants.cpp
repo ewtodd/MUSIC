@@ -1,14 +1,131 @@
 #include "Constants.hpp"
 
-namespace Constants {
+void StripSumScatterConfig::SetDefaults() {
+  REACTION_STRIP_MIN = 2;
+  REACTION_STRIP_MAX = 15;
 
-// Per-channel TTF timing offset (ps) from the per-dataset ttfOffsetPs map.
-// Returns 0 for channels not listed (e.g. every channel when the map is empty,
-// as for 87Rb). For 37Cl this corrects board 2's misconfigured TTF delay.
-Long64_t LookupTTFOffsetPs(Int_t board, Int_t channel) {
-  std::map<std::pair<Int_t, Int_t>, Long64_t>::const_iterator it =
-      ttfOffsetPs.find(std::pair<Int_t, Int_t>(board, channel));
-  return (it == ttfOffsetPs.end()) ? 0 : it->second;
+  REQUIRE_SMOOTHNESS_END_STRIP = 12;
+  REQUIRE_SMOOTHNESS_MAX_STEP = 1.2;
+
+  REAC_JUMP_MIN = 0.1;
+  REAC_JUMP_MAX = 2.0;
+  STRIP_17_MAX = 1.0;
+
+  PILEUP_THRESHOLD = 1.75;
+  NOISE_THRESHOLD = 0.85;
+
+  REJECT_NOISE = kTRUE;
+  NOISE_THRESH_PY = 0.4;
+  NOISE_MIN_STRIPS = 1;
+
+  REJECT_PILEUP = kTRUE;
+  PILEUP_THRESH_PY = 1.3;
+  PILEUP_MIN_STRIPS = 1;
+
+  REJECT_OFFBEAM = kFALSE;
+  OFFBEAM_DIST = 0.3;
+  OFFBEAM_MIN_STRIPS = 4;
+
+  TRIGGER_NSIGMA = 5.0;
+  TRIGGER_CFD_FRAC = 0.30;
+  PLATEAU_POST = 3;
+  CLUSTER_SMOOTH_WINDOW = 1;
+  SEED_HALF_BINS = 40;
+
+  SAVGOL_HALF = 2;
+
+  TRACES_PER_CLASS = 40;
+
+  X_LO = 1;
+  X_HI = 16;
+
+  GATE_STRIP_X = 1;
+  GATE_STRIP_Y = 2;
+  GATE_NSIGMA_X = 3.5;
+  GATE_NSIGMA_Y = 3.5;
+  GATE_MIN = 0.0;
+  GATE_MAX = 3.0;
+  GATE_BINS = 240;
+
+  XMIN = 14;
+  XMAX = 26;
+  XBINS = 300;
+  YMIN = 0;
+  YMAX = 20;
+  YBINS = 300;
+
+  SAMPLE_MAX_POINTS = 2000000;
+
+  RERUN_SIM = kFALSE;
+  CANDIDATE_REAC_STRIP = 3;
+
+  REQUIRE_SMOOTHNESS = kTRUE;
+  REQUIRE_GATE_S3_S4 = kFALSE;
+  REQUIRE_GATE_S5_S6 = kFALSE;
 }
 
-} // namespace Constants
+DatasetConfig::DatasetConfig() {
+  // Data source
+  USE_SOLARIS_DATA = kFALSE;
+  SOL_SPLIT_CHUNK_SECONDS = 30.0;
+  SOL_N_SPLIT_WORKERS = 32;
+  N_CHUNKS = -1;
+
+  // Hardware layout
+  N_BOARDS = 4;
+  N_CHANNELS = 16;
+  TIMING_REF_BOARD = 0;
+
+  // Timing
+  TIMING_MIN_ENERGY = 0;
+  TIMING_MAX_ENERGY = 16384;
+  TIMING_OVERLAP_MARGIN_S = 5;
+  TIMING_THRESH_DT_US = 150.0;
+  TIMING_MAX_ABS_SHIFT_S = 0.25;
+  TIMING_SHIFT_COARSE_STEP_US = 1000.0;
+  TIMING_SHIFT_FINE_STEP_US = 0.5;
+  TIMING_SHIFT_FINE_HALF_WIDTH_US = 1000.0;
+  TIMING_SHIFT_MIN_NPTS = 10;
+  TIMING_SHIFT_MAX_SCAN_CANDIDATES = 2000000;
+  TIMING_DO_BOARD_SYNC = kFALSE;
+  TIMING_DO_SORT = kFALSE;
+
+  MAX_TRACE_SAVES = 10;
+
+  REJECT_FLAGGED_EVENTS = kFALSE;
+
+  IGNORE_SHORT_STRIPS = kFALSE;
+  IGNORE_STRIP_0 = kFALSE;
+  IGNORE_STRIP_17 = kFALSE;
+
+  SKIP_EXISTING = kTRUE;
+  RUN_TRACES = kTRUE;
+  SAVE_PLOTS = kTRUE;
+
+  SKIP_CALIBRATION = kFALSE;
+  CALIBRATE_LR_COMBINED = kFALSE;
+
+  MAX_FUSED_WORKERS = 12;
+
+  REFERENCE_CHANNEL = "Grid";
+  EVENT_TIME_WINDOW_US = 8.0;
+  DEDUP_STRATEGY = kLARGEST_ENERGY;
+
+  USE_GPU_ACCELERATION = kTRUE;
+  MAX_GPU_CONCURRENT_SORTS = 20;
+
+  STRIP_DE_OVERVIEW_MIN_NORMED = 0.8;
+  STRIP_DE_OVERVIEW_MAX_NORMED = 5;
+  STRIP_DE_MIN_NORMED = 0.8;
+  STRIP_DE_MAX_NORMED = 1.3;
+  CATHODE_E_MAX_NORMED = 300;
+  TOTAL_E_MIN_NORMED = 10.0;
+  TOTAL_E_MAX_NORMED = 400.0;
+
+  STRIP_SUM_SCATTER_CONFIG.SetDefaults();
+
+  STRIP_E_MIN_ADC = 0.0;
+  STRIP_E_MAX_ADC = 4096.0;
+  TOTAL_E_MIN_ADC = 0.0;
+  TOTAL_E_MAX_ADC = 60000.0;
+}

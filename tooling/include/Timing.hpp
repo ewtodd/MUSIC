@@ -2,6 +2,7 @@
 #define TIMING_HPP
 
 #include "BinaryUtils.hpp"
+#include "ChannelTiming.hpp"
 #include "Constants.hpp"
 #include "FileSet.hpp"
 #include "GpuAccel.hpp"
@@ -32,6 +33,9 @@ struct LongChan {
 
 class Timing {
 public:
+  static Double_t FindDensestTimeWindowStartS(std::vector<Double_t> times,
+                                              Double_t window_width_s,
+                                              Double_t fallback_start_s);
   static void ComputeNSD2(const std::vector<Double_t> &ref_x,
                           const std::vector<Double_t> &ref_y,
                           const std::vector<Double_t> &gr_x,
@@ -43,11 +47,15 @@ public:
   static std::vector<LongChan> BuildLongChannelList();
 
   static void PlotExtremeEvents2D(TH2F *h_before, TH2F *h_after,
-                                  const TString &file_label);
+                                  TH2F *h_before_zoom, TH2F *h_after_zoom,
+                                  const TString &file_label,
+                                  Double_t before_zoom_t0_s,
+                                  Double_t after_zoom_t0_s);
   static void PlotCostLandscape(const std::vector<Double_t> &shifts,
                                 const std::vector<Double_t> &inv_nsd2_values,
                                 Double_t best_shift, UShort_t ref_board,
-                                UShort_t board, const TString &file_label);
+                                UShort_t board, const TString &file_label,
+                                const TString &tag);
 
   static Double_t FindShiftBeam(TGraph *ref, TGraph *gr,
                                 Double_t overlap_tmin_s,

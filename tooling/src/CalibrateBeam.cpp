@@ -1,8 +1,8 @@
 #include "CalibrateBeam.hpp"
 
 const Int_t kMaxChannels = 35;
-const Double_t kEllipseNSigmaX = 1.5;
-const Double_t kEllipseNSigmaY = 1.5;
+const Double_t kEllipseNSigmaX = 3;
+const Double_t kEllipseNSigmaY = 3;
 const Long64_t kMinSamples = 200;
 const Long64_t kSampleCap = 20000;
 
@@ -14,12 +14,7 @@ TH1F *MakeBeamPeakHist(const TString &name, const TString &title,
                        const std::vector<Float_t> &v, Double_t mode,
                        Double_t sigma);
 
-TString CalibrateBeam::DefaultSimBeamPath(const TString &project_root) {
-  TString p = project_root + "/sim_root_files/" + Constants::SIM_BEAM_FILE;
-  return TString(gSystem->ExpandPathName(p.Data()));
-}
-
-std::vector<ChannelCal> BuildChannels() {
+std::vector<ChannelCal> CalibrateBeam::BuildChannels() {
   std::vector<ChannelCal> chans;
   ChannelCal c{};
   c.name = "Strip0";
@@ -77,9 +72,7 @@ Bool_t IsBeamdEChannel(const ChannelCal &c) {
 //  through the origin
 // it was found that linear/polynomial gain didn't change the results
 
-Bool_t IsCalibrated(const ChannelCal &c) {
-  return c.sim_mu_mev > 0 && c.fit_adc > 0;
-}
+Bool_t IsCalibrated(const ChannelCal &c) { return c.fit_adc > 0; }
 
 Double_t Gain(const ChannelCal &c) { return 1.0 / c.fit_adc; }
 
@@ -120,8 +113,8 @@ BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
 
   TH2F *h = new TH2F(Form("h2_stp2_vs_stp1_%s", run_label.Data()),
                      ";Strip1 #DeltaE [ADC];Strip2 #DeltaE [ADC]", 256, 0.0,
-                     Constants::STRIP_E_MAX_ADC, 256, 0.0,
-                     Constants::STRIP_E_MAX_ADC);
+                     Constants::cfg.STRIP_E_MAX_ADC, 256, 0.0,
+                     Constants::cfg.STRIP_E_MAX_ADC);
   h->SetDirectory(nullptr);
   Long64_t n = tree->GetEntries();
   for (Long64_t j = 0; j < n; j++) {
@@ -181,7 +174,7 @@ BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
     e->SetLineColor(kRed + 1);
     e->SetLineWidth(2);
     e->Draw();
-    if (Constants::SAVE_PLOTS)
+    if (Constants::cfg.SAVE_PLOTS)
       PlottingUtils::SaveFigure(cv, "beam_gate_stp2_vs_stp1", plot_subdir,
                                 PlotSaveOptions::kLINEAR);
     delete cv;
@@ -369,90 +362,14 @@ Bool_t FitGaussianMuSigma(const std::vector<Float_t> &v, const TString &fname,
   return mu > 0 && sigma > 0;
 }
 
-// Load sim per-channel anchors from the events_MeV tree by Gaussian-fitting
-// the nonzero per-strip normalized (a.u.) deposit. Falls back to median/IQR on
-// fit failure.
-Bool_t LoadSimMeans(const TString &sim_path, std::vector<ChannelCal> &chans) {
-  TFile *f = TFile::Open(sim_path);
-  if (!f || f->IsZombie()) {
-    std::cerr << "Cannot open sim beam file: " << sim_path << std::endl;
-    if (f)
-      delete f;
-    return kFALSE;
-  }
-  TTree *t = static_cast<TTree *>(f->Get("events_MeV"));
-  if (!t) {
-    std::cerr << "Sim file has no 'events_MeV' tree" << std::endl;
-    f->Close();
-    delete f;
-    return kFALSE;
-  }
-  // Sim events_MeV mirrors the experimental events layout: single-ended guard
-  // strips (S, index 0/17) and left ends (L) live in Left_0_17_dE; right ends
-  // (R) in RightdE; no TotaldE branch (a strip total is left+right).
-  Float_t left_0_17_dE[18], rightdE[18];
-  Float_t cathode = 0;
-  t->SetBranchAddress("Left_0_17_dE", left_0_17_dE);
-  t->SetBranchAddress("RightdE", rightdE);
-  t->SetBranchAddress("Cathode", &cathode);
-
-  std::vector<std::vector<Float_t>> buckets(chans.size());
-  Long64_t n = t->GetEntries();
-  for (Long64_t j = 0; j < n; j++) {
-    t->GetEntry(j);
-    for (Int_t i = 0; i < Int_t(chans.size()); i++) {
-      const ChannelCal &c = chans[i];
-      Float_t v = 0.0f;
-      if (c.side == 'S' || c.side == 'L')
-        v = left_0_17_dE[c.strip];
-      else if (c.side == 'R')
-        v = rightdE[c.strip];
-      else if (c.side == 'C')
-        v = cathode;
-      if (v > 0.0f)
-        buckets[i].push_back(v);
-    }
-  }
-  for (Int_t i = 0; i < Int_t(chans.size()); i++) {
-    ChannelCal &c = chans[i];
-    if (buckets[i].size() < 50) {
-      std::cerr << "  sim " << c.name << ": only " << buckets[i].size()
-                << " nonzero entries; no anchor" << std::endl;
-      continue;
-    }
-    Double_t mu = 0, sigma = 0;
-    TString fname = Form("f_sim_gaus_%s", c.name.Data());
-    if (FitGaussianMuSigma(buckets[i], fname, mu, sigma)) {
-      c.sim_mu_mev = mu;
-      c.sim_sigma_mev = sigma;
-    } else {
-      std::cerr << "  sim " << c.name
-                << ": gaussian fit failed; falling back to median/IQR"
-                << std::endl;
-      c.sim_mu_mev = Median(buckets[i]);
-      c.sim_sigma_mev = InterquartileRange(buckets[i]) / 1.349;
-    }
-    std::cout << "  sim " << c.name << ": mu=" << c.sim_mu_mev
-              << " MeV, sigma=" << c.sim_sigma_mev
-              << " (n=" << buckets[i].size() << ")" << std::endl;
-  }
-  f->Close();
-  delete f;
-  return kTRUE;
-}
-
-std::vector<ChannelCal> CalibrateBeam::LoadSimChans(const TString &sim_path) {
-  std::vector<ChannelCal> chans = BuildChannels();
-  if (!LoadSimMeans(sim_path, chans))
-    return std::vector<ChannelCal>();
-  return chans;
-}
-
 void CollectAnchorSamplesOneSubfile(
     const FileSpec &spec, const std::vector<ChannelCal> &chans,
-    const BeamFit2D &beam, std::vector<std::vector<Float_t>> &samples) {
+    const BeamFit2D &beam, std::vector<std::vector<Float_t>> &samples,
+    std::vector<std::vector<Float_t>> *lr_combined_samples = nullptr) {
   Int_t n_chans = Int_t(chans.size());
   samples.assign(n_chans, std::vector<Float_t>());
+  if (lr_combined_samples)
+    lr_combined_samples->assign(16, std::vector<Float_t>());
   if (!beam.ok)
     return;
 
@@ -502,6 +419,16 @@ void CollectAnchorSamplesOneSubfile(
       if (v > 0)
         samples[i].push_back(Float_t(v));
     }
+    // Combined L+R samples for strips 1-16 (for CALIBRATE_LR_COMBINED mode)
+    if (lr_combined_samples) {
+      for (Int_t s = 1; s <= 16; s++) {
+        if (Long64_t((*lr_combined_samples)[s - 1].size()) >= kSampleCap)
+          continue;
+        Int_t combined = Int_t(left_0_17_adc[s]) + Int_t(rightdE_adc[s]);
+        if (combined > 0)
+          (*lr_combined_samples)[s - 1].push_back(Float_t(combined));
+      }
+    }
   }
   sf->Close();
   delete sf;
@@ -512,15 +439,88 @@ void CollectAnchorSamplesOneSubfile(
 // (S guard strips + L/R long anodes) use a robust mode-seeded Gaussian fit
 // over the peak core (mode ± 2σ), anchored to the fitted centroid. Fall back
 // to the robust mode itself on fit failure.
-void ReduceToAnchors(std::vector<ChannelCal> &chans,
-                     std::vector<std::vector<Float_t>> &samples,
-                     std::vector<TF1 *> &fits_out, const TString &run_label) {
+//
+// In CALIBRATE_LR_COMBINED mode: L+R combined samples are fitted per strip,
+// and both L[s] and R[s] share the same gain from the combined peak fit.
+void ReduceToAnchors(
+    std::vector<ChannelCal> &chans, std::vector<std::vector<Float_t>> &samples,
+    std::vector<TF1 *> &fits_out, const TString &run_label,
+    const std::vector<std::vector<Float_t>> *lr_combined_samples = nullptr) {
   Int_t n_chans = Int_t(chans.size());
   fits_out.assign(n_chans, nullptr);
+  const Bool_t combined_mode = Constants::cfg.CALIBRATE_LR_COMBINED;
+
+  // In combined mode, fit the L+R peaks first and store shared gains per strip.
+  std::vector<Double_t> strip_gain(16, 0.0);
+  std::vector<Double_t> strip_fit_adc(16, 0.0);
+  std::vector<Double_t> strip_fit_sigma(16, 0.0);
+  std::vector<Long64_t> strip_n_samples(16, 0);
+  std::vector<TF1 *> strip_fits(16, nullptr);
+
+  if (combined_mode && lr_combined_samples) {
+    for (Int_t s = 1; s <= 16; s++) {
+      const std::vector<Float_t> &v = (*lr_combined_samples)[s - 1];
+      strip_n_samples[s - 1] = Long64_t(v.size());
+      if (Long64_t(v.size()) < kMinSamples) {
+        strip_fit_adc[s - 1] = 0;
+        strip_fit_sigma[s - 1] = 0;
+        continue;
+      }
+      Double_t peak = 0, sig = 0;
+      TF1 *fit = nullptr;
+      TString fname =
+          Form("f_peak_gaus_LR_combined_S%d_%s", s, run_label.Data());
+      if (FitBeamPeakGaussian(v, fname, peak, sig, fit)) {
+        strip_fit_adc[s - 1] = peak;
+        strip_fit_sigma[s - 1] = sig;
+        strip_fits[s - 1] = fit;
+      } else {
+        Double_t mode = 0.0, rsigma = 0.0;
+        RobustPeakSeed(v, mode, rsigma);
+        strip_fit_adc[s - 1] = mode;
+        strip_fit_sigma[s - 1] = rsigma;
+        std::cerr << "  [fit-fallback combined] Strip" << s
+                  << ": peak fit failed; using mode anchor "
+                  << Form("%.1f", strip_fit_adc[s - 1])
+                  << " ADC (n=" << strip_n_samples[s - 1] << ")" << std::endl;
+      }
+      if (strip_fit_adc[s - 1] > 0) {
+        strip_gain[s - 1] = 1.0 / strip_fit_adc[s - 1];
+      }
+      std::cout << "  Strip" << s
+                << " L+R combined anchor[ADC]=" << strip_fit_adc[s - 1]
+                << " sig=" << strip_fit_sigma[s - 1]
+                << " (n=" << strip_n_samples[s - 1] << ")" << std::endl;
+    }
+  }
+
   for (Int_t i = 0; i < n_chans; i++) {
     ChannelCal &c = chans[i];
     std::vector<Float_t> &v = samples[i];
     c.n_samples = Long64_t(v.size());
+
+    if (combined_mode && c.side >= 'L' && c.side <= 'R' && c.strip >= 1 &&
+        c.strip <= 16) {
+      // In combined mode, L and R strips 1-16 share gain from the combined fit.
+      Int_t strip_idx = c.strip - 1;
+      if (strip_fit_adc[strip_idx] > 0) {
+        c.fit_adc = strip_fit_adc[strip_idx];
+        c.fit_sigma_adc = strip_fit_sigma[strip_idx];
+        // Only store the shared fit for one side (L) to avoid double-free when
+        // CalibrateBeamOneSubfile iterates and deletes peak_fits[i].
+        if (c.side == 'L')
+          fits_out[i] = strip_fits[strip_idx];
+      } else {
+        c.fit_adc = 0;
+        c.fit_sigma_adc = 0;
+      }
+      std::cout << "  " << c.name << " (shared with "
+                << (c.side == 'L' ? "R" : "L") << c.strip
+                << ") anchor[ADC]=" << c.fit_adc << " sig=" << c.fit_sigma_adc
+                << " (n=" << strip_n_samples[strip_idx] << ")" << std::endl;
+      continue;
+    }
+
     if (Long64_t(v.size()) < kMinSamples) {
       c.fit_adc = 0;
       c.fit_sigma_adc = 0;
@@ -607,7 +607,6 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans) {
     old->Delete();
   TTree *cal = new TTree("calibration", "Per-channel normMUSIC calibration");
   Float_t gain[kMaxChannels] = {0};
-  Float_t sim_mu[kMaxChannels] = {0}, sim_sigma[kMaxChannels] = {0};
   Float_t fit_adc[kMaxChannels] = {0}, fit_sigma[kMaxChannels] = {0};
   Long64_t fit_n[kMaxChannels] = {0};
   Bool_t ok[kMaxChannels] = {0};
@@ -623,8 +622,6 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans) {
     const ChannelCal &c = chans[k];
     ok[k] = IsCalibrated(c);
     gain[k] = ok[k] ? Float_t(Gain(c)) : 0.0f;
-    sim_mu[k] = Float_t(c.sim_mu_mev);
-    sim_sigma[k] = Float_t(c.sim_sigma_mev);
     fit_adc[k] = Float_t(c.fit_adc);
     fit_sigma[k] = Float_t(c.fit_sigma_adc);
     fit_n[k] = c.n_samples;
@@ -639,9 +636,6 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans) {
   }
   cal->Branch("Gain", gain, Form("Gain[%d]/F", kMaxChannels));
   cal->Branch("Ok", ok, Form("Ok[%d]/O", kMaxChannels));
-  cal->Branch("SimMu_MeV", sim_mu, Form("SimMu_MeV[%d]/F", kMaxChannels));
-  cal->Branch("SimSigma_MeV", sim_sigma,
-              Form("SimSigma_MeV[%d]/F", kMaxChannels));
   cal->Branch("FitADC", fit_adc, Form("FitADC[%d]/F", kMaxChannels));
   cal->Branch("FitSigmaADC", fit_sigma,
               Form("FitSigmaADC[%d]/F", kMaxChannels));
@@ -680,7 +674,7 @@ void SaveBeamPeakChannelHistograms(
       fit->SetLineWidth(2);
       fit->Draw("L SAME");
     }
-    if (Constants::SAVE_PLOTS)
+    if (Constants::cfg.SAVE_PLOTS)
       PlottingUtils::SaveFigure(cv, Form("beam_peak_%s", c.name.Data()), subdir,
                                 PlotSaveOptions::kLINEAR);
     delete cv;
@@ -717,8 +711,8 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
                              const TString &file_label) {
   const Int_t n_chans = Int_t(chans.size());
   const Int_t nbins = 300;
-  const Double_t emin = Constants::STRIP_DE_MIN_NORMED;
-  const Double_t emax = Constants::STRIP_DE_MAX_NORMED;
+  const Double_t emin = Constants::cfg.STRIP_DE_MIN_NORMED;
+  const Double_t emax = Constants::cfg.STRIP_DE_MAX_NORMED;
   std::vector<TH1D *> h(n_chans, nullptr);
   for (Int_t i = 0; i < n_chans; i++) {
     if (!IsBeamdEChannel(chans[i]))
@@ -804,7 +798,7 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
     leg->AddEntry(h[i], chans[i].name.Data(), "l");
   }
   leg->Draw();
-  if (Constants::SAVE_PLOTS)
+  if (Constants::cfg.SAVE_PLOTS)
     PlottingUtils::SaveFigure(cv, "dynamic_range_check", plot_subdir,
                               PlotSaveOptions::kLOG);
   delete cv;
@@ -823,8 +817,8 @@ void CalibrateBeam::SaveCalibSampleOverlay(
     const TString &plot_subdir, const TString &file_label) {
   const Int_t n_chans = Int_t(chans.size());
   const Int_t nbins = 300;
-  const Double_t emin = Constants::STRIP_DE_MIN_NORMED;
-  const Double_t emax = Constants::STRIP_DE_MAX_NORMED;
+  const Double_t emin = Constants::cfg.STRIP_DE_MIN_NORMED;
+  const Double_t emax = Constants::cfg.STRIP_DE_MAX_NORMED;
   std::vector<TH1D *> h(n_chans, nullptr);
   for (Int_t i = 0; i < n_chans; i++) {
     const ChannelCal &c = chans[i];
@@ -871,7 +865,7 @@ void CalibrateBeam::SaveCalibSampleOverlay(
     leg->AddEntry(h[i], chans[i].name.Data(), "l");
   }
   leg->Draw();
-  if (Constants::SAVE_PLOTS)
+  if (Constants::cfg.SAVE_PLOTS)
     PlottingUtils::SaveFigure(cv, "dynamic_range_calib_events", plot_subdir,
                               PlotSaveOptions::kLOG);
   delete cv;
@@ -881,16 +875,10 @@ void CalibrateBeam::SaveCalibSampleOverlay(
 }
 
 void CalibrateBeam::CalibrateBeamOneSubfile(
-    const FileSpec &spec, const std::vector<ChannelCal> &sim_chans) {
+    const FileSpec &spec, const std::vector<ChannelCal> &chans_template) {
   TString file_label = FileSet::FileLabel(spec);
   TString plot_subdir = "beam_calibration/" + file_label;
   std::cout << "Beam calibration: " << file_label << std::endl;
-
-  if (sim_chans.empty()) {
-    std::cerr << "  " << file_label
-              << ": sim anchors empty; skipping calibration" << std::endl;
-    return;
-  }
 
   BeamFit2D beam;
   {
@@ -903,13 +891,18 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
     return;
   }
 
-  std::vector<ChannelCal> chans = sim_chans;
+  std::vector<ChannelCal> chans = chans_template;
   std::vector<std::vector<Float_t>> samples;
-  CollectAnchorSamplesOneSubfile(spec, chans, beam, samples);
+  std::vector<std::vector<Float_t>> lr_combined_samples;
+  CollectAnchorSamplesOneSubfile(
+      spec, chans, beam, samples,
+      Constants::cfg.CALIBRATE_LR_COMBINED ? &lr_combined_samples : nullptr);
   std::vector<TF1 *> peak_fits;
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
-    ReduceToAnchors(chans, samples, peak_fits, file_label);
+    ReduceToAnchors(chans, samples, peak_fits, file_label,
+                    Constants::cfg.CALIBRATE_LR_COMBINED ? &lr_combined_samples
+                                                         : nullptr);
     SaveBeamPeakChannelHistograms(chans, samples, peak_fits, plot_subdir);
   }
   for (Int_t i = 0; i < Int_t(peak_fits.size()); i++)
@@ -932,17 +925,13 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
     else
       kind = (c.side == LongSide(c.strip)) ? "long" : "short";
     TString why;
-    if (c.sim_mu_mev <= 0.0)
-      why = "no sim anchor (<50 sim entries)";
-    else if (c.n_samples < kMinSamples)
+    if (c.n_samples < kMinSamples)
       why =
           Form("too few beam samples (%lld < %lld)", c.n_samples, kMinSamples);
     else
       why = Form("bad exp anchor (fit_adc=%.1f)", c.fit_adc);
     std::cerr << "  [uncalibrated " << kind << "] " << c.name << " -> gain 0; "
-              << why << " (beam n=" << c.n_samples
-              << ", sim mu=" << Form("%.3f", c.sim_mu_mev) << " MeV)"
-              << std::endl;
+              << why << " (beam n=" << c.n_samples << ")" << std::endl;
   }
 
   for (Int_t i = 0; i < Int_t(chans.size()); i++)
@@ -971,7 +960,7 @@ void CalibrateBeam::AggregateEresTomlForRun(
   const Int_t n_eres = 35;
   std::vector<std::vector<Double_t>> fwhm_per_chan(n_eres);
 
-  std::vector<ChannelCal> tmpl = BuildChannels();
+  std::vector<ChannelCal> tmpl = CalibrateBeam::BuildChannels();
   Int_t n_chans = Int_t(tmpl.size());
 
   for (Int_t s = 0; s < Int_t(specs.size()); s++) {
@@ -1062,12 +1051,7 @@ void CalibrateBeam::Run(const TString &file_label) {
     specs.push_back(s);
   }
 
-  TString sim_beam_path = DefaultSimBeamPath(project_root);
-  std::vector<ChannelCal> sim_chans = LoadSimChans(sim_beam_path);
-  if (sim_chans.empty()) {
-    std::cerr << "Sim anchors unavailable; aborting" << std::endl;
-    return;
-  }
+  std::vector<ChannelCal> chans = CalibrateBeam::BuildChannels();
 
   Int_t n_specs = Int_t(specs.size());
 
@@ -1077,7 +1061,7 @@ void CalibrateBeam::Run(const TString &file_label) {
 
   Int_t n_workers =
       TMath::Min(Int_t(std::thread::hardware_concurrency()), n_specs);
-  n_workers = TMath::Min(n_workers, Constants::MAX_FUSED_WORKERS);
+  n_workers = TMath::Min(n_workers, Constants::cfg.MAX_FUSED_WORKERS);
   if (n_workers < 1)
     n_workers = 1;
   std::cout << "calibrate-beam: " << n_specs << " subfiles on " << n_workers
@@ -1100,7 +1084,7 @@ void CalibrateBeam::Run(const TString &file_label) {
           k = work.front();
           work.pop();
         }
-        CalibrateBeamOneSubfile(specs[k], sim_chans);
+        CalibrateBeamOneSubfile(specs[k], chans);
       }
     });
   }

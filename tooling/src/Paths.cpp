@@ -28,19 +28,18 @@ void Paths::PrintBanner(const TString &dataset_dir) {
   std::cout << " MUSIC tooling | dataset=" << MUSIC_DATASET_NAME
             << " | git=" << MUSIC_GIT_HASH << std::endl;
   std::cout << " dataset dir : " << dataset_dir << std::endl;
-  std::cout << " CoMPASS base: " << Constants::COMPASS_BASE_DIR << std::endl;
+  std::cout << " CoMPASS base: " << Constants::cfg.COMPASS_BASE_DIR
+            << std::endl;
   std::cout << " runs        :";
-  for (Int_t i = 0; i < Int_t(Constants::RUN_NUMBERS.size()); i++)
-    std::cout << " " << Constants::RUN_NUMBERS[i];
+  for (Int_t i = 0; i < Int_t(Constants::cfg.RUN_NUMBERS.size()); i++)
+    std::cout << " " << Constants::cfg.RUN_NUMBERS[i];
   std::cout << std::endl;
-  std::cout << " event mode  : "
-            << (Constants::USE_TIME_WINDOW_EVENTS
-                    ? Form("time-window (%.1f us)",
-                           Constants::EVENT_TIME_WINDOW_US)
-                    : "grid-triggered")
+  std::cout << " event mode  : " << Constants::cfg.REFERENCE_CHANNEL << " ("
+            << Constants::cfg.EVENT_TIME_WINDOW_US << " us window)"
             << " | calibration "
-            << (Constants::SKIP_CALIBRATION ? "SKIPPED" : "on") << " | plots "
-            << (Constants::SAVE_PLOTS ? "on" : "SKIPPED") << std::endl;
+            << (Constants::cfg.SKIP_CALIBRATION ? "SKIPPED" : "on")
+            << " | plots " << (Constants::cfg.SAVE_PLOTS ? "on" : "SKIPPED")
+            << std::endl;
   std::cout << "============================================================"
             << std::endl;
 }

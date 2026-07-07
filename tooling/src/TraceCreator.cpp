@@ -7,7 +7,7 @@ void TraceCreator::WriteH2CanvasToFile(TFile *file, TH2F *h,
   PlottingUtils::ConfigureAndDraw2DHistogram(h, c);
   h->GetYaxis()->SetTitleOffset(1.3);
   c->SetLeftMargin(0.18);
-  if (Constants::SAVE_PLOTS)
+  if (Constants::cfg.SAVE_PLOTS)
     PlottingUtils::SaveFigure(c, save_name, subdir, PlotSaveOptions::kLINEAR);
   file->cd();
   c->Write(h->GetName(), TObject::kOverwrite);
@@ -51,15 +51,15 @@ void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
   UInt_t flags_or = 0;
   input_tree->SetBranchAddress("FlagsOR", &flags_or);
 
-  const Double_t strip_e_min = Constants::STRIP_DE_OVERVIEW_MIN_NORMED;
-  const Double_t strip_e_max = Constants::STRIP_DE_OVERVIEW_MAX_NORMED;
-  const Double_t strip_de_min = Constants::STRIP_DE_MIN_NORMED;
-  const Double_t strip_de_max = Constants::STRIP_DE_MAX_NORMED;
-  const Double_t total_e_min = Constants::TOTAL_E_MIN_NORMED;
-  const Double_t total_e_max = Constants::TOTAL_E_MAX_NORMED;
-  const Double_t cathode_e_max = Constants::CATHODE_E_MAX_NORMED;
-  const Int_t s_lo = Constants::IGNORE_STRIP_0 ? 1 : 0;
-  const Int_t s_hi = Constants::IGNORE_STRIP_17 ? 16 : 17;
+  const Double_t strip_e_min = Constants::cfg.STRIP_DE_OVERVIEW_MIN_NORMED;
+  const Double_t strip_e_max = Constants::cfg.STRIP_DE_OVERVIEW_MAX_NORMED;
+  const Double_t strip_de_min = Constants::cfg.STRIP_DE_MIN_NORMED;
+  const Double_t strip_de_max = Constants::cfg.STRIP_DE_MAX_NORMED;
+  const Double_t total_e_min = Constants::cfg.TOTAL_E_MIN_NORMED;
+  const Double_t total_e_max = Constants::cfg.TOTAL_E_MAX_NORMED;
+  const Double_t cathode_e_max = Constants::cfg.CATHODE_E_MAX_NORMED;
+  const Int_t s_lo = Constants::cfg.IGNORE_STRIP_0 ? 1 : 0;
+  const Int_t s_hi = Constants::cfg.IGNORE_STRIP_17 ? 16 : 17;
 
   TH2F *h_music =
       new TH2F("hMUSIC_Normed",
@@ -135,8 +135,8 @@ void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
 }
 
 TGraph *TraceCreator::BuildTraceFromTotals(const Double_t *total) {
-  Int_t s_lo = Constants::IGNORE_STRIP_0 ? 1 : 0;
-  Int_t s_hi = Constants::IGNORE_STRIP_17 ? 16 : 17;
+  Int_t s_lo = Constants::cfg.IGNORE_STRIP_0 ? 1 : 0;
+  Int_t s_hi = Constants::cfg.IGNORE_STRIP_17 ? 16 : 17;
   Int_t n_pts = s_hi - s_lo + 1;
   TGraph *g = new TGraph(n_pts);
   for (Int_t k = 0; k < n_pts; k++)
@@ -183,14 +183,16 @@ void TraceCreator::BuildTraces(std::vector<TString> input_filenames,
           << "] WARNING: no calibration; using raw ADC; using uncalibrated ADC values"
           << std::endl;
     const char *unit = ev.Unit();
-    const Double_t strip_e_min = ev.is_normed ? Constants::STRIP_DE_MIN_NORMED
-                                              : Constants::STRIP_E_MIN_ADC;
-    const Double_t strip_e_max = ev.is_normed ? Constants::STRIP_DE_MAX_NORMED
-                                              : Constants::STRIP_E_MAX_ADC;
+    const Double_t strip_e_min = ev.is_normed
+                                     ? Constants::cfg.STRIP_DE_MIN_NORMED
+                                     : Constants::cfg.STRIP_E_MIN_ADC;
+    const Double_t strip_e_max = ev.is_normed
+                                     ? Constants::cfg.STRIP_DE_MAX_NORMED
+                                     : Constants::cfg.STRIP_E_MAX_ADC;
 
     Long64_t n_entries = input_tree->GetEntries();
     Long64_t n_to_save =
-        TMath::Min(Long64_t(Constants::MAX_TRACE_SAVES), n_entries);
+        TMath::Min(Long64_t(Constants::cfg.MAX_TRACE_SAVES), n_entries);
     std::cout << "Saving " << n_to_save << " per-event traces from "
               << input_filename << "..." << std::endl;
 
@@ -198,8 +200,8 @@ void TraceCreator::BuildTraces(std::vector<TString> input_filenames,
       input_tree->GetEntry(j);
       ev.Decode();
 
-      Int_t s_lo = Constants::IGNORE_STRIP_0 ? 1 : 0;
-      Int_t s_hi = Constants::IGNORE_STRIP_17 ? 16 : 17;
+      Int_t s_lo = Constants::cfg.IGNORE_STRIP_0 ? 1 : 0;
+      Int_t s_hi = Constants::cfg.IGNORE_STRIP_17 ? 16 : 17;
       Int_t n_pts = s_hi - s_lo + 1;
       TGraph *TraceTotal = BuildEventTrace(ev);
       TGraph *TraceLeft = new TGraph(n_pts);
@@ -235,7 +237,7 @@ void TraceCreator::BuildTraces(std::vector<TString> input_filenames,
         TraceTotal->Draw("ALP");
         TraceLeft->Draw("LP SAME");
         TraceRight->Draw("LP SAME");
-        if (Constants::SAVE_PLOTS)
+        if (Constants::cfg.SAVE_PLOTS)
           PlottingUtils::SaveFigure(c, "trace_" + trace_tag, trace_subdir,
                                     PlotSaveOptions::kLINEAR);
         delete c;

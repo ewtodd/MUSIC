@@ -41,7 +41,7 @@ BLIND_MAX_EVENTS_PER_FILE = None  # None = every event per file
 # Each junk metric is both a hard cut (BLIND_REJECT_*, applied in step 0) and a
 # 0/1 clustering feature (BLIND_*_FEATURE). Beam ellipse is fit, not assumed.
 BLIND_GATE_BEAM_01 = True  # hard (s0,s1)-ellipse beam gate in step 0
-BLIND_BEAM_NSIGMA = 5.0  # ellipse half-width (gate AND beamgate feature)
+BLIND_BEAM_NSIGMA = 3.0  # ellipse half-width (gate AND beamgate feature)
 BLIND_BEAM_GATE_FEATURE = False  # `beamgate`: inside (s0,s1) ellipse
 
 BLIND_REJECT_PILEUP = True  # `pileup`: >= MIN_STRIPS strips (1-16) >= THRESH
@@ -68,7 +68,7 @@ BLIND_PREBEAM_MIN_STRIP = 2  # floor: pre-trigger pair = strips 1 and 0 (guard)
 
 # Savitzky-Golay smoothing: 5-point, cubic, with edge renormalization
 # (matches StripSumScatter::SavitzkyGolay in C++). When enabled, clustering
-# features and the reaction strip for clustering are computed from the
+# features for clustering are computed from the
 # SG-filtered trace rather than the raw trace. The beam reference remains
 # raw (computed from raw beam-flat events).
 BLIND_SAVITZKY_GOLAY = True
@@ -83,7 +83,7 @@ BLIND_BEAMDEV_FEATURE = False  # `beamdev`: RMS(dE-beam) over strips 8-17
 # mean > 0.5 (exempt from veto), OR ANY KEEP_IF mean > 0.5 AND EVERY DROP_IF
 # mean < 0.5 (conditional keep + junk veto).
 BLIND_STEP1_FEATURES = ("beamgate", "offbeam", "pileup", "beamdev", "mult")
-BLIND_STEP1_K = 3  # None = auto-k (gmm only)
+BLIND_STEP1_K = 3  # None = auto-k (GMM only)
 BLIND_STEP1_KEEP_ALWAYS = ()
 BLIND_STEP1_KEEP_IF = ("beamgate", )
 BLIND_STEP1_DROP_IF = ("offbeam", "pileup")
@@ -98,44 +98,23 @@ BLIND_STEP1_DROP_IF = ("offbeam", "pileup")
 BLIND_STEP2_FEATURES = ("plateau", "tail", "beamdev", "near_mult")
 
 # Cluster count per stage: None = auto-k (k minimizing GMM BIC), int = force.
-# BLIND_MAX_K bounds the auto-k search (-1 = unbounded 1..19). Honored by the
-# "gmm" backend only -- torch_dbscan returns its own component count.
+# BLIND_MAX_K bounds the auto-k search (-1 = unbounded 1..19).
 BLIND_MAX_K = -1
 BLIND_STEP2_K = 4
-BLIND_COMBINED_K = None
+BLIND_COMBINED_K = 4
 
 # Clustering backend (cluster_auto):
 #   "gmm"/"none"    -- sklearn GaussianMixture, BIC model selection, native
 #                      predict; optional noise tail via BLIND_GMM_NOISE_PCTL.
-#   "torch_dbscan"  -- GPU DBSCAN (radius-graph cores -> connected components),
-#                      fit on a capped subsample, every row assigned to nearest
-#                      core within eps (min dist > eps -> noise, label -1).
-BLIND_NOISE_CLUSTERING = "torch_dbscan"
-BLIND_NOISE_FIT_CAP = int(1e4)  # rows to FIT on; None = all
+BLIND_NOISE_CLUSTERING = "gmm"
+BLIND_STEP1_BACKEND = None  # override BLIND_NOISE_CLUSTERING for step 1
+BLIND_STEP2_BACKEND = None  # override BLIND_NOISE_CLUSTERING for step 2
 
-# Per-stage backend override (None = follow BLIND_NOISE_CLUSTERING). Step 2
-# resolves an (a,n)/(a,a') CONTINUUM -- gmm carves it by BIC; torch_dbscan,
-# needing a density gap, returns one blob (k=1).
-BLIND_STEP1_BACKEND = "gmm"
-BLIND_STEP2_BACKEND = "gmm"
-
-# GMM noise tail (gmm backend only): bottom-percentile of per-point logL ->
-# noise (-1). None = off.
+# GMM noise tail: bottom-percentile of per-point logL -> noise (-1). None = off.
 BLIND_GMM_NOISE_PCTL = 5.0
 
-# torch_dbscan params (z-scored space).
-BLIND_DBSCAN_EPS = None  # None = k-distance elbow; float = manual
-BLIND_DBSCAN_MIN_SAMPLES = 100  # min points (incl. self) for a core
-BLIND_TORCH_DEVICE = "auto"  # "auto"/"cuda"/"cpu"
-BLIND_TORCH_TILE = 16384  # rows per GPU distance tile
-
-# Free GPU before torch work: unload any resident llama-swap model (it reloads
-# on its next request). URL "" or BLIND_FREE_GPU = False disables.
-BLIND_FREE_GPU = True
-BLIND_LLAMA_SWAP_URL = "http://127.0.0.1:8080"
-
 # Reaction-strip onset (constant-fraction discriminator).
-BLIND_REAC_ONSET_NSIGMA = 3.0  # trigger-exists gate: peak excess > N*beam RMS
+BLIND_REAC_ONSET_NSIGMA = 5.0  # trigger-exists gate: peak excess > N*beam RMS
 BLIND_REAC_ONSET_FRAC = 0.30  # onset = first strip reaching this frac of peak
 BLIND_COMBINED_STRIPS = tuple(range(2, 14))  # candidate reaction strips
 

@@ -11,7 +11,7 @@ Bool_t GpuAccel::Init() {
     return g_available;
   g_initialized = kTRUE;
 
-  if (!Constants::USE_GPU_ACCELERATION)
+  if (!Constants::cfg.USE_GPU_ACCELERATION)
     return kFALSE;
 
   // Absolute path to the tooling GPU lib, injected at build by the Makefile
@@ -44,7 +44,7 @@ GpuAccel::SortFunc GpuAccel::GetSort() { return g_sort; }
 
 Bool_t GpuAccel::TryAcquireSortSlot() {
   std::lock_guard<std::mutex> lk(g_sort_mutex);
-  if (g_sort_active >= Constants::MAX_GPU_CONCURRENT_SORTS)
+  if (g_sort_active >= Constants::cfg.MAX_GPU_CONCURRENT_SORTS)
     return kFALSE;
   g_sort_active++;
   return kTRUE;

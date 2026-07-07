@@ -54,6 +54,9 @@ std::vector<RemixSim::SimFileSpec> RemixSim::BuildFileSpecs() {
   }
   gSystem->FreeDirectory(d);
   std::sort(specs.begin(), specs.end(), SimFileSpecTagLess);
+  for (Int_t i = 0; i < (Int_t)specs.size(); i++) {
+    std::cout << specs.at(i).tag << std::endl;
+  }
   return specs;
 }
 

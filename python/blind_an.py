@@ -1,38 +1,8 @@
-"""Blind, transferable (a,n) clustering pipeline.
-
-A fully data-driven look at MUSIC #DeltaE-vs-strip traces: no sim, no (a,n)
-template, no hand-drawn cuts. Both stages share the continuous features
-(energy above beam #Sigma(#DeltaE-1), trigger 3-sum peak3 -- 0 for no-trigger
-beam, post-trigger plateau #Sigma_{trig+1..+POST}(#DeltaE-1), raw end strip #DeltaE(s17),
-both-channel multiplicity):
-
-  Step 0  every calibrated event (zero cuts, optional beam gate / pileup
-          rejection in config), max-normalized (beam ~ 1/strip).
-  Step *  the reaction strip is the NO-FALLBACK leading-edge onset (first strip
-          crossing N-sigma of the beam noise RMS); flat beam gets no trigger
-          (reac=-1, peak3=0) and drops out of the per-strip slices.
-  Step 1  ONE global k=2 split -- keep the higher-plateau-excess cluster
-          (real deposits), drop the flat background / beam / low-energy noise.
-  Step 2  partition the kept half by leading-edge reaction strip, then
-          auto-k cluster WITHIN each strip (the plateau-up / end-collapse
-          (a,n) signature, plus the near-reaction both-channel multiplicity,
-          resolve (a,n) vs (a,a') there).
-
-cluster_per_reaction_strip is shared with blind_combined.py (the single-step
-variant that skips step 1). Each step emits cluster scatters + one per-cluster
-mean-trace overlay (StripSumScatter DrawRegionTraces style, beam reference
-overlaid).
-
-Run inside the dataset dev shell, from python/:
-
-    python -m music_ml.blind_an
-"""
-
 import math
 import random
 
 import numpy as np
-from sklearn.mixture import GaussianMixture
+from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 
 import config, data, mlplots
 
@@ -48,267 +18,6 @@ def _fit_subsample(n):
     if cap is not None and n > cap:
         return np.random.default_rng(config.SEED).choice(n, cap, replace=False)
     return np.arange(n)
-
-
-def _noise_fit_subsample(n):
-    """Row indices to FIT on for noise-capable clustering. Uses
-    config.BLIND_NOISE_FIT_CAP (separate from BLIND_FIT_CAP used by GMM).
-    cap None = fit on EVERY row."""
-    cap = config.BLIND_NOISE_FIT_CAP
-    if cap is not None and n > cap:
-        return np.random.default_rng(config.SEED).choice(n, cap, replace=False)
-    return np.arange(n)
-
-
-def _torch_device():
-    """The torch device for the GPU DBSCAN backend, per config.BLIND_TORCH_DEVICE
-    ("auto" -> cuda when available, else cpu)."""
-    import torch
-    dev = config.BLIND_TORCH_DEVICE
-    if dev == "auto":
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    return dev
-
-
-def _knee_index(k_sorted, min_samples, n):
-    """Index of the k-distance elbow by the parameter-free max-distance-to-chord
-    (Kneedle/triangle) method, over the WHOLE descending curve: draw the chord
-    from the first point (rank 0, max k-distance) to the last (rank n-1, min),
-    and take the rank whose perpendicular distance from that chord is largest --
-    the point where the steep outlier drop meets the dense bulk plateau. No
-    window and no floor (the old two-segment OLS searched only the top ~1000
-    ranks, cutting off the real elbow and settling near min_samples+1). To keep a
-    handful of extreme-isolated points from stretching the chord, the top end is
-    anchored at the 99.5th percentile rather than the literal max. `k_sorted` is
-    the per-point distance to the min_samples-th nearest neighbour, descending."""
-    y = k_sorted.astype(np.float64)
-    m = y.shape[0]
-    if m < 3:
-        return m - 1
-    # Anchor the high end below the most extreme outliers so they don't dominate
-    # the chord; clamp the curve to that ceiling.
-    hi = float(np.percentile(y, 99.5))
-    y = np.minimum(y, hi)
-    x = np.arange(m, dtype=np.float64)
-    dx, dy = x[-1] - x[0], y[-1] - y[0]
-    denom = math.hypot(dx, dy)
-    if denom < 1.0e-15:  # flat curve -> no elbow
-        return m - 1
-    # Perpendicular distance of every point to the chord; the elbow is the max.
-    dist = np.abs(dy * (x - x[0]) - dx * (y - y[0])) / denom
-    return int(np.argmax(dist))
-
-
-def _plot_kdist(k_sorted, knee_idx, eps, min_samples, tag, subdir):
-    """Plot the descending k-distance graph with the chosen knee (eps) marked,
-    mirroring the old auto-eps diagnostic."""
-    n = k_sorted.shape[0]
-    R = mlplots._root()
-    c = R.PlottingUtils.GetConfiguredCanvas(R.kFALSE)
-    g = R.TGraph(n)
-    for i in range(n):
-        g.SetPoint(i, float(i), float(k_sorted[i]))
-    g.SetTitle(f"k-distance graph (torch_dbscan); k={min_samples}; "
-               f"auto-eps={eps:.4f} (knee idx {knee_idx});"
-               f" min={k_sorted[-1]:.4f} max={k_sorted[0]:.4f}")
-    g.GetXaxis().SetTitle("rank (descending)")
-    g.GetYaxis().SetTitle(f"k-distance (k={min_samples}) [z-scored]")
-    g.SetLineColor(R.kBlue)
-    g.SetLineWidth(2)
-    g.Draw("ALP")
-    knee = R.TMarker(float(knee_idx), float(k_sorted[knee_idx]), 4)
-    knee.SetMarkerColor(R.kRed)
-    knee.SetMarkerSize(2)
-    knee.Draw()
-    R.PlottingUtils.SaveFigure(c, f"blind_autoeps_{tag}", subdir,
-                               R.PlotSaveOptions.kLINEAR)
-
-
-def _torch_auto_eps(Z, min_samples, tag, subdir, device):
-    """Auto-detect eps for torch_dbscan via the k-distance elbow, the whole
-    k-distance computed on the GPU in tiles. Z is the z-scored fit subsample.
-    Returns the chosen eps (falls back to 1.0 when too few points)."""
-    import torch
-    n = Z.shape[0]
-    if n < 2 * min_samples:
-        print(f"  auto-eps {tag}: n={n} < 2*min_samples={2*min_samples}, "
-              f"using default eps=1.0")
-        return 1.0
-    t = torch.as_tensor(Z, device=device)
-    tile = config.BLIND_TORCH_TILE
-    kd = torch.empty(n, device=device)
-    for i in range(0, n, tile):
-        d = torch.cdist(t[i:i + tile], t)
-        # k-th smallest distance INCLUDING self (the self 0 is the smallest), so
-        # k=min_samples gives the (min_samples-1)-th true neighbour -- matching
-        # sklearn's kneighbors(n_neighbors=min_samples)[:, -1].
-        kd[i:i + tile] = torch.kthvalue(d, k=min_samples, dim=1).values
-    k_sorted = torch.sort(kd, descending=True).values.cpu().numpy()
-    knee_idx = _knee_index(k_sorted, min_samples, n)
-    eps = float(k_sorted[knee_idx])
-    print(f"  auto-eps {tag}: min_samples={min_samples}, eps={eps:.4f} "
-          f"(knee at index {knee_idx}/{n}, "
-          f"k-dist={k_sorted[knee_idx]:.4f})")
-    _plot_kdist(k_sorted, knee_idx, eps, min_samples, tag, subdir)
-    return eps
-
-
-def _torch_dbscan_cores(Zfit, eps, min_samples, device):
-    """Fit DBSCAN cores on the z-scored subsample Zfit: a point is a core if it
-    has >= min_samples points (including itself) within eps. Cores within eps of
-    one another are linked, and connected components over that core graph are the
-    clusters. Returns (core_pts (nc, d) float32, core_labels (nc,) in 0..k-1,
-    k). All pairwise work is tiled on the GPU; the components run on the CPU
-    (nc <= the fit cap, so the core graph is small)."""
-    import torch
-    from scipy.sparse import coo_matrix
-    from scipy.sparse.csgraph import connected_components
-    t = torch.as_tensor(Zfit, device=device)
-    n = t.shape[0]
-    tile = config.BLIND_TORCH_TILE
-    counts = torch.zeros(n, dtype=torch.int64, device=device)
-    for i in range(0, n, tile):
-        d = torch.cdist(t[i:i + tile], t)
-        counts[i:i + tile] = (d <= eps).sum(dim=1)
-    core = counts >= min_samples
-    core_idx = torch.nonzero(core, as_tuple=False).squeeze(1)
-    nc = int(core_idx.shape[0])
-    if nc == 0:
-        return (np.zeros((0, Zfit.shape[1]),
-                         dtype=np.float32), np.zeros(0, dtype=np.int64), 0)
-    tc = t[core_idx]
-    rows, cols = [], []
-    for i in range(0, nc, tile):
-        d = torch.cdist(tc[i:i + tile], tc)
-        r, c = torch.nonzero(d <= eps, as_tuple=True)
-        rows.append((r + i).cpu().numpy())
-        cols.append(c.cpu().numpy())
-    rows = np.concatenate(rows)
-    cols = np.concatenate(cols)
-    graph = coo_matrix((np.ones(rows.size, dtype=np.int8), (rows, cols)),
-                       shape=(nc, nc))
-    k, comp = connected_components(graph, directed=False)
-    return tc.cpu().numpy(), comp.astype(np.int64), int(k)
-
-
-def _torch_assign(Zall, core_pts, core_labels, eps, device):
-    """Assign every z-scored row in Zall to its nearest core sample on the GPU:
-    label = that core's cluster when the distance is <= eps, else -1 (noise).
-    Tiled to cap peak memory; this single pass replaces any out-of-sample
-    predict (DBSCAN has none)."""
-    import torch
-    tcore = torch.as_tensor(core_pts, device=device)
-    clab = torch.as_tensor(core_labels, device=device)
-    n = Zall.shape[0]
-    tile = config.BLIND_TORCH_TILE
-    out = np.empty(n, dtype=np.int64)
-    for i in range(0, n, tile):
-        q = torch.as_tensor(Zall[i:i + tile], device=device)
-        d = torch.cdist(q, tcore)
-        md, mi = d.min(dim=1)
-        lab = torch.where(md <= eps, clab[mi], torch.full_like(clab[mi], -1))
-        out[i:i + tile] = lab.cpu().numpy()
-    return out
-
-
-_GPU_FREED = False  # llama-swap eject runs at most once per process
-
-
-def _free_gpu_via_llama_swap():
-    """Best-effort: if a local llama-swap instance has a model resident on the
-    GPU, ask it to unload so the VRAM is free for the torch_dbscan assign.
-    llama-swap respawns the model on its next request, so FIM coding keeps
-    working -- it just reloads. Silent no-op when llama-swap is unreachable or
-    nothing is loaded. Uses only the stdlib (no requests dependency)."""
-    import json
-    import urllib.request
-    url = config.BLIND_LLAMA_SWAP_URL
-    if not url:
-        return
-    try:
-        with urllib.request.urlopen(f"{url}/running", timeout=3) as resp:
-            running = json.loads(resp.read()).get("running", [])
-    except Exception:
-        return  # not running / unreachable -> nothing to free
-    active = [m for m in running if m.get("state") != "stopped"]
-    if not active:
-        return
-    names = ", ".join(m.get("model", "?") for m in active)
-    try:
-        urllib.request.urlopen(f"{url}/unload", timeout=15).read()
-    except Exception as exc:
-        print(f"  WARNING: llama-swap unload failed ({exc}); the GPU may be "
-              f"short on memory")
-        return
-    # /unload only INITIATES the stop; poll /running until the model is gone so
-    # the VRAM is actually released before torch allocates (up to ~10 s).
-    import time
-    for _ in range(20):
-        try:
-            with urllib.request.urlopen(f"{url}/running", timeout=3) as resp:
-                still = [
-                    m for m in json.loads(resp.read()).get("running", [])
-                    if m.get("state") != "stopped"
-                ]
-        except Exception:
-            still = []
-        if not still:
-            break
-        time.sleep(0.5)
-    print(f"  free GPU: unloaded llama-swap model(s) [{names}] via "
-          f"{url}/unload (reloads on its next request)")
-
-
-def _ensure_gpu_free():
-    """Run the llama-swap eject once per process, before the first GPU work,
-    when config.BLIND_FREE_GPU is on."""
-    global _GPU_FREED
-    if _GPU_FREED:
-        return
-    _GPU_FREED = True
-    if config.BLIND_FREE_GPU:
-        _free_gpu_via_llama_swap()
-
-
-def cluster_torch_dbscan(feats, tag="", subdir=config.PLOT_SUBDIR):
-    """GPU DBSCAN backend for cluster_auto: z-score the features, fit cores on a
-    capped subsample (config.BLIND_NOISE_FIT_CAP), then assign EVERY row to its
-    nearest core within eps on the GPU (label -1 = noise). Returns (labels (n,),
-    means in ORIGINAL feature units (k, d), k, []) -- the same shape as
-    cluster_auto's GMM path; the BIC list is empty (not applicable)."""
-    _ensure_gpu_free()  # free any resident llama-swap model before GPU work
-    F = feats.reshape(feats.shape[0], -1).astype(np.float64)
-    fit_idx = _noise_fit_subsample(F.shape[0])
-    mu = F[fit_idx].mean(axis=0)
-    sd = F[fit_idx].std(axis=0) + 1.0e-9
-    Z = ((F - mu) / sd).astype(np.float32)
-    Zfit = Z[fit_idx]
-    device = _torch_device()
-    min_samples = config.BLIND_DBSCAN_MIN_SAMPLES
-    eps = config.BLIND_DBSCAN_EPS
-    if eps is None:
-        eps = _torch_auto_eps(Zfit, min_samples, tag, subdir, device)
-    core_pts, core_labels, k = _torch_dbscan_cores(Zfit, eps, min_samples,
-                                                   device)
-    print(f"  torch_dbscan {tag}: device={device}, eps={eps:.4f}, "
-          f"min_samples={min_samples}, {core_pts.shape[0]} core pts, "
-          f"fit on {Zfit.shape[0]} of {F.shape[0]} rows -> k={k}")
-    if k == 0:
-        print("  torch_dbscan: no cores found; all rows -> noise (-1)")
-        return (np.full(F.shape[0], -1, dtype=np.int64),
-                np.zeros((0, F.shape[1]), dtype=np.float64), 0, [])
-    labels = _torch_assign(Z, core_pts, core_labels, eps, device)
-    # Cluster means in ORIGINAL feature units, from the fit subsample's own
-    # assignment (cheap; avoids a second pass over the full reservoir).
-    fit_lab = labels[fit_idx]
-    means = np.zeros((k, F.shape[1]), dtype=np.float64)
-    for j in range(k):
-        m = fit_lab == j
-        if m.any():
-            means[j] = F[fit_idx][m].mean(axis=0)
-    print(f"  torch_dbscan {tag}: assigned {int((labels >= 0).sum())} of "
-          f"{labels.size} rows, {int((labels == -1).sum())} noise")
-    return labels, means, k, []
 
 
 def _trace(view):
@@ -330,17 +39,12 @@ def cluster_auto(feats,
 
     `backend` overrides config.BLIND_NOISE_CLUSTERING for this call (None =
     follow config) so a caller can pin its method -- e.g. the (a,n) sub-split
-    pins 'gmm' regardless of the global switch. When the resolved backend is
-    'torch_dbscan', delegates to cluster_torch_dbscan() (GPU DBSCAN that tags
-    noise as label -1). Otherwise ('gmm'/'none') fits a full-covariance GMM on a
+    pins 'gmm' regardless of the global switch. Fits a full-covariance GMM on a
     capped subsample via sklearn, then assigns EVERY row in one predict pass --
     optionally tagging the lowest-density tail as noise. `noise_pctl` controls
     that: "config" = use config.BLIND_GMM_NOISE_PCTL, None = no tagging, a float
     = that bottom percentile. Returns (labels (n,), means in ORIGINAL feature
     units (k,d), k_chosen, [bic per k])."""
-    method = backend if backend is not None else config.BLIND_NOISE_CLUSTERING
-    if method == "torch_dbscan":
-        return cluster_torch_dbscan(feats, tag=tag, subdir=subdir)
     pctl = config.BLIND_GMM_NOISE_PCTL if noise_pctl == "config" else noise_pctl
     F = feats.reshape(feats.shape[0], -1).astype(np.float64)
     fit_idx = _fit_subsample(F.shape[0])
@@ -399,24 +103,32 @@ def cluster_auto(feats,
 # Trace features.
 def reaction_strip(X, baseline, margin):
     """Reaction strip per event by a cheap CONSTANT-FRACTION onset: the first
-    strip (from strip 1 on) whose beam-baseline-subtracted excess reaches
-    config.BLIND_REAC_ONSET_FRAC of the event's OWN peak excess. Unlike a
-    leading-edge crossing of a fixed level this does NOT walk with amplitude (a
-    bigger deposit no longer triggers earlier). The absolute `margin` (N-sigma
-    beam noise) is only the trigger-EXISTS gate: an event whose peak excess
-    does not clear it has NO trigger and gets -1 (flat beam), so it drops out
-    of the per-strip slices. baseline is the per-strip beam level (mean
-    pure-beam trace, _beam_reference) -- subtracting it removes the L/R
-    sawtooth. Triggered strips are absolute detector indices via the guard
-    offset."""
+    strip (from strip 2 on, through strip 16) whose beam-baseline-subtracted
+    excess reaches BOTH config.BLIND_REAC_ONSET_FRAC of the event's OWN peak
+    excess AND the absolute `margin` (N-sigma beam noise). This matches the
+    C++ FindTrigger: the scan window is strips 2..16, and each candidate strip
+    must clear the per-strip nsigma floor as well as the CF fraction of peak.
+    Unlike a leading-edge crossing of a fixed level the CF component does NOT
+    walk with amplitude (a bigger deposit no longer triggers earlier). The
+    peak is computed over the same scan window (strips 2..16). baseline is the
+    per-strip beam level (mean pure-beam trace, _beam_reference) -- subtracting
+    it removes the L/R sawtooth. Triggered strips are absolute detector
+    indices via the guard offset."""
     first = 0 if config.INCLUDE_GUARD_STRIPS else 1
     ex = X.astype(np.float64) - np.asarray(baseline, dtype=np.float64)
-    peak = ex[:, 1:].max(axis=1)  # peak excess over strips 1+ (skip guard 0)
+    # Scan window: strips 2..16 (matches C++ s_lo=2, s_hi=16)
+    scan = np.arange(2 - first, 17 - first)
+    ex_scan = ex[:, scan]
+    peak = ex_scan.max(axis=1)  # peak excess over strips 2..16
     has = peak > margin  # trigger exists only if the peak clears N-sigma
     thr = config.BLIND_REAC_ONSET_FRAC * np.maximum(peak, 0.0)
-    above = ex >= thr[:, np.newaxis]
-    above[:, 0] = False  # scan starts at strip 1, like the C++
-    onset_col = np.argmax(above, axis=1)  # first strip reaching frac * peak
+    # Each strip must clear BOTH the CF fraction of peak AND the nsigma floor
+    above = (ex >= np.maximum(thr[:, np.newaxis], margin))
+    above[:, 0] = False  # exclude guard strip 0
+    above[:, 1] = False  # exclude strip 1 (scan starts at strip 2)
+    if config.INCLUDE_GUARD_STRIPS:
+        above[:, 17] = False  # exclude guard strip 17
+    onset_col = np.argmax(above, axis=1)  # first strip reaching both thresholds
     return np.where(has, onset_col + first, -1)
 
 
@@ -655,11 +367,13 @@ def _is_pileup(X):
 
 def _is_noise(X):
     """Hard noise flag: True for events with at least
-    config.BLIND_NOISE_MIN_STRIPS strips (all columns 0..n-1, matching the
-    long-side trace view) below config.BLIND_NOISE_THRESH. A real deposit is
-    never uniformly sub-threshold; flat-noise drops are. Strips map to
-    columns via the guard offset."""
-    Xd = X.astype(np.float64)
+    config.BLIND_NOISE_MIN_STRIPS long strips (1-16) below
+    config.BLIND_NOISE_THRESH. A real deposit is never uniformly
+    sub-threshold; flat-noise drops are. Strips map to columns via the
+    guard offset (matches C++ IsNoise which scans strips 1-16)."""
+    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
+    cols = [s - first for s in range(1, 17) if 0 <= s - first < X.shape[1]]
+    Xd = X.astype(np.float64)[:, cols]
     below = (Xd < config.BLIND_NOISE_THRESH).sum(axis=1)
     return below >= config.BLIND_NOISE_MIN_STRIPS
 
@@ -693,7 +407,8 @@ def _beam_reference(X):
         return None, None
     Xb = X[keep].astype(np.float64)
     baseline = Xb.mean(axis=0)
-    sigma = float((Xb - baseline).std())
+    # Population sigma (ddof=0) matches C++ sqrt(sum(d^2)/N)
+    sigma = float((Xb - baseline).std(ddof=0))
     print(f"  beam reference: mean+RMS of {int(keep.sum())} pure-beam events "
           f"(fitted s0,s1 & s16,s17 ellipses); noise sigma={sigma:.4f}")
     return baseline, sigma
@@ -825,14 +540,15 @@ def _beam_deviation(X, beam_ref):
     return np.sqrt((d * d).mean(axis=1))
 
 
-def _cluster_matrix(X,
-                    both,
-                    reac,
-                    drop_flags=(),
-                    beam_ref=None,
-                    include=None,
-                    X_sg=None,
-                    reac_sg=None):
+def _cluster_matrix(
+        X,
+        both,
+        reac,
+        drop_flags=(),
+        beam_ref=None,
+        include=None,
+        X_sg=None,
+):
     """The clustering feature matrix (n, d) and column names. The continuous
     features (energy above beam #Sigma(#DeltaE-1), trigger 3-sum `peak3`
     centered on the reaction strip -- 0 for no-trigger events, plateau excess
@@ -855,13 +571,13 @@ def _cluster_matrix(X,
     The only hard veto is a missing data dependency -- offbeam / trigtaildev /
     beamdev need beam_ref. Excluded features are never computed.
 
-    When `X_sg` and `reac_sg` are both provided, feature computation uses the
+    When `X_sg` is provided, feature computation uses the
     SG-filtered trace and its reaction strip (matching the C++ SG pass in
     ClusterVarHists). The `both` mask is always derived from raw ADC and is
     unchanged. The beam reference is always raw."""
     # Use SG trace/reac when both are provided; otherwise fall back to raw.
-    Xt = X_sg if X_sg is not None and reac_sg is not None else X
-    ract = reac_sg if reac_sg is not None else reac
+    Xt = X_sg if X_sg is not None else X
+    ract = reac
     Xd = Xt.astype(np.float64)
     cols, names = [], []
     _toggle = {
@@ -1017,8 +733,7 @@ def step1_reaction_vs_background(X,
                                  beam_ref=None,
                                  subdir=config.PLOT_SUBDIR,
                                  tag="step1",
-                                 X_sg=None,
-                                 reac_sg=None):
+                                 X_sg=None):
     """Step 1: ONE global split on config.BLIND_STEP1_FEATURES into
     config.BLIND_STEP1_K classes (None = auto-k). KEEP a cluster if the mean of
     ANY config.BLIND_STEP1_KEEP_ALWAYS feature is > 0.5 (hard keep, EXEMPT from
@@ -1027,15 +742,16 @@ def step1_reaction_vs_background(X,
     config.BLIND_STEP1_DROP_IF feature mean is < 0.5 (conditional keep + junk
     veto). Flag-based -- no `energy` assumed. Returns the keep boolean mask.
 
-    When `X_sg` and `reac_sg` are provided, feature computation uses the
+    When `X_sg` and is provided, feature computation uses the
     SG-filtered trace and its reaction strip."""
-    feats, names = _cluster_matrix(X,
-                                   both,
-                                   reac,
-                                   beam_ref=beam_ref,
-                                   include=config.BLIND_STEP1_FEATURES,
-                                   X_sg=X_sg,
-                                   reac_sg=reac_sg)
+    feats, names = _cluster_matrix(
+        X,
+        both,
+        reac,
+        beam_ref=beam_ref,
+        include=config.BLIND_STEP1_FEATURES,
+        X_sg=X_sg,
+    )
     labels, means, k, _ = cluster_auto(feats,
                                        k=config.BLIND_STEP1_K,
                                        tag=tag,
@@ -1076,19 +792,20 @@ def step1_reaction_vs_background(X,
     return keep
 
 
-def cluster_per_reaction_strip(X,
-                               both,
-                               reac,
-                               beam_ref,
-                               strips,
-                               tag,
-                               drop_flags=("trig", "pileup", "offbeam"),
-                               subdir=config.PLOT_SUBDIR,
-                               force_k=config.BLIND_STEP2_K,
-                               backend=config.BLIND_STEP2_BACKEND,
-                               include=None,
-                               X_sg=None,
-                               reac_sg=None):
+def cluster_per_reaction_strip(
+    X,
+    both,
+    reac,
+    beam_ref,
+    strips,
+    tag,
+    drop_flags=("trig", "pileup", "offbeam"),
+    subdir=config.PLOT_SUBDIR,
+    force_k=config.BLIND_STEP2_K,
+    backend=config.BLIND_STEP2_BACKEND,
+    include=None,
+    X_sg=None,
+):
     """Partition X by the (no-fallback) leading-edge reaction strip `reac`
     (-1 = no trigger, dropped here since the slices are 3/4/5), then cluster
     WITHIN each strip in `strips`. `include`, when given (the dual / per-strip /
@@ -1108,7 +825,7 @@ def cluster_per_reaction_strip(X,
     window would run past s17 is SKIPPED. Shared by blind_an (dual-step) and
     blind_combined (single-step).
 
-    When `X_sg` and `reac_sg` are provided, feature computation uses the
+    When `X_sg` is provided, feature computation uses the
     SG-filtered trace and its reaction strip. Partitioning by strip still uses
     the raw `reac` (plotting also uses raw `X`)."""
     last_strip = (0 if config.INCLUDE_GUARD_STRIPS else 1) + X.shape[1] - 1
@@ -1135,7 +852,7 @@ def cluster_per_reaction_strip(X,
             beam_ref=beam_ref,
             include=include,
             X_sg=X_sg[at] if X_sg is not None else None,
-            reac_sg=reac_sg[at] if reac_sg is not None else None)
+        )
         strip_subdir = f"{subdir}/reac{strip}"
         # Step 2 isolates the RARE (a,n); GMM noise tagging would clip the
         # lowest-density tail -- which can BE the (a,n) -- so it is forced off
@@ -1212,55 +929,6 @@ def _draw_trig_mean(X_at, name, beam_ref, subdir):
                                   name,
                                   subdir=subdir,
                                   reference=beam_ref)
-
-
-def _draw_savgol_sample(X, X_sg, name, subdir):
-    """Draw a sample of raw vs SG-filtered traces for comparison with C++.
-
-    Each sample event gets its own canvas: the raw trace (dashed) and the
-    SG-filtered trace (solid) overlaid, plus the beam reference (dotted).
-    A fixed number of events are drawn (config.BLIND_OVERLAY_N), selected
-    randomly with a fixed seed. The plot lands in the given <subdir> under
-    the name blind_<name>_savgol_sample_<idx>."""
-    R = mlplots._root()
-    long_w = config.block_widths()[0]
-    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
-    strip_x = np.arange(first, first + long_w, dtype=np.float64)
-    n = X.shape[0]
-    if n == 0:
-        return
-    rng = np.random.default_rng(config.SEED)
-    n_draw = 5
-    order = np.sort(rng.choice(n, n_draw, replace=False))
-    X_raw = X[order].astype(np.float64)
-    X_sg_arr = X_sg[order].astype(np.float64)
-    for i in range(n_draw):
-        c, frame, _ = mlplots._frame_and_canvas(R, f"savgol_sample_{i}",
-                                                "#DeltaE [a.u.]")
-        # Raw trace (dashed).
-        g_raw = mlplots._graph(R, strip_x, X_raw[i, :long_w])
-        g_raw.SetLineColor(R.kGray + 2)
-        g_raw.SetLineWidth(2 * R.PlottingUtils.GetLineWidth())
-        g_raw.SetLineStyle(2)
-        g_raw.Draw("L SAME")
-        # SG-filtered trace (solid).
-        g_sg = mlplots._graph(R, strip_x, X_sg_arr[i, :long_w])
-        g_sg.SetLineColor(R.kAzure + 2)
-        g_sg.SetLineWidth(2 * R.PlottingUtils.GetLineWidth())
-        g_sg.Draw("L SAME")
-        # Beam reference (dotted).
-        if frame.GetYaxis().GetTitleOffset() > 0:
-            pass  # frame already set up
-        leg = R.PlottingUtils.AddLegend()
-        leg.AddEntry(g_raw, "raw", "l")
-        leg.AddEntry(g_sg, "savgol", "l")
-        leg.Draw()
-        label = R.PlottingUtils.AddText(f"event {order[i]}", 0.42, 0.85)
-        label.Draw()
-        R.PlottingUtils.SaveFigure(c, f"blind_{name}_savgol_sample_{i}",
-                                   subdir, R.PlotSaveOptions.kLINEAR)
-    print(f"  SG sample traces: drew {n_draw} of {n} events "
-          f"(blind_{name}_savgol_sample_0..{n_draw - 1})")
 
 
 def _draw_means_only(X_at, labels, k, name, beam_ref, subdir, bands=True):
@@ -1648,23 +1316,19 @@ def main():
                            "reaction-strip threshold")
     reac = _reaction_strip_all(X, beam_ref, beam_sigma)
     X, both, reac = _apply_prebeam_cut(X, both, reac)
-    X_sg, reac_sg = None, None
+    X_sg, _both, _reac = X, both, reac
     if config.BLIND_SAVITZKY_GOLAY:
         X_sg = data.savgol_filter_trace(X)
-        reac_sg = _reaction_strip_all(X_sg, beam_ref, beam_sigma)
-        print(f"  SG filter: reac detected {int((reac_sg >= 0).sum())} "
-              f"triggered (vs {int((reac >= 0).sum())} raw)")
     subdir = f"{config.PLOT_SUBDIR}/an"
-    if config.BLIND_SAVITZKY_GOLAY:
-        _draw_savgol_sample(X, X_sg, "an_savgol", subdir)
     # Step 1: drop flat background / noise with one global k=2 cut.
-    keep = step1_reaction_vs_background(X,
-                                        both,
-                                        reac,
-                                        beam_ref,
-                                        subdir,
-                                        X_sg=X_sg,
-                                        reac_sg=reac_sg)
+    keep = step1_reaction_vs_background(
+        X,
+        both,
+        reac,
+        beam_ref,
+        subdir,
+        X_sg=X_sg,
+    )
     # Step 2: per reaction-strip clustering on the kept (real-deposit) half.
     cluster_per_reaction_strip(
         X[keep],
@@ -1676,7 +1340,7 @@ def main():
         subdir=subdir,
         include=config.BLIND_STEP2_FEATURES,
         X_sg=X_sg[keep] if X_sg is not None else None,
-        reac_sg=reac_sg[keep] if reac_sg is not None else None)
+    )
     print("done")
 
 

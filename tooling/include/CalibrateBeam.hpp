@@ -49,8 +49,6 @@ struct ChannelCal {
   TString name;
   Char_t side;
   Int_t strip;
-  Double_t sim_mu_mev = 0.0;
-  Double_t sim_sigma_mev = 0.0;
   Double_t fit_adc = 0.0;
   Double_t fit_sigma_adc = 0.0;
   Long64_t n_samples = 0.0;
@@ -58,12 +56,11 @@ struct ChannelCal {
 
 class CalibrateBeam {
 public:
-  static TString DefaultSimBeamPath(const TString &project_root);
+  static std::vector<ChannelCal> BuildChannels();
 
-  static std::vector<ChannelCal> LoadSimChans(const TString &sim_path);
-
-  static void CalibrateBeamOneSubfile(const FileSpec &spec,
-                                      const std::vector<ChannelCal> &sim_chans);
+  static void
+  CalibrateBeamOneSubfile(const FileSpec &spec,
+                          const std::vector<ChannelCal> &chans_template);
 
   static void
   SaveCalibSampleOverlay(const std::vector<ChannelCal> &chans,

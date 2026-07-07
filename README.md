@@ -68,7 +68,7 @@ all knobs live in `config/Constants.hpp` and the `control/` TOMLs.
 The main entry point is the **pipeline**, which for each CoMPASS binary subfile
 does: binary → raw hits → multi-board timing alignment → GPU timestamp sort →
 event building → beam-energy calibration → trace creation. It runs the dataset's
-files (set by `RUN_NUMBERS` / `N_FILES` in `Constants.hpp`) in parallel and logs
+files (set by `RUN_NUMBERS` / `N_CHUNKS` in `Constants.hpp`) in parallel and logs
 to `analysis/<dataset>/pipeline_fused.log`:
 <!---->
 ```sh

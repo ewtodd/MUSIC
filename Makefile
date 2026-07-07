@@ -1,7 +1,7 @@
 # MUSIC monorepo build.
 #
 # One copy of the tooling (tooling/), built against one dataset's config
-# (analysis/<DATASET>/config/Constants.hpp). The dataset is chosen by the
+# (analysis/<DATASET>/config/Constants.cpp). The dataset is chosen by the
 # MUSIC_DATASET env var (set by the per-dataset nix dev shell), or on the
 # command line: `make DATASET=87Rb`.
 #
@@ -14,6 +14,10 @@
 # into a static libmusic.a; each main links it with --gc-sections. The GPU lib
 # (tooling/gpu/libgpuaccel.so) is built once and dlopen'd at runtime via an
 # absolute path injected as -DMUSIC_GPU_LIB.
+#
+# Dataset config: tooling/include/Constants.hpp defines the DatasetConfig class.
+# Each analysis provides analysis/<DATASET>/config/Constants.cpp which creates
+# and initializes the global instance. Editing the .cpp rebuilds all objects.
 
 CXX         := g++
 ROOT_CFLAGS := $(shell root-config --cflags)
@@ -29,8 +33,8 @@ ifeq ($(strip $(DATASET)),)
 $(error MUSIC_DATASET not set. Enter a dataset dev shell (e.g. `nix develop .#87Rb`) or pass DATASET=<iso>)
 endif
 DATASET_DIR := $(abspath analysis/$(DATASET))
-ifeq ($(wildcard $(DATASET_DIR)/config/Constants.hpp),)
-$(error No config at analysis/$(DATASET)/config/Constants.hpp for DATASET=$(DATASET))
+ifeq ($(wildcard $(DATASET_DIR)/config/Constants.cpp),)
+$(error No config at analysis/$(DATASET)/config/Constants.cpp for DATASET=$(DATASET))
 endif
 
 # ---- tree ----
@@ -49,7 +53,7 @@ GPU_LIB  := $(abspath $(GPU_DIR)/libgpuaccel.so)
 CXXFLAGS  := -O3 -g -Wall -Wno-unused-variable -fPIC -std=c++17 \
              -march=native -mtune=native \
              -ffunction-sections -fdata-sections \
-             $(ROOT_CFLAGS) -I$(INC_DIR) -I$(CFG_DIR) \
+             $(ROOT_CFLAGS) -I$(INC_DIR) \
              '-DR__ADD_INCLUDE_PATH(...)=' \
              -DMUSIC_DATASET_NAME='"$(DATASET)"' \
              -DMUSIC_DATASET_DIR='"$(DATASET_DIR)"' \
@@ -72,8 +76,13 @@ ifeq ($(wildcard $(CFG_DIR)/SiCalibConstants.hpp),)
 SRC_OBJS := $(filter-out $(SI_SRC_OBJS),$(SRC_OBJS))
 endif
 
+# Per-dataset config instance: compiled from analysis/<DATASET>/config/Constants.cpp
+DATASET_CFG_SRC := $(CFG_DIR)/Constants.cpp
+DATASET_CFG_OBJ := $(BUILD_DIR)/dataset_constants.o
+SRC_OBJS += $(DATASET_CFG_OBJ)
+
 # Binary "foo-bar" is built from tooling/mains/main_foo_bar.cpp (dashes->underscores).
-BINS := pipeline calibrate-beam traces strip-sum-scatter 
+BINS := pipeline calibrate-beam traces strip-sum-scatter split-sol preprocess-sol
 
 BIN_PATHS := $(addprefix $(BIN_DIR)/,$(BINS))
 
@@ -83,18 +92,16 @@ all: gpu $(BIN_PATHS)
 gpu:
 	$(MAKE) -C $(GPU_DIR)
 
-# Every object explicitly depends on the dataset config headers. The -MMD auto-
-# deps don't reliably re-trigger on the per-dataset config headers (they live on
-# the -I path, outside the source tree), so editing Constants.hpp (or the Si
-# config) wouldn't rebuild and you'd silently run a stale binary. Making them
-# explicit prerequisites means a config change rebuilds everything -- no make
-# clean. SiCalibConstants.hpp is wildcard'd so datasets without it still build.
-# (Absolute source path so __FILE__ expands to one; ProjectRootOf relies on it.)
-CFG_HEADERS := $(CFG_DIR)/Constants.hpp 
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp $(CFG_HEADERS) | $(BUILD_DIR)
+# Every object explicitly depends on the dataset config source. Editing
+# Constants.cpp rebuilds everything -- no make clean needed.
+CFG_SRC := $(DATASET_CFG_SRC)
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp $(CFG_SRC) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c -o $@ $(abspath $<)
 
-$(BUILD_DIR)/%.o: $(MAIN_DIR)/%.cpp $(CFG_HEADERS) | $(BUILD_DIR)
+$(DATASET_CFG_OBJ): $(DATASET_CFG_SRC) | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c -o $@ $(abspath $<)
+
+$(BUILD_DIR)/%.o: $(MAIN_DIR)/%.cpp $(CFG_SRC) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c -o $@ $(abspath $<)
 
 $(LIB): $(SRC_OBJS)

@@ -8,6 +8,7 @@
 #include "EventBuilder.hpp"
 #include "FileSet.hpp"
 #include "GpuAccel.hpp"
+#include "HitAdapter.hpp"
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
 #include "Timing.hpp"

@@ -3,8 +3,33 @@
 std::mutex g_plot_mutex;
 
 TString FileSet::CompassBinPath(const FileSpec &s) {
-  return Constants::COMPASS_BASE_DIR +
+  return Constants::cfg.COMPASS_BASE_DIR +
          Form("run_%d/RAW/DataR_run_%d%s.BIN", s.run, s.run, s.suffix.Data());
+}
+
+TString FileSet::SolBinPath(const FileSpec &s) {
+  // SOLARIS naming: music_exp1915_<RUN3DIGITS>_00_66222_<SEQ3DIGITS>.sol
+  // suffix is empty for _000, or "_1" -> _001, etc.
+  // Chunk suffix "_cNNN" resolves to _chunkNNN.sol in split dir.
+  if (s.suffix.BeginsWith("_c")) {
+    TString chunkIdx = s.suffix(2, s.suffix.Length() - 2);
+    Int_t seq = 0;
+    if (s.suffix.Length() > 4) {
+      TString seqStr = s.suffix(4, s.suffix.Length() - 4);
+      seq = seqStr.Atoi();
+    }
+    return Constants::cfg.SOL_SPLIT_DIR +
+           Form("music_exp1915_%03d_00_66222_%03d_chunk%s.sol", s.run, seq,
+                chunkIdx.Data());
+  }
+
+  Int_t seq = 0;
+  if (s.suffix != "" && s.suffix[0] == '_') {
+    TString seq_str = s.suffix(1, s.suffix.Length() - 1);
+    seq = seq_str.Atoi();
+  }
+  return Constants::cfg.SOL_BASE_DIR +
+         Form("music_exp1915_%03d_00_66222_%03d.sol", s.run, seq);
 }
 
 namespace {
@@ -52,29 +77,24 @@ std::vector<TString> DiscoverSuffixesIn(const TString &dir,
 
 std::vector<FileSpec> BuildSpecsImpl(Bool_t processed) {
   std::vector<FileSpec> specs;
-  for (Int_t r = 0; r < Int_t(Constants::RUN_NUMBERS.size()); r++) {
-    Int_t run = Constants::RUN_NUMBERS[r];
-    if (Constants::N_FILES < 0) {
-      std::vector<TString> suffixes =
-          processed ? FileSet::DiscoverProcessedRunSuffixes(run)
-                    : FileSet::DiscoverRunSuffixes(run);
-      for (Int_t k = 0; k < Int_t(suffixes.size()); k++) {
-        FileSpec s;
-        s.run = run;
-        s.suffix = suffixes[k];
-        specs.push_back(s);
-      }
+  for (Int_t r = 0; r < Int_t(Constants::cfg.RUN_NUMBERS.size()); r++) {
+    Int_t run = Constants::cfg.RUN_NUMBERS[r];
+    std::vector<TString> suffixes;
+    if (processed) {
+      suffixes = FileSet::DiscoverProcessedRunSuffixes(run);
+    } else if (Constants::cfg.USE_SOLARIS_DATA) {
+      suffixes = FileSet::DiscoverSolRunSuffixes(run);
     } else {
-      FileSpec s0;
-      s0.run = run;
-      s0.suffix = "";
-      specs.push_back(s0);
-      for (Int_t i = 1; i < Constants::N_FILES; i++) {
-        FileSpec s;
-        s.run = run;
-        s.suffix = Form("_%d", i);
-        specs.push_back(s);
-      }
+      suffixes = FileSet::DiscoverRunSuffixes(run);
+    }
+    Int_t limit = suffixes.size();
+    if (Constants::cfg.N_CHUNKS > 0 && Constants::cfg.N_CHUNKS < limit)
+      limit = Constants::cfg.N_CHUNKS;
+    for (Int_t k = 0; k < limit; k++) {
+      FileSpec s;
+      s.run = run;
+      s.suffix = suffixes[k];
+      specs.push_back(s);
     }
   }
   return specs;
@@ -82,14 +102,147 @@ std::vector<FileSpec> BuildSpecsImpl(Bool_t processed) {
 } // namespace
 
 std::vector<TString> FileSet::DiscoverRunSuffixes(Int_t run) {
-  return DiscoverSuffixesIn(Constants::COMPASS_BASE_DIR +
+  return DiscoverSuffixesIn(Constants::cfg.COMPASS_BASE_DIR +
                                 Form("run_%d/RAW/", run),
                             Form("DataR_run_%d", run), ".BIN");
 }
 
+std::vector<TString> FileSet::DiscoverSolRunSuffixes(Int_t run) {
+  std::vector<TString> suffixes;
+  TString prefix = Form("music_exp1915_%03d_00_66222_", run);
+
+  // Check for split chunks first
+  TString split_dir = Constants::cfg.SOL_SPLIT_DIR;
+  void *dirp = gSystem->OpenDirectory(split_dir);
+  if (dirp) {
+    const Char_t *name;
+    while ((name = gSystem->GetDirEntry(dirp))) {
+      TString fname(name);
+      if (!fname.BeginsWith(prefix))
+        continue;
+      if (!fname.EndsWith(".sol"))
+        continue;
+      if (!fname.Contains("_chunk"))
+        continue;
+
+      Int_t chunkPos = fname.Index("_chunk");
+      if (chunkPos < 0)
+        continue;
+
+      TString seqStr = fname(prefix.Length(), chunkPos - prefix.Length());
+      if (!seqStr.IsDigit())
+        continue;
+      Int_t seq = seqStr.Atoi();
+
+      TString chunkStr = fname(chunkPos + 6, fname.Length() - chunkPos - 6 - 4);
+      if (!chunkStr.IsDigit())
+        continue;
+
+      if (seq == 0) {
+        suffixes.push_back(Form("_c%s", chunkStr.Data()));
+      } else {
+        suffixes.push_back(Form("_%d_c%s", seq, chunkStr.Data()));
+      }
+    }
+    gSystem->FreeDirectory(dirp);
+
+    if (!suffixes.empty()) {
+      std::sort(suffixes.begin(), suffixes.end(),
+                [](const TString &a, const TString &b) { return a < b; });
+      return suffixes;
+    }
+  }
+
+  // Fall back to original files
+  TString sol_dir = Constants::cfg.SOL_BASE_DIR;
+  dirp = gSystem->OpenDirectory(sol_dir);
+  if (!dirp) {
+    std::cerr << "DiscoverSolRunSuffixes: cannot open " << sol_dir << std::endl;
+    return suffixes;
+  }
+
+  const Char_t *name;
+  while ((name = gSystem->GetDirEntry(dirp))) {
+    TString fname(name);
+    if (!fname.BeginsWith(prefix))
+      continue;
+    if (!fname.EndsWith(".sol"))
+      continue;
+
+    TString rest = fname(prefix.Length(), fname.Length() - prefix.Length() - 4);
+    if (!rest.IsDigit())
+      continue;
+
+    Int_t seq = rest.Atoi();
+    if (seq == 0) {
+      suffixes.push_back("");
+    } else {
+      suffixes.push_back(Form("_%d", seq));
+    }
+  }
+  gSystem->FreeDirectory(dirp);
+
+  // Sort by sequence number
+  std::sort(suffixes.begin(), suffixes.end(),
+            [](const TString &a, const TString &b) {
+              if (a == "")
+                return true;
+              if (b == "")
+                return false;
+              return a.Atoi() < b.Atoi();
+            });
+
+  return suffixes;
+}
+
 std::vector<TString> FileSet::DiscoverProcessedRunSuffixes(Int_t run) {
-  return DiscoverSuffixesIn(IO::GetRootFilesBaseDir(),
-                            Form("Events_Run%d", run), ".root");
+  std::vector<TString> suffixes;
+  TString dir = IO::GetRootFilesBaseDir();
+  TString prefix = Form("Events_Run%d", run);
+  void *dirp = gSystem->OpenDirectory(dir);
+  if (!dirp)
+    return suffixes;
+  const Char_t *name;
+  while ((name = gSystem->GetDirEntry(dirp))) {
+    TString fname(name);
+    if (!fname.BeginsWith(prefix))
+      continue;
+    if (!fname.EndsWith(".root"))
+      continue;
+    TString rest = fname(prefix.Length(), fname.Length() - prefix.Length() - 5);
+    suffixes.push_back(rest);
+  }
+  gSystem->FreeDirectory(dirp);
+  std::sort(suffixes.begin(), suffixes.end(),
+            [](const TString &a, const TString &b) {
+              if (a == "")
+                return true;
+              if (b == "")
+                return false;
+              // Extract leading numeric part for sorting: _1_c000 -> 1, _c000
+              // -> 0
+              Int_t na = 0, nb = 0;
+              if (a.Length() > 1 && a[0] == '_') {
+                TString numA = a(1, a.Length() - 1);
+                Int_t dash = numA.Index('_');
+                if (dash > 0)
+                  numA = numA(0, dash);
+                if (numA.IsDigit())
+                  na = numA.Atoi();
+              }
+              if (b.Length() > 1 && b[0] == '_') {
+                TString numB = b(1, b.Length() - 1);
+                Int_t dash = numB.Index('_');
+                if (dash > 0)
+                  numB = numB(0, dash);
+                if (numB.IsDigit())
+                  nb = numB.Atoi();
+              }
+              if (na != nb)
+                return na < nb;
+              return a < b;
+            });
+  return suffixes;
 }
 
 std::vector<FileSpec> FileSet::BuildFileSpecs() {
