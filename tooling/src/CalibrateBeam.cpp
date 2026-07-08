@@ -364,12 +364,9 @@ Bool_t FitGaussianMuSigma(const std::vector<Float_t> &v, const TString &fname,
 
 void CollectAnchorSamplesOneSubfile(
     const FileSpec &spec, const std::vector<ChannelCal> &chans,
-    const BeamFit2D &beam, std::vector<std::vector<Float_t>> &samples,
-    std::vector<std::vector<Float_t>> *lr_combined_samples = nullptr) {
+    const BeamFit2D &beam, std::vector<std::vector<Float_t>> &samples) {
   Int_t n_chans = Int_t(chans.size());
   samples.assign(n_chans, std::vector<Float_t>());
-  if (lr_combined_samples)
-    lr_combined_samples->assign(16, std::vector<Float_t>());
   if (!beam.ok)
     return;
 
@@ -419,16 +416,6 @@ void CollectAnchorSamplesOneSubfile(
       if (v > 0)
         samples[i].push_back(Float_t(v));
     }
-    // Combined L+R samples for strips 1-16 (for CALIBRATE_LR_COMBINED mode)
-    if (lr_combined_samples) {
-      for (Int_t s = 1; s <= 16; s++) {
-        if (Long64_t((*lr_combined_samples)[s - 1].size()) >= kSampleCap)
-          continue;
-        Int_t combined = Int_t(left_0_17_adc[s]) + Int_t(rightdE_adc[s]);
-        if (combined > 0)
-          (*lr_combined_samples)[s - 1].push_back(Float_t(combined));
-      }
-    }
   }
   sf->Close();
   delete sf;
@@ -439,87 +426,16 @@ void CollectAnchorSamplesOneSubfile(
 // (S guard strips + L/R long anodes) use a robust mode-seeded Gaussian fit
 // over the peak core (mode ± 2σ), anchored to the fitted centroid. Fall back
 // to the robust mode itself on fit failure.
-//
-// In CALIBRATE_LR_COMBINED mode: L+R combined samples are fitted per strip,
-// and both L[s] and R[s] share the same gain from the combined peak fit.
-void ReduceToAnchors(
-    std::vector<ChannelCal> &chans, std::vector<std::vector<Float_t>> &samples,
-    std::vector<TF1 *> &fits_out, const TString &run_label,
-    const std::vector<std::vector<Float_t>> *lr_combined_samples = nullptr) {
+void ReduceToAnchors(std::vector<ChannelCal> &chans,
+                     std::vector<std::vector<Float_t>> &samples,
+                     std::vector<TF1 *> &fits_out, const TString &run_label) {
   Int_t n_chans = Int_t(chans.size());
   fits_out.assign(n_chans, nullptr);
-  const Bool_t combined_mode = Constants::cfg.CALIBRATE_LR_COMBINED;
-
-  // In combined mode, fit the L+R peaks first and store shared gains per strip.
-  std::vector<Double_t> strip_gain(16, 0.0);
-  std::vector<Double_t> strip_fit_adc(16, 0.0);
-  std::vector<Double_t> strip_fit_sigma(16, 0.0);
-  std::vector<Long64_t> strip_n_samples(16, 0);
-  std::vector<TF1 *> strip_fits(16, nullptr);
-
-  if (combined_mode && lr_combined_samples) {
-    for (Int_t s = 1; s <= 16; s++) {
-      const std::vector<Float_t> &v = (*lr_combined_samples)[s - 1];
-      strip_n_samples[s - 1] = Long64_t(v.size());
-      if (Long64_t(v.size()) < kMinSamples) {
-        strip_fit_adc[s - 1] = 0;
-        strip_fit_sigma[s - 1] = 0;
-        continue;
-      }
-      Double_t peak = 0, sig = 0;
-      TF1 *fit = nullptr;
-      TString fname =
-          Form("f_peak_gaus_LR_combined_S%d_%s", s, run_label.Data());
-      if (FitBeamPeakGaussian(v, fname, peak, sig, fit)) {
-        strip_fit_adc[s - 1] = peak;
-        strip_fit_sigma[s - 1] = sig;
-        strip_fits[s - 1] = fit;
-      } else {
-        Double_t mode = 0.0, rsigma = 0.0;
-        RobustPeakSeed(v, mode, rsigma);
-        strip_fit_adc[s - 1] = mode;
-        strip_fit_sigma[s - 1] = rsigma;
-        std::cerr << "  [fit-fallback combined] Strip" << s
-                  << ": peak fit failed; using mode anchor "
-                  << Form("%.1f", strip_fit_adc[s - 1])
-                  << " ADC (n=" << strip_n_samples[s - 1] << ")" << std::endl;
-      }
-      if (strip_fit_adc[s - 1] > 0) {
-        strip_gain[s - 1] = 1.0 / strip_fit_adc[s - 1];
-      }
-      std::cout << "  Strip" << s
-                << " L+R combined anchor[ADC]=" << strip_fit_adc[s - 1]
-                << " sig=" << strip_fit_sigma[s - 1]
-                << " (n=" << strip_n_samples[s - 1] << ")" << std::endl;
-    }
-  }
 
   for (Int_t i = 0; i < n_chans; i++) {
     ChannelCal &c = chans[i];
     std::vector<Float_t> &v = samples[i];
     c.n_samples = Long64_t(v.size());
-
-    if (combined_mode && c.side >= 'L' && c.side <= 'R' && c.strip >= 1 &&
-        c.strip <= 16) {
-      // In combined mode, L and R strips 1-16 share gain from the combined fit.
-      Int_t strip_idx = c.strip - 1;
-      if (strip_fit_adc[strip_idx] > 0) {
-        c.fit_adc = strip_fit_adc[strip_idx];
-        c.fit_sigma_adc = strip_fit_sigma[strip_idx];
-        // Only store the shared fit for one side (L) to avoid double-free when
-        // CalibrateBeamOneSubfile iterates and deletes peak_fits[i].
-        if (c.side == 'L')
-          fits_out[i] = strip_fits[strip_idx];
-      } else {
-        c.fit_adc = 0;
-        c.fit_sigma_adc = 0;
-      }
-      std::cout << "  " << c.name << " (shared with "
-                << (c.side == 'L' ? "R" : "L") << c.strip
-                << ") anchor[ADC]=" << c.fit_adc << " sig=" << c.fit_sigma_adc
-                << " (n=" << strip_n_samples[strip_idx] << ")" << std::endl;
-      continue;
-    }
 
     if (Long64_t(v.size()) < kMinSamples) {
       c.fit_adc = 0;
@@ -893,16 +809,11 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
 
   std::vector<ChannelCal> chans = chans_template;
   std::vector<std::vector<Float_t>> samples;
-  std::vector<std::vector<Float_t>> lr_combined_samples;
-  CollectAnchorSamplesOneSubfile(
-      spec, chans, beam, samples,
-      Constants::cfg.CALIBRATE_LR_COMBINED ? &lr_combined_samples : nullptr);
+  CollectAnchorSamplesOneSubfile(spec, chans, beam, samples);
   std::vector<TF1 *> peak_fits;
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
-    ReduceToAnchors(chans, samples, peak_fits, file_label,
-                    Constants::cfg.CALIBRATE_LR_COMBINED ? &lr_combined_samples
-                                                         : nullptr);
+    ReduceToAnchors(chans, samples, peak_fits, file_label);
     SaveBeamPeakChannelHistograms(chans, samples, peak_fits, plot_subdir);
   }
   for (Int_t i = 0; i < Int_t(peak_fits.size()); i++)

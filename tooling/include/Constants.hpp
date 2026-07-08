@@ -127,7 +127,6 @@ public:
   Bool_t SAVE_PLOTS;
 
   Bool_t SKIP_CALIBRATION;
-  Bool_t CALIBRATE_LR_COMBINED;
 
   Int_t MAX_FUSED_WORKERS;
 

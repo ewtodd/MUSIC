@@ -10,8 +10,11 @@ void InitDatasetConfig() {
   gInstance.USE_SOLARIS_DATA = kTRUE;
   gInstance.SOL_BASE_DIR = "/labdata/MUSIC/New-37Cl/data_raw/";
   gInstance.SOL_SPLIT_DIR = "/labdata/MUSIC/New-37Cl/data_split/";
+  gInstance.SOL_N_SPLIT_WORKERS = 32;
+  gInstance.SOL_SPLIT_CHUNK_SECONDS = 60;
   gInstance.COMPASS_BASE_DIR = "/labdata/MUSIC/37Cl/";
   gInstance.RUN_NUMBERS = {30};
+  gInstance.N_CHUNKS = -1;
   gInstance.SIM_BEAM_FILE = "traces_37Cl_beam.root";
 
   gInstance.N_BOARDS = 1;
@@ -27,7 +30,6 @@ void InitDatasetConfig() {
   gInstance.TIMING_DO_SORT = kFALSE;
 
   gInstance.IGNORE_STRIP_17 = kTRUE;
-  gInstance.CALIBRATE_LR_COMBINED = kTRUE;
   gInstance.MAX_FUSED_WORKERS = 12;
 
   gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 4;

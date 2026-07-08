@@ -103,7 +103,6 @@ DatasetConfig::DatasetConfig() {
   SAVE_PLOTS = kTRUE;
 
   SKIP_CALIBRATION = kFALSE;
-  CALIBRATE_LR_COMBINED = kFALSE;
 
   MAX_FUSED_WORKERS = 12;
 

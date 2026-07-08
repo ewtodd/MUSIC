@@ -35,17 +35,18 @@ void InitDatasetConfig() {
   gInstance.MAX_FUSED_WORKERS = 16;
   gInstance.MAX_GPU_CONCURRENT_SORTS = 20;
 
-  gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN = 2;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN = 3;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX = 15;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 3;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 7;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X = 3.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y = 3.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.XMIN = 14;
   gInstance.STRIP_SUM_SCATTER_CONFIG.XMAX = 18;
   gInstance.STRIP_SUM_SCATTER_CONFIG.Y_RANGE = {
-      {2, {5, 7}},    {3, {5, 7}},  {4, {5, 7}},  {5, {5, 7}},  {6, {5, 7}},
-      {7, {5, 7}},    {8, {5, 7}},  {9, {5, 7}},  {10, {5, 7}}, {11, {5, 7}},
-      {12, {3.5, 6}}, {13, {2, 5}}, {14, {2, 5}}, {15, {1, 4}}};
+      {3, {5.5, 7.5}}, {4, {5, 7}},    {5, {5.5, 7.5}}, {6, {5, 7}},
+      {7, {5, 7}},     {8, {5, 7}},    {9, {5, 7}},     {10, {5, 7}},
+      {11, {5, 7}},    {12, {3.5, 6}}, {13, {2, 5}},    {14, {2, 5}},
+      {15, {1, 4}}};
 
   gInstance.STRIP_E_MAX_ADC = 12000;
   gInstance.TOTAL_E_MAX_ADC = 15 * gInstance.STRIP_E_MAX_ADC;
