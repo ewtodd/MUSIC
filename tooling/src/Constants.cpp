@@ -106,6 +106,8 @@ DatasetConfig::DatasetConfig() {
 
   SKIP_CALIBRATION = kFALSE;
 
+  SAVE_SAMPLE_TRACES = 0;
+
   MAX_FUSED_WORKERS = 12;
 
   REFERENCE_CHANNEL = "Grid";

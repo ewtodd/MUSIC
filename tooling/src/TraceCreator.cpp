@@ -1,5 +1,32 @@
 #include "TraceCreator.hpp"
 
+void TraceCreator::SaveSampleTraces(const std::vector<TGraph *> &traces,
+                                    const TString &save_name,
+                                    const TString &subdir, Double_t y_min,
+                                    Double_t y_max, const char *y_title) {
+  if (traces.empty())
+    return;
+
+  TH2F *frame =
+      new TH2F(PlottingUtils::GetRandomName().Data(),
+               Form(";Strip;%s", y_title), 18, -0.5, 17.5, 100, y_min, y_max);
+  frame->SetStats(0);
+  TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+  c->cd();
+  frame->Draw();
+
+  for (std::size_t i = 0; i < traces.size(); i++) {
+    traces[i]->SetLineColor(kBlack);
+    traces[i]->SetLineWidth(1);
+    traces[i]->Draw("L SAME");
+  }
+
+  if (Constants::cfg.SAVE_PLOTS)
+    PlottingUtils::SaveFigure(c, save_name, subdir, PlotSaveOptions::kLINEAR);
+  delete c;
+  delete frame;
+}
+
 void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
                                                 const TString &file_label) {
   TString input_filepath = input_filename + ".root";
@@ -40,17 +67,17 @@ void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
 
   // Same histogram set as the raw ADC event builder, but in a.u.
   TH2F *h_music =
-      new TH2F("hMUSIC_Normed",
+      new TH2F(PlottingUtils::GetRandomName().Data(),
                "MUSIC strip energies (complete events);Strip;#DeltaE [a.u.]",
                18, -0.5, 17.5, 400, strip_e_min, strip_e_max);
-  TH1F *h_mult = new TH1F("hMult_Normed",
+  TH1F *h_mult = new TH1F(PlottingUtils::GetRandomName().Data(),
                           "Event multiplicity (complete events);"
                           "Multiplicity;Counts",
                           36, -0.5, 35.5);
   TH2F *h2_R_vs_L[18] = {nullptr};
   for (Int_t s = 1; s <= 16; s++) {
     h2_R_vs_L[s] = new TH2F(
-        Form("h2_R_vs_L_s%d_Normed", s),
+        PlottingUtils::GetRandomName().Data(),
         Form(";Strip %d L #DeltaE [a.u.];Strip %d R #DeltaE [a.u.]", s, s), 200,
         strip_e_min, strip_e_max, 200, strip_e_min, strip_e_max);
   }
@@ -58,29 +85,41 @@ void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
   TH1F *h1_cathode = nullptr;
   TH1F *h1_strip17 = nullptr;
   if (Constants::cfg.HAS_CATHODE)
-    h1_cathode = new TH1F("h1_cathode_Normed", ";Cathode #DeltaE [a.u.];Counts",
-                          400, 0.0, 1.0);
+    h1_cathode = new TH1F(PlottingUtils::GetRandomName().Data(),
+                          ";Cathode #DeltaE [a.u.];Counts", 400, 0.0, 1.0);
   if (Constants::cfg.HAS_STRIP17)
-    h1_strip17 = new TH1F("h1_strip17_Normed", ";Strip17 #DeltaE [a.u.];Counts",
-                          400, strip_e_min, strip_e_max);
+    h1_strip17 = new TH1F(PlottingUtils::GetRandomName().Data(),
+                          ";Strip17 #DeltaE [a.u.];Counts", 400, strip_e_min,
+                          strip_e_max);
   TH2F *h2_strip0_vs_grid = nullptr;
   TH1F *h1_strip0 = nullptr;
   TH1F *h1_grid = nullptr;
   if (Constants::cfg.HAS_STRIP0 && Constants::cfg.HAS_GRID) {
-    h2_strip0_vs_grid = new TH2F("h2_strip0_vs_grid_Normed",
+    h2_strip0_vs_grid = new TH2F(PlottingUtils::GetRandomName().Data(),
                                  ";Grid #DeltaE [a.u.];Strip0 #DeltaE [a.u.]",
                                  200, 0.0, 1.0, 200, strip_e_min, strip_e_max);
   } else if (Constants::cfg.HAS_STRIP0) {
-    h1_strip0 = new TH1F("h1_strip0_Normed", ";Strip0 #DeltaE [a.u.];Counts",
-                         400, strip_e_min, strip_e_max);
+    h1_strip0 = new TH1F(PlottingUtils::GetRandomName().Data(),
+                         ";Strip0 #DeltaE [a.u.];Counts", 400, strip_e_min,
+                         strip_e_max);
   } else if (Constants::cfg.HAS_GRID) {
-    h1_grid = new TH1F("h1_grid_Normed", ";Grid #DeltaE [a.u.];Counts", 400,
-                       0.0, 1.0);
+    h1_grid = new TH1F(PlottingUtils::GetRandomName().Data(),
+                       ";Grid #DeltaE [a.u.];Counts", 400, 0.0, 1.0);
   }
 
   Long64_t n_entries = input_tree->GetEntries();
   std::cout << "[" << file_label << "] building normed summary over "
             << n_entries << " events..." << std::endl;
+
+  // Sample traces for overlay plot
+  std::vector<TGraph *> sample_traces;
+  Long64_t sample_stride = 0;
+  if (Constants::cfg.SAVE_SAMPLE_TRACES > 0) {
+    sample_stride = n_entries / Long64_t(Constants::cfg.SAVE_SAMPLE_TRACES);
+    if (sample_stride < 1)
+      sample_stride = 1;
+  }
+
   for (Long64_t j = 0; j < n_entries; j++) {
     input_tree->GetEntry(j);
     ev.Decode();
@@ -110,6 +149,12 @@ void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
     for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++)
       mult += ev.hits_adc[k];
     h_mult->Fill(Double_t(mult));
+
+    // Collect sample traces
+    if (sample_stride > 0 && j % sample_stride == 0 &&
+        Int_t(sample_traces.size()) < Constants::cfg.SAVE_SAMPLE_TRACES) {
+      sample_traces.push_back(TraceCreator::BuildTraceFromTotals(ev.total));
+    }
   }
 
   {
@@ -118,6 +163,7 @@ void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
 
     // hMUSIC
     TCanvas *c_music = PlottingUtils::GetConfiguredCanvas(kFALSE);
+    c_music->cd();
     PlottingUtils::ConfigureAndDraw2DHistogram(h_music, c_music);
     h_music->GetYaxis()->SetTitleOffset(1.4);
     c_music->SetLeftMargin(0.18);
@@ -130,6 +176,7 @@ void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
 
     // hMult
     TCanvas *c_mult = PlottingUtils::GetConfiguredCanvas(kFALSE);
+    c_mult->cd();
     PlottingUtils::ConfigureAndDrawHistogram(h_mult, kBlue + 1);
     if (Constants::cfg.SAVE_PLOTS)
       PlottingUtils::SaveFigure(c_mult, "multiplicity_normed", subdir,
@@ -139,6 +186,7 @@ void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
     // R vs L for each split strip
     for (Int_t s = 1; s <= 16; s++) {
       TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      c->cd();
       PlottingUtils::ConfigureAndDraw2DHistogram(h2_R_vs_L[s], c);
       h2_R_vs_L[s]->GetYaxis()->SetTitleOffset(1.3);
       if (Constants::cfg.SAVE_PLOTS)
@@ -152,6 +200,7 @@ void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
     // Optional cathode histogram
     if (h1_cathode) {
       TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      c->cd();
       PlottingUtils::ConfigureAndDrawHistogram(h1_cathode, kBlue + 1);
       if (Constants::cfg.SAVE_PLOTS)
         PlottingUtils::SaveFigure(c, "cathode_normed", subdir,
@@ -164,6 +213,7 @@ void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
     // Optional strip17 histogram
     if (h1_strip17) {
       TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      c->cd();
       PlottingUtils::ConfigureAndDrawHistogram(h1_strip17, kBlue + 1);
       if (Constants::cfg.SAVE_PLOTS)
         PlottingUtils::SaveFigure(c, "strip17_normed", subdir,
@@ -176,6 +226,7 @@ void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
     // Strip0 vs grid (2D) or strip0/grid (1D)
     if (h2_strip0_vs_grid) {
       TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      c->cd();
       PlottingUtils::ConfigureAndDraw2DHistogram(h2_strip0_vs_grid, c);
       h2_strip0_vs_grid->GetYaxis()->SetTitleOffset(1.3);
       if (Constants::cfg.SAVE_PLOTS)
@@ -187,6 +238,7 @@ void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
     }
     if (h1_strip0) {
       TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      c->cd();
       PlottingUtils::ConfigureAndDrawHistogram(h1_strip0, kBlue + 1);
       if (Constants::cfg.SAVE_PLOTS)
         PlottingUtils::SaveFigure(c, "strip0_normed", subdir,
@@ -197,6 +249,7 @@ void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
     }
     if (h1_grid) {
       TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      c->cd();
       PlottingUtils::ConfigureAndDrawHistogram(h1_grid, kBlue + 1);
       if (Constants::cfg.SAVE_PLOTS)
         PlottingUtils::SaveFigure(c, "grid_normed", subdir,
@@ -204,6 +257,12 @@ void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
       input_file->cd();
       h1_grid->Write(h1_grid->GetName(), TObject::kOverwrite);
       delete c;
+    }
+
+    // Sample traces overlay
+    if (!sample_traces.empty()) {
+      SaveSampleTraces(sample_traces, "sample_traces_normed", subdir,
+                       strip_e_min, strip_e_max, "#DeltaE [a.u.]");
     }
   }
 
@@ -216,6 +275,8 @@ void TraceCreator::BuildNormedSummaryHistograms(const TString &input_filename,
   delete h2_strip0_vs_grid;
   delete h1_strip0;
   delete h1_grid;
+  for (std::size_t i = 0; i < sample_traces.size(); i++)
+    delete sample_traces[i];
 
   input_file->Close();
   delete input_file;

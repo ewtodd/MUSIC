@@ -1,4 +1,5 @@
 #include "EventBuilder.hpp"
+#include "TraceCreator.hpp"
 
 void EventBuilder::ResetEventState(EventState &e) {
   for (Int_t k = 0; k < 18; k++) {
@@ -169,9 +170,23 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
                    Short_t &grid_branch, UInt_t &flags_or_branch, TH2F *h_music,
                    TH1F *h_mult, TH2F *h2_R_vs_L[18], TH1F *h1_cathode,
                    TH1F *h1_strip17, TH2F *h2_strip0_vs_grid, TH1F *h1_strip0,
-                   TH1F *h1_grid, EventCounters &c) {
+                   TH1F *h1_grid, EventCounters &c, Long64_t event_idx = -1,
+                   std::vector<TGraph *> *sample_traces = nullptr,
+                   Long64_t sample_stride = 0, Int_t *n_sampled = nullptr) {
   for (Int_t s = 1; s < 17; s++)
     e.totaldE[s] = e.leftdE[s] + e.rightdE[s];
+
+  // Collect sample traces for overlay plot
+  if (sample_traces && event_idx >= 0 && sample_stride > 0 &&
+      event_idx % sample_stride == 0 &&
+      Int_t(sample_traces->size()) < Constants::cfg.SAVE_SAMPLE_TRACES) {
+    Double_t total[18];
+    for (Int_t s = 0; s < 18; s++)
+      total[s] = Double_t(e.totaldE[s]);
+    sample_traces->push_back(TraceCreator::BuildTraceFromTotals(total));
+    if (n_sampled)
+      (*n_sampled)++;
+  }
 
   if (e.had_cathode)
     c.events_with_cathode++;
@@ -317,11 +332,11 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     branch->SetBasketSize(128 * 1024 * 1024);
   }
 
-  TH2F *h_music = new TH2F("hMUSIC",
+  TH2F *h_music = new TH2F(PlottingUtils::GetRandomName().Data(),
                            "MUSIC strip energies (complete events);"
                            "Strip;Energy [ADC]",
                            18, -0.5, 17.5, 2000, 0, 16384);
-  TH1F *h_mult = new TH1F("hMult",
+  TH1F *h_mult = new TH1F(PlottingUtils::GetRandomName().Data(),
                           "Event multiplicity (complete events);"
                           "Multiplicity;Counts",
                           36, -0.5, 35.5);
@@ -335,7 +350,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     Double_t rightMax = (s % 2 == 0) ? Constants::cfg.RIGHT_EVEN_MAX_ADC
                                      : Constants::cfg.RIGHT_ODD_MAX_ADC;
     h2_R_vs_L[s] = new TH2F(
-        Form("h2_R_vs_L_s%d", s),
+        PlottingUtils::GetRandomName().Data(),
         Form(";Strip %d L #DeltaE [ADC];Strip %d R #DeltaE [ADC]", s, s), 200,
         Constants::cfg.STRIP_E_MIN_ADC, leftMax, 200,
         Constants::cfg.STRIP_E_MIN_ADC, rightMax);
@@ -345,27 +360,44 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   TH1F *h1_cathode = nullptr;
   TH1F *h1_strip17 = nullptr;
   if (Constants::cfg.HAS_CATHODE)
-    h1_cathode = new TH1F("h1_cathode", ";Cathode #DeltaE [ADC];Counts", 400,
-                          0.0, Constants::cfg.CATHODE_MAX_ADC);
+    h1_cathode = new TH1F(PlottingUtils::GetRandomName().Data(),
+                          ";Cathode #DeltaE [ADC];Counts", 400, 0.0,
+                          Constants::cfg.CATHODE_MAX_ADC);
   if (Constants::cfg.HAS_STRIP17)
-    h1_strip17 = new TH1F("h1_strip17", ";Strip17 #DeltaE [ADC];Counts", 400,
-                          0.0, Constants::cfg.STRIP17_MAX_ADC);
+    h1_strip17 = new TH1F(PlottingUtils::GetRandomName().Data(),
+                          ";Strip17 #DeltaE [ADC];Counts", 400, 0.0,
+                          Constants::cfg.STRIP17_MAX_ADC);
 
   // Strip0 vs grid (2D if both present, else 1D of whichever exists).
   TH2F *h2_strip0_vs_grid = nullptr;
   TH1F *h1_strip0 = nullptr;
   TH1F *h1_grid = nullptr;
   if (Constants::cfg.HAS_STRIP0 && Constants::cfg.HAS_GRID) {
-    h2_strip0_vs_grid = new TH2F("h2_strip0_vs_grid",
+    h2_strip0_vs_grid = new TH2F(PlottingUtils::GetRandomName().Data(),
                                  ";Grid #DeltaE [ADC];Strip0 #DeltaE [ADC]",
                                  200, 0.0, Constants::cfg.GRID_MAX_ADC, 200,
                                  0.0, Constants::cfg.STRIP0_MAX_ADC);
   } else if (Constants::cfg.HAS_STRIP0) {
-    h1_strip0 = new TH1F("h1_strip0", ";Strip0 #DeltaE [ADC];Counts", 400, 0.0,
+    h1_strip0 = new TH1F(PlottingUtils::GetRandomName().Data(),
+                         ";Strip0 #DeltaE [ADC];Counts", 400, 0.0,
                          Constants::cfg.STRIP0_MAX_ADC);
   } else if (Constants::cfg.HAS_GRID) {
-    h1_grid = new TH1F("h1_grid", ";Grid #DeltaE [ADC];Counts", 400, 0.0,
+    h1_grid = new TH1F(PlottingUtils::GetRandomName().Data(),
+                       ";Grid #DeltaE [ADC];Counts", 400, 0.0,
                        Constants::cfg.GRID_MAX_ADC);
+  }
+
+  // Sample traces for overlay plot
+  std::vector<TGraph *> sample_traces;
+  Long64_t sample_stride = 0;
+  Int_t n_sampled = 0;
+  if (Constants::cfg.SAVE_SAMPLE_TRACES > 0) {
+    // Rough estimate of event count: each complete event has ~20 hits
+    // (18 strips + cathode + grid). Stride is in event units, not hit units.
+    Long64_t est_events = Long64_t(hits.size()) / 20;
+    sample_stride = est_events / Long64_t(Constants::cfg.SAVE_SAMPLE_TRACES);
+    if (sample_stride < 1)
+      sample_stride = 1;
   }
 
   // Determine operating mode: reference-channel or blind time-window.
@@ -403,6 +435,8 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       delete h2_strip0_vs_grid;
       delete h1_strip0;
       delete h1_grid;
+      for (std::size_t i = 0; i < sample_traces.size(); i++)
+        delete sample_traces[i];
       return kFALSE;
     }
   }
@@ -466,6 +500,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   Int_t emptyChannelMapEvents = 0;
   Long64_t cathode_hits_total = 0;
   Long64_t dropped_outside_window = 0;
+  Long64_t event_idx = 0;
 
   ULong64_t window_ps = ULong64_t(Constants::cfg.EVENT_TIME_WINDOW_US * 1.0e6);
   DedupStrategy dedup_strat = Constants::cfg.DEDUP_STRATEGY;
@@ -530,7 +565,9 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
           FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
                         hits_arr, cathode, grid, flags_or, h_music, h_mult,
                         h2_R_vs_L, h1_cathode, h1_strip17, h2_strip0_vs_grid,
-                        h1_strip0, h1_grid, cnt);
+                        h1_strip0, h1_grid, cnt, event_idx, &sample_traces,
+                        sample_stride, &n_sampled);
+          event_idx++;
         }
 
         // Seed new event from this reference hit.
@@ -569,7 +606,9 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
         FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
                       hits_arr, cathode, grid, flags_or, h_music, h_mult,
                       h2_R_vs_L, h1_cathode, h1_strip17, h2_strip0_vs_grid,
-                      h1_strip0, h1_grid, cnt);
+                      h1_strip0, h1_grid, cnt, event_idx, &sample_traces,
+                      sample_stride, &n_sampled);
+        event_idx++;
         ResetEventState(cur_event);
         ResetPerChannelData(cur_per_channel);
         cur_ref_ts = h.timestamp;
@@ -599,7 +638,8 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
                   hits_arr, cathode, grid, flags_or, h_music, h_mult, h2_R_vs_L,
                   h1_cathode, h1_strip17, h2_strip0_vs_grid, h1_strip0, h1_grid,
-                  cnt);
+                  cnt, event_idx, &sample_traces, sample_stride, &n_sampled);
+    event_idx++;
   }
 
   std::cout << "Found " << n_ref << " " << Constants::cfg.REFERENCE_CHANNEL
@@ -638,6 +678,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
 
     // hMUSIC
     TCanvas *c_music = PlottingUtils::GetConfiguredCanvas(kFALSE);
+    c_music->cd();
     PlottingUtils::ConfigureAndDraw2DHistogram(h_music, c_music);
     h_music->GetYaxis()->SetTitleOffset(1.4);
     c_music->SetLeftMargin(0.18);
@@ -650,6 +691,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
 
     // hMult
     TCanvas *c_mult = PlottingUtils::GetConfiguredCanvas(kFALSE);
+    c_mult->cd();
     PlottingUtils::ConfigureAndDrawHistogram(h_mult, kBlue + 1);
     if (Constants::cfg.SAVE_PLOTS)
       PlottingUtils::SaveFigure(c_mult, "multiplicity", subdir,
@@ -659,6 +701,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     // R vs L for each split strip
     for (Int_t s = 1; s <= 16; s++) {
       TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      c->cd();
       PlottingUtils::ConfigureAndDraw2DHistogram(h2_R_vs_L[s], c);
       h2_R_vs_L[s]->GetYaxis()->SetTitleOffset(1.3);
       if (Constants::cfg.SAVE_PLOTS)
@@ -672,6 +715,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     // Optional cathode histogram
     if (h1_cathode) {
       TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      c->cd();
       PlottingUtils::ConfigureAndDrawHistogram(h1_cathode, kBlue + 1);
       if (Constants::cfg.SAVE_PLOTS)
         PlottingUtils::SaveFigure(c, "cathode", subdir, PlotSaveOptions::kLOG);
@@ -683,6 +727,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     // Optional strip17 histogram
     if (h1_strip17) {
       TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      c->cd();
       PlottingUtils::ConfigureAndDrawHistogram(h1_strip17, kBlue + 1);
       if (Constants::cfg.SAVE_PLOTS)
         PlottingUtils::SaveFigure(c, "strip17", subdir, PlotSaveOptions::kLOG);
@@ -694,6 +739,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     // Strip0 vs grid (2D) or strip0/grid (1D)
     if (h2_strip0_vs_grid) {
       TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      c->cd();
       PlottingUtils::ConfigureAndDraw2DHistogram(h2_strip0_vs_grid, c);
       h2_strip0_vs_grid->GetYaxis()->SetTitleOffset(1.3);
       if (Constants::cfg.SAVE_PLOTS)
@@ -705,6 +751,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     }
     if (h1_strip0) {
       TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      c->cd();
       PlottingUtils::ConfigureAndDrawHistogram(h1_strip0, kBlue + 1);
       if (Constants::cfg.SAVE_PLOTS)
         PlottingUtils::SaveFigure(c, "strip0", subdir, PlotSaveOptions::kLOG);
@@ -714,12 +761,20 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     }
     if (h1_grid) {
       TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      c->cd();
       PlottingUtils::ConfigureAndDrawHistogram(h1_grid, kBlue + 1);
       if (Constants::cfg.SAVE_PLOTS)
         PlottingUtils::SaveFigure(c, "grid", subdir, PlotSaveOptions::kLOG);
       output_file->cd();
       h1_grid->Write(h1_grid->GetName(), TObject::kOverwrite);
       delete c;
+    }
+
+    // Sample traces overlay
+    if (!sample_traces.empty()) {
+      TraceCreator::SaveSampleTraces(sample_traces, "sample_traces", subdir,
+                                     0.0, Constants::cfg.STRIP_E_MAX_ADC,
+                                     "Energy [ADC]");
     }
   }
 

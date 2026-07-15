@@ -130,6 +130,11 @@ public:
 
   Bool_t SKIP_CALIBRATION;
 
+  // Number of sample traces to save during event build and normed summary
+  // passes (0 = disabled). Saved as overlays in events_summary and
+  // events_summary_normed alongside the histograms.
+  Int_t SAVE_SAMPLE_TRACES;
+
   Int_t MAX_FUSED_WORKERS;
 
   TString REFERENCE_CHANNEL;

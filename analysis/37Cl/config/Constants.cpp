@@ -23,6 +23,9 @@ void InitDatasetConfig() {
   gInstance.TIMING_REF_BOARD = 0;
   gInstance.TIMING_REF_BOARD_CHANNELS = {8};
 
+  gInstance.SAVE_PLOTS = kTRUE;
+  gInstance.SAVE_SAMPLE_TRACES = 10;
+
   gInstance.HAS_CATHODE = kFALSE;
   gInstance.REFERENCE_CHANNEL = "Grid";
   gInstance.REFERENCE_CHANNEL_MIN_ADC = 500;
