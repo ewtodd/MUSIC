@@ -167,12 +167,9 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
                    UShort_t *left_0_17_branch, UShort_t *rightdE_branch,
                    UShort_t *hits_branch, Short_t &cathode_branch,
                    Short_t &grid_branch, UInt_t &flags_or_branch, TH2F *h_music,
-                   TH2F *h_music_clean, TH2F *h_music_flagged, TH1F *h_mult,
-                   TH2F *h2_totalE_vs_stripE[18], TH2F *h2_totalE_vs_L[18],
-                   TH2F *h2_totalE_vs_R[18], TH2F *h2_totalE_vs_cathode,
-                   TH1F *h1_stripE[18], TH1F *h1_L[18], TH1F *h1_R[18],
-                   TH1F *h1_cathode, TH2F *h2_long_back_vs_front,
-                   EventCounters &c) {
+                   TH1F *h_mult, TH2F *h2_R_vs_L[18], TH1F *h1_cathode,
+                   TH1F *h1_strip17, TH2F *h2_strip0_vs_grid, TH1F *h1_strip0,
+                   TH1F *h1_grid, EventCounters &c) {
   for (Int_t s = 1; s < 17; s++)
     e.totaldE[s] = e.leftdE[s] + e.rightdE[s];
 
@@ -230,47 +227,27 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
       flags_or_branch = e.flags_or;
       output_tree->Fill();
 
-      Double_t event_total = 0.0;
       for (Int_t s = 0; s < 18; s++)
-        event_total += Double_t(e.totaldE[s]);
-      for (Int_t s = 0; s < 18; s++) {
         h_music->Fill(Double_t(s), Double_t(e.totaldE[s]));
-        if (has_any_flag)
-          h_music_flagged->Fill(Double_t(s), Double_t(e.totaldE[s]));
-        else
-          h_music_clean->Fill(Double_t(s), Double_t(e.totaldE[s]));
-        h2_totalE_vs_stripE[s]->Fill(Double_t(e.totaldE[s]), event_total);
-        h1_stripE[s]->Fill(Double_t(e.totaldE[s]));
-      }
-      for (Int_t s = 1; s <= 16; s++) {
-        if (e.leftdE[s] > 0) {
-          h2_totalE_vs_L[s]->Fill(Double_t(e.leftdE[s]), event_total);
-          h1_L[s]->Fill(Double_t(e.leftdE[s]));
-        }
-        if (e.rightdE[s] > 0) {
-          h2_totalE_vs_R[s]->Fill(Double_t(e.rightdE[s]), event_total);
-          h1_R[s]->Fill(Double_t(e.rightdE[s]));
-        }
-      }
-      if (e.had_cathode) {
-        h2_totalE_vs_cathode->Fill(Double_t(e.cathode), event_total);
+
+      for (Int_t s = 1; s <= 16; s++)
+        h2_R_vs_L[s]->Fill(Double_t(e.rightdE[s]), Double_t(e.leftdE[s]));
+
+      if (h1_cathode && e.had_cathode)
         h1_cathode->Fill(Double_t(e.cathode));
-      }
-      // Density diagnostic: front-long-L sum vs back-long-L sum, gated by
-      // (count of LeftdE==0 across strips 1..16) < 8. Beam blob plus its
-      // first pileup separate cleanly along the diagonal.
-      Int_t n_left_zero = 0;
-      for (Int_t s = 1; s <= 16; s++) {
-        if (e.leftdE[s] == 0)
-          n_left_zero++;
-      }
-      if (n_left_zero < 8) {
-        Double_t front_long_l =
-            Double_t(e.leftdE[1] + e.leftdE[3] + e.leftdE[5] + e.leftdE[7]);
-        Double_t back_long_l =
-            Double_t(e.leftdE[9] + e.leftdE[11] + e.leftdE[13] + e.leftdE[15]);
-        h2_long_back_vs_front->Fill(back_long_l, front_long_l);
-      }
+
+      if (h1_strip17)
+        h1_strip17->Fill(Double_t(e.totaldE[17]));
+
+      if (h2_strip0_vs_grid)
+        h2_strip0_vs_grid->Fill(Double_t(e.grid), Double_t(e.totaldE[0]));
+
+      if (h1_strip0)
+        h1_strip0->Fill(Double_t(e.totaldE[0]));
+
+      if (h1_grid)
+        h1_grid->Fill(Double_t(e.grid));
+
       Int_t mult = 0;
       for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++)
         mult += e.hits[k];
@@ -344,75 +321,52 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
                            "MUSIC strip energies (complete events);"
                            "Strip;Energy [ADC]",
                            18, -0.5, 17.5, 2000, 0, 16384);
-  TH2F *h_music_clean =
-      new TH2F("hMUSICClean",
-               "MUSIC strip energies (complete, no rejection flags);"
-               "Strip;Energy [ADC]",
-               18, -0.5, 17.5, 2000, 0, 16384);
-  TH2F *h_music_flagged =
-      new TH2F("hMUSICFlagged",
-               "MUSIC strip energies (complete, with rejection flags);"
-               "Strip;Energy [ADC]",
-               18, -0.5, 17.5, 2000, 0, 16384);
   TH1F *h_mult = new TH1F("hMult",
                           "Event multiplicity (complete events);"
                           "Multiplicity;Counts",
                           36, -0.5, 35.5);
 
-  TH2F *h2_totalE_vs_stripE[18];
-  TH1F *h1_stripE[18];
-  for (Int_t s = 0; s < 18; s++) {
-    // Strip 0 dynamic range exceeds the L/R-tuned default; widen so its
-    // beam + pileup peaks fit on the calibration h2.
-    Double_t strip_e_max = (s == 0) ? 10000.0 : Constants::cfg.STRIP_E_MAX_ADC;
-    h2_totalE_vs_stripE[s] = new TH2F(
-        Form("h2_totalE_vs_stripE_s%d", s),
-        Form(";Strip %d #DeltaE [ADC];Total #DeltaE [ADC]", s), 200,
-        Constants::cfg.STRIP_E_MIN_ADC, strip_e_max, 400,
-        Constants::cfg.TOTAL_E_MIN_ADC, Constants::cfg.TOTAL_E_MAX_ADC);
-    h1_stripE[s] = new TH1F(Form("h1_stripE_s%d", s),
-                            Form(";Strip %d #DeltaE [ADC];Counts", s), 400,
-                            Constants::cfg.STRIP_E_MIN_ADC, strip_e_max);
-  }
-  TH2F *h2_totalE_vs_cathode = new TH2F(
-      "h2_totalE_vs_cathode", ";Cathode #DeltaE [ADC];Total #DeltaE [ADC]", 200,
-      0.0, 16384.0, 400, Constants::cfg.TOTAL_E_MIN_ADC,
-      Constants::cfg.TOTAL_E_MAX_ADC);
-  TH1F *h1_cathode = new TH1F("h1_cathode", ";Cathode #DeltaE [ADC];Counts",
-                              400, 0.0, 16384.0);
-  // Per-side per-strip h2s/h1s for split strips 1..16. Indices 0 and 17
-  // unused (guard strips are unsplit).
-  TH2F *h2_totalE_vs_L[18] = {nullptr};
-  TH2F *h2_totalE_vs_R[18] = {nullptr};
-  TH1F *h1_L[18] = {nullptr};
-  TH1F *h1_R[18] = {nullptr};
+  // Right vs left for each split strip (1..16). Indices 0 and 17 unused
+  // (guard strips are unsplit).
+  TH2F *h2_R_vs_L[18] = {nullptr};
   for (Int_t s = 1; s <= 16; s++) {
-    h2_totalE_vs_L[s] = new TH2F(
-        Form("h2_totalE_vs_L_s%d", s),
-        Form(";Strip %d L #DeltaE [ADC];Total #DeltaE [ADC]", s), 200,
-        Constants::cfg.STRIP_E_MIN_ADC, Constants::cfg.STRIP_E_MAX_ADC, 400,
-        Constants::cfg.TOTAL_E_MIN_ADC, Constants::cfg.TOTAL_E_MAX_ADC);
-    h2_totalE_vs_R[s] = new TH2F(
-        Form("h2_totalE_vs_R_s%d", s),
-        Form(";Strip %d R #DeltaE [ADC];Total #DeltaE [ADC]", s), 200,
-        Constants::cfg.STRIP_E_MIN_ADC, Constants::cfg.STRIP_E_MAX_ADC, 400,
-        Constants::cfg.TOTAL_E_MIN_ADC, Constants::cfg.TOTAL_E_MAX_ADC);
-    h1_L[s] = new TH1F(
-        Form("h1_L_s%d", s), Form(";Strip %d L #DeltaE [ADC];Counts", s), 400,
-        Constants::cfg.STRIP_E_MIN_ADC, Constants::cfg.STRIP_E_MAX_ADC);
-    h1_R[s] = new TH1F(
-        Form("h1_R_s%d", s), Form(";Strip %d R #DeltaE [ADC];Counts", s), 400,
-        Constants::cfg.STRIP_E_MIN_ADC, Constants::cfg.STRIP_E_MAX_ADC);
+    Double_t leftMax = (s % 2 == 0) ? Constants::cfg.LEFT_EVEN_MAX_ADC
+                                    : Constants::cfg.LEFT_ODD_MAX_ADC;
+    Double_t rightMax = (s % 2 == 0) ? Constants::cfg.RIGHT_EVEN_MAX_ADC
+                                     : Constants::cfg.RIGHT_ODD_MAX_ADC;
+    h2_R_vs_L[s] = new TH2F(
+        Form("h2_R_vs_L_s%d", s),
+        Form(";Strip %d L #DeltaE [ADC];Strip %d R #DeltaE [ADC]", s, s), 200,
+        Constants::cfg.STRIP_E_MIN_ADC, leftMax, 200,
+        Constants::cfg.STRIP_E_MIN_ADC, rightMax);
   }
-  // Density diagnostic for beam-event isolation. Axes are the long-L sums
-  // across the back half (strips 9,11,13,15) and front half (strips
-  // 1,3,5,7). With the per-event gate applied at fill time, the beam and
-  // first-pileup blobs sit along the diagonal.
-  TH2F *h2_long_back_vs_front =
-      new TH2F("h2_long_back_vs_front",
-               ";Long-L back sum (s9+s11+s13+s15) [ADC];"
-               "Long-L front sum (s1+s3+s5+s7) [ADC]",
-               400, 0.0, 10000.0, 400, 0.0, 10000.0);
+
+  // Optional 1D histograms based on hardware flags.
+  TH1F *h1_cathode = nullptr;
+  TH1F *h1_strip17 = nullptr;
+  if (Constants::cfg.HAS_CATHODE)
+    h1_cathode = new TH1F("h1_cathode", ";Cathode #DeltaE [ADC];Counts", 400,
+                          0.0, Constants::cfg.CATHODE_MAX_ADC);
+  if (Constants::cfg.HAS_STRIP17)
+    h1_strip17 = new TH1F("h1_strip17", ";Strip17 #DeltaE [ADC];Counts", 400,
+                          0.0, Constants::cfg.STRIP17_MAX_ADC);
+
+  // Strip0 vs grid (2D if both present, else 1D of whichever exists).
+  TH2F *h2_strip0_vs_grid = nullptr;
+  TH1F *h1_strip0 = nullptr;
+  TH1F *h1_grid = nullptr;
+  if (Constants::cfg.HAS_STRIP0 && Constants::cfg.HAS_GRID) {
+    h2_strip0_vs_grid = new TH2F("h2_strip0_vs_grid",
+                                 ";Grid #DeltaE [ADC];Strip0 #DeltaE [ADC]",
+                                 200, 0.0, Constants::cfg.GRID_MAX_ADC, 200,
+                                 0.0, Constants::cfg.STRIP0_MAX_ADC);
+  } else if (Constants::cfg.HAS_STRIP0) {
+    h1_strip0 = new TH1F("h1_strip0", ";Strip0 #DeltaE [ADC];Counts", 400, 0.0,
+                         Constants::cfg.STRIP0_MAX_ADC);
+  } else if (Constants::cfg.HAS_GRID) {
+    h1_grid = new TH1F("h1_grid", ";Grid #DeltaE [ADC];Counts", 400, 0.0,
+                       Constants::cfg.GRID_MAX_ADC);
+  }
 
   // Determine operating mode: reference-channel or blind time-window.
   Bool_t ref_mode = Constants::cfg.REFERENCE_CHANNEL != "NONE";
@@ -441,22 +395,14 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       output_file->Close();
       delete output_file;
       delete h_music;
-      delete h_music_clean;
-      delete h_music_flagged;
       delete h_mult;
-      for (Int_t s = 0; s < 18; s++) {
-        delete h2_totalE_vs_stripE[s];
-        delete h1_stripE[s];
-      }
-      for (Int_t s = 1; s <= 16; s++) {
-        delete h2_totalE_vs_L[s];
-        delete h2_totalE_vs_R[s];
-        delete h1_L[s];
-        delete h1_R[s];
-      }
-      delete h2_totalE_vs_cathode;
+      for (Int_t s = 1; s <= 16; s++)
+        delete h2_R_vs_L[s];
       delete h1_cathode;
-      delete h2_long_back_vs_front;
+      delete h1_strip17;
+      delete h2_strip0_vs_grid;
+      delete h1_strip0;
+      delete h1_grid;
       return kFALSE;
     }
   }
@@ -552,6 +498,12 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       // Reference hit seeds a new event; non-reference hits queue until
       // next reference hit (or end of stream).
       if (slot == ref_slot) {
+        // Grid ADC window filter: skip reference hits outside the accepted
+        // range so they don't seed an event.
+        if (Double_t(h.energy) < Constants::cfg.REFERENCE_CHANNEL_MIN_ADC ||
+            Double_t(h.energy) > Constants::cfg.REFERENCE_CHANNEL_MAX_ADC) {
+          continue;
+        }
         if (n_ref == 0)
           first_ref_ts = h.timestamp;
         last_ref_ts = h.timestamp;
@@ -576,11 +528,9 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
 
           // Finalize the completed event.
           FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
-                        hits_arr, cathode, grid, flags_or, h_music,
-                        h_music_clean, h_music_flagged, h_mult,
-                        h2_totalE_vs_stripE, h2_totalE_vs_L, h2_totalE_vs_R,
-                        h2_totalE_vs_cathode, h1_stripE, h1_L, h1_R, h1_cathode,
-                        h2_long_back_vs_front, cnt);
+                        hits_arr, cathode, grid, flags_or, h_music, h_mult,
+                        h2_R_vs_L, h1_cathode, h1_strip17, h2_strip0_vs_grid,
+                        h1_strip0, h1_grid, cnt);
         }
 
         // Seed new event from this reference hit.
@@ -617,11 +567,9 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       } else {
         // Window exceeded — finalize and start new window.
         FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
-                      hits_arr, cathode, grid, flags_or, h_music, h_music_clean,
-                      h_music_flagged, h_mult, h2_totalE_vs_stripE,
-                      h2_totalE_vs_L, h2_totalE_vs_R, h2_totalE_vs_cathode,
-                      h1_stripE, h1_L, h1_R, h1_cathode, h2_long_back_vs_front,
-                      cnt);
+                      hits_arr, cathode, grid, flags_or, h_music, h_mult,
+                      h2_R_vs_L, h1_cathode, h1_strip17, h2_strip0_vs_grid,
+                      h1_strip0, h1_grid, cnt);
         ResetEventState(cur_event);
         ResetPerChannelData(cur_per_channel);
         cur_ref_ts = h.timestamp;
@@ -649,10 +597,9 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       pending.clear();
     }
     FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
-                  hits_arr, cathode, grid, flags_or, h_music, h_music_clean,
-                  h_music_flagged, h_mult, h2_totalE_vs_stripE, h2_totalE_vs_L,
-                  h2_totalE_vs_R, h2_totalE_vs_cathode, h1_stripE, h1_L, h1_R,
-                  h1_cathode, h2_long_back_vs_front, cnt);
+                  hits_arr, cathode, grid, flags_or, h_music, h_mult, h2_R_vs_L,
+                  h1_cathode, h1_strip17, h2_strip0_vs_grid, h1_strip0, h1_grid,
+                  cnt);
   }
 
   std::cout << "Found " << n_ref << " " << Constants::cfg.REFERENCE_CHANNEL
@@ -664,22 +611,14 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     output_file->Close();
     delete output_file;
     delete h_music;
-    delete h_music_clean;
-    delete h_music_flagged;
     delete h_mult;
-    for (Int_t s = 0; s < 18; s++) {
-      delete h2_totalE_vs_stripE[s];
-      delete h1_stripE[s];
-    }
-    for (Int_t s = 1; s <= 16; s++) {
-      delete h2_totalE_vs_L[s];
-      delete h2_totalE_vs_R[s];
-      delete h1_L[s];
-      delete h1_R[s];
-    }
-    delete h2_totalE_vs_cathode;
+    for (Int_t s = 1; s <= 16; s++)
+      delete h2_R_vs_L[s];
     delete h1_cathode;
-    delete h2_long_back_vs_front;
+    delete h1_strip17;
+    delete h2_strip0_vs_grid;
+    delete h1_strip0;
+    delete h1_grid;
     return kFALSE;
   }
 
@@ -695,8 +634,9 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
 
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
-    TString subdir = "events_nearest/" + file_label;
+    TString subdir = "events_summary/" + file_label;
 
+    // hMUSIC
     TCanvas *c_music = PlottingUtils::GetConfiguredCanvas(kFALSE);
     PlottingUtils::ConfigureAndDraw2DHistogram(h_music, c_music);
     h_music->GetYaxis()->SetTitleOffset(1.4);
@@ -708,29 +648,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     c_music->Write(h_music->GetName(), TObject::kOverwrite);
     delete c_music;
 
-    TCanvas *c_music_clean = PlottingUtils::GetConfiguredCanvas(kFALSE);
-    PlottingUtils::ConfigureAndDraw2DHistogram(h_music_clean, c_music_clean);
-    h_music_clean->GetYaxis()->SetTitleOffset(1.4);
-    c_music_clean->SetLeftMargin(0.18);
-    if (Constants::cfg.SAVE_PLOTS)
-      PlottingUtils::SaveFigure(c_music_clean, "music_strip_energies_clean",
-                                subdir, PlotSaveOptions::kLINEAR);
-    output_file->cd();
-    c_music_clean->Write(h_music_clean->GetName(), TObject::kOverwrite);
-    delete c_music_clean;
-
-    TCanvas *c_music_flagged = PlottingUtils::GetConfiguredCanvas(kFALSE);
-    PlottingUtils::ConfigureAndDraw2DHistogram(h_music_flagged,
-                                               c_music_flagged);
-    h_music_flagged->GetYaxis()->SetTitleOffset(1.4);
-    c_music_flagged->SetLeftMargin(0.18);
-    if (Constants::cfg.SAVE_PLOTS)
-      PlottingUtils::SaveFigure(c_music_flagged, "music_strip_energies_flagged",
-                                subdir, PlotSaveOptions::kLINEAR);
-    output_file->cd();
-    c_music_flagged->Write(h_music_flagged->GetName(), TObject::kOverwrite);
-    delete c_music_flagged;
-
+    // hMult
     TCanvas *c_mult = PlottingUtils::GetConfiguredCanvas(kFALSE);
     PlottingUtils::ConfigureAndDrawHistogram(h_mult, kBlue + 1);
     if (Constants::cfg.SAVE_PLOTS)
@@ -738,114 +656,80 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
                                 PlotSaveOptions::kLOG);
     delete c_mult;
 
-    TString trace_summary_subdir = "trace_summary/" + file_label;
-    for (Int_t s = 0; s < 18; s++) {
-      TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
-      PlottingUtils::ConfigureAndDraw2DHistogram(h2_totalE_vs_stripE[s], c);
-      h2_totalE_vs_stripE[s]->GetYaxis()->SetTitleOffset(1.3);
-      if (Constants::cfg.SAVE_PLOTS)
-        PlottingUtils::SaveFigure(c, Form("totalE_vs_stripE_s%d", s),
-                                  trace_summary_subdir,
-                                  PlotSaveOptions::kLINEAR);
-      output_file->cd();
-      c->Write(h2_totalE_vs_stripE[s]->GetName(), TObject::kOverwrite);
-      delete c;
-
-      TCanvas *c1 = PlottingUtils::GetConfiguredCanvas(kFALSE);
-      PlottingUtils::ConfigureAndDrawHistogram(h1_stripE[s], kBlue + 1);
-      if (Constants::cfg.SAVE_PLOTS)
-        PlottingUtils::SaveFigure(c1, Form("stripE_s%d", s),
-                                  trace_summary_subdir, PlotSaveOptions::kLOG);
-      output_file->cd();
-      h1_stripE[s]->Write(h1_stripE[s]->GetName(), TObject::kOverwrite);
-      delete c1;
-    }
-
-    TCanvas *c_cath = PlottingUtils::GetConfiguredCanvas(kFALSE);
-    PlottingUtils::ConfigureAndDraw2DHistogram(h2_totalE_vs_cathode, c_cath);
-    h2_totalE_vs_cathode->GetYaxis()->SetTitleOffset(1.3);
-    if (Constants::cfg.SAVE_PLOTS)
-      PlottingUtils::SaveFigure(c_cath, "totalE_vs_cathode",
-                                trace_summary_subdir, PlotSaveOptions::kLINEAR);
-    output_file->cd();
-    c_cath->Write(h2_totalE_vs_cathode->GetName(), TObject::kOverwrite);
-    delete c_cath;
-
-    TCanvas *c_cath1 = PlottingUtils::GetConfiguredCanvas(kFALSE);
-    PlottingUtils::ConfigureAndDrawHistogram(h1_cathode, kBlue + 1);
-    if (Constants::cfg.SAVE_PLOTS)
-      PlottingUtils::SaveFigure(c_cath1, "cathode", trace_summary_subdir,
-                                PlotSaveOptions::kLOG);
-    output_file->cd();
-    h1_cathode->Write(h1_cathode->GetName(), TObject::kOverwrite);
-    delete c_cath1;
-
+    // R vs L for each split strip
     for (Int_t s = 1; s <= 16; s++) {
-      TCanvas *cL = PlottingUtils::GetConfiguredCanvas(kFALSE);
-      PlottingUtils::ConfigureAndDraw2DHistogram(h2_totalE_vs_L[s], cL);
-      h2_totalE_vs_L[s]->GetYaxis()->SetTitleOffset(1.3);
+      TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      PlottingUtils::ConfigureAndDraw2DHistogram(h2_R_vs_L[s], c);
+      h2_R_vs_L[s]->GetYaxis()->SetTitleOffset(1.3);
       if (Constants::cfg.SAVE_PLOTS)
-        PlottingUtils::SaveFigure(cL, Form("totalE_vs_L_s%d", s),
-                                  trace_summary_subdir,
+        PlottingUtils::SaveFigure(c, Form("R_vs_L_s%d", s), subdir,
                                   PlotSaveOptions::kLINEAR);
       output_file->cd();
-      cL->Write(h2_totalE_vs_L[s]->GetName(), TObject::kOverwrite);
-      delete cL;
-
-      TCanvas *cR = PlottingUtils::GetConfiguredCanvas(kFALSE);
-      PlottingUtils::ConfigureAndDraw2DHistogram(h2_totalE_vs_R[s], cR);
-      h2_totalE_vs_R[s]->GetYaxis()->SetTitleOffset(1.3);
-      if (Constants::cfg.SAVE_PLOTS)
-        PlottingUtils::SaveFigure(cR, Form("totalE_vs_R_s%d", s),
-                                  trace_summary_subdir,
-                                  PlotSaveOptions::kLINEAR);
-      output_file->cd();
-      cR->Write(h2_totalE_vs_R[s]->GetName(), TObject::kOverwrite);
-      delete cR;
-
-      TCanvas *c1L = PlottingUtils::GetConfiguredCanvas(kFALSE);
-      PlottingUtils::ConfigureAndDrawHistogram(h1_L[s], kBlue + 1);
-      if (Constants::cfg.SAVE_PLOTS)
-        PlottingUtils::SaveFigure(c1L, Form("L_s%d", s), trace_summary_subdir,
-                                  PlotSaveOptions::kLOG);
-      output_file->cd();
-      h1_L[s]->Write(h1_L[s]->GetName(), TObject::kOverwrite);
-      delete c1L;
-
-      TCanvas *c1R = PlottingUtils::GetConfiguredCanvas(kFALSE);
-      PlottingUtils::ConfigureAndDrawHistogram(h1_R[s], kBlue + 1);
-      if (Constants::cfg.SAVE_PLOTS)
-        PlottingUtils::SaveFigure(c1R, Form("R_s%d", s), trace_summary_subdir,
-                                  PlotSaveOptions::kLOG);
-      output_file->cd();
-      h1_R[s]->Write(h1_R[s]->GetName(), TObject::kOverwrite);
-      delete c1R;
+      c->Write(h2_R_vs_L[s]->GetName(), TObject::kOverwrite);
+      delete c;
     }
 
-    TCanvas *c_dens = PlottingUtils::GetConfiguredCanvas(kFALSE);
-    PlottingUtils::ConfigureAndDraw2DHistogram(h2_long_back_vs_front, c_dens);
-    h2_long_back_vs_front->GetYaxis()->SetTitleOffset(1.3);
-    if (Constants::cfg.SAVE_PLOTS)
-      PlottingUtils::SaveFigure(c_dens, "long_back_vs_front",
-                                trace_summary_subdir, PlotSaveOptions::kLINEAR);
-    output_file->cd();
-    c_dens->Write(h2_long_back_vs_front->GetName(), TObject::kOverwrite);
-    delete c_dens;
+    // Optional cathode histogram
+    if (h1_cathode) {
+      TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      PlottingUtils::ConfigureAndDrawHistogram(h1_cathode, kBlue + 1);
+      if (Constants::cfg.SAVE_PLOTS)
+        PlottingUtils::SaveFigure(c, "cathode", subdir, PlotSaveOptions::kLOG);
+      output_file->cd();
+      h1_cathode->Write(h1_cathode->GetName(), TObject::kOverwrite);
+      delete c;
+    }
+
+    // Optional strip17 histogram
+    if (h1_strip17) {
+      TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      PlottingUtils::ConfigureAndDrawHistogram(h1_strip17, kBlue + 1);
+      if (Constants::cfg.SAVE_PLOTS)
+        PlottingUtils::SaveFigure(c, "strip17", subdir, PlotSaveOptions::kLOG);
+      output_file->cd();
+      h1_strip17->Write(h1_strip17->GetName(), TObject::kOverwrite);
+      delete c;
+    }
+
+    // Strip0 vs grid (2D) or strip0/grid (1D)
+    if (h2_strip0_vs_grid) {
+      TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      PlottingUtils::ConfigureAndDraw2DHistogram(h2_strip0_vs_grid, c);
+      h2_strip0_vs_grid->GetYaxis()->SetTitleOffset(1.3);
+      if (Constants::cfg.SAVE_PLOTS)
+        PlottingUtils::SaveFigure(c, "strip0_vs_grid", subdir,
+                                  PlotSaveOptions::kLINEAR);
+      output_file->cd();
+      c->Write(h2_strip0_vs_grid->GetName(), TObject::kOverwrite);
+      delete c;
+    }
+    if (h1_strip0) {
+      TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      PlottingUtils::ConfigureAndDrawHistogram(h1_strip0, kBlue + 1);
+      if (Constants::cfg.SAVE_PLOTS)
+        PlottingUtils::SaveFigure(c, "strip0", subdir, PlotSaveOptions::kLOG);
+      output_file->cd();
+      h1_strip0->Write(h1_strip0->GetName(), TObject::kOverwrite);
+      delete c;
+    }
+    if (h1_grid) {
+      TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+      PlottingUtils::ConfigureAndDrawHistogram(h1_grid, kBlue + 1);
+      if (Constants::cfg.SAVE_PLOTS)
+        PlottingUtils::SaveFigure(c, "grid", subdir, PlotSaveOptions::kLOG);
+      output_file->cd();
+      h1_grid->Write(h1_grid->GetName(), TObject::kOverwrite);
+      delete c;
+    }
   }
 
-  for (Int_t s = 0; s < 18; s++) {
-    delete h2_totalE_vs_stripE[s];
-    delete h1_stripE[s];
-  }
-  for (Int_t s = 1; s <= 16; s++) {
-    delete h2_totalE_vs_L[s];
-    delete h2_totalE_vs_R[s];
-    delete h1_L[s];
-    delete h1_R[s];
-  }
-  delete h2_totalE_vs_cathode;
+  for (Int_t s = 1; s <= 16; s++)
+    delete h2_R_vs_L[s];
   delete h1_cathode;
-  delete h2_long_back_vs_front;
+  delete h1_strip17;
+  delete h2_strip0_vs_grid;
+  delete h1_strip0;
+  delete h1_grid;
 
   output_file->Close();
   delete output_file;

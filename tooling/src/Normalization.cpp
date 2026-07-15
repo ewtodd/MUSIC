@@ -5,7 +5,9 @@ Bool_t EnergyView::Attach(TTree *t) {
   tree_ = t;
   t->SetBranchAddress("Left_0_17_dE", left_0_17_adc);
   t->SetBranchAddress("RightdE", rightdE_adc);
+  t->SetBranchAddress("Hits", hits_adc);
   t->SetBranchAddress("Cathode", &cathode_adc);
+  t->SetBranchAddress("Grid", &grid_adc);
   // Materialize the first tree so GetCurrentFile() resolves for a TChain (it is
   // null until a tree is loaded); this makes is_normed correct right after
   // Attach.
@@ -65,6 +67,8 @@ void EnergyView::Decode() {
     // cathode_adc > 0).
     cathode = (cathode_adc > 0) ? Double_t(gain_cathode) * Double_t(cathode_adc)
                                 : 0.0;
+    // Grid has no calibration gain; normalize to [0, 1] by dividing by max ADC.
+    grid = Double_t(grid_adc) / 16384.0;
   } else {
     for (Int_t s = 0; s < 18; s++) {
       left[s] = Double_t(left_0_17_adc[s]);
@@ -72,6 +76,7 @@ void EnergyView::Decode() {
       total[s] = left[s] + right[s];
     }
     cathode = Double_t(cathode_adc);
+    grid = Double_t(grid_adc);
   }
   if (Constants::cfg.IGNORE_SHORT_STRIPS) {
     for (Int_t s = 1; s <= 16; s++) {

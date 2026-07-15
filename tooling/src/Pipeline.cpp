@@ -81,8 +81,7 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
   std::chrono::steady_clock::time_point t_total =
       std::chrono::steady_clock::now();
   std::chrono::steady_clock::time_point t0;
-  Double_t t_parse = 0, t_timing = 0, t_apply = 0, t_events = 0, t_cal = 0,
-           t_traces = 0;
+  Double_t t_parse = 0, t_timing = 0, t_apply = 0, t_events = 0, t_cal = 0;
 
   // SKIP_EXISTING skips the expensive data processing (binary read, timing,
   // event build, calibration) when the events file already exists -- but the
@@ -216,14 +215,14 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
     PrintMemUsage((TString("after calibration ") + file_label).Data());
   }
 
-  std::vector<TString> events_name_vec = {FileSet::EventsName(spec)};
-  std::vector<TString> file_labels_vec = {file_label};
-
-  if (Constants::cfg.RUN_TRACES) {
+  // Normed summary histograms (requires calibration from above).
+  {
     t0 = std::chrono::steady_clock::now();
-    TraceCreator::BuildTraces(events_name_vec, file_labels_vec, kTRUE, kTRUE);
-    t_traces = FusedSecSince(t0);
-    PrintMemUsage((TString("after traces ") + file_label).Data());
+    TraceCreator::BuildNormedSummaryHistograms(FileSet::EventsName(spec),
+                                               file_label);
+    Double_t t_normed = FusedSecSince(t0);
+    std::lock_guard<std::mutex> lock(fused_log_mutex);
+    std::cout << "  normed summary: " << t_normed << "s" << std::endl;
   }
 
   Double_t total = FusedSecSince(t_total);
@@ -232,8 +231,7 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
     std::cout << std::fixed << std::setprecision(1) << "[done] " << file_label
               << " total=" << total << "s  parse=" << t_parse
               << "  timing=" << t_timing << "  apply=" << t_apply
-              << "  events=" << t_events << "  cal=" << t_cal
-              << "  traces=" << t_traces << std::endl;
+              << "  events=" << t_events << "  cal=" << t_cal << std::endl;
   }
   return kTRUE;
 }

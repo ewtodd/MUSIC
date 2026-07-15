@@ -114,16 +114,18 @@ public:
   Bool_t TIMING_DO_BOARD_SYNC;
   Bool_t TIMING_DO_SORT;
 
-  Int_t MAX_TRACE_SAVES;
-
   Bool_t REJECT_FLAGGED_EVENTS;
 
   Bool_t IGNORE_SHORT_STRIPS;
   Bool_t IGNORE_STRIP_0;
   Bool_t IGNORE_STRIP_17;
 
+  Bool_t HAS_CATHODE;
+  Bool_t HAS_GRID;
+  Bool_t HAS_STRIP0;
+  Bool_t HAS_STRIP17;
+
   Bool_t SKIP_EXISTING;
-  Bool_t RUN_TRACES;
   Bool_t SAVE_PLOTS;
 
   Bool_t SKIP_CALIBRATION;
@@ -151,6 +153,21 @@ public:
   Double_t STRIP_E_MAX_ADC;
   Double_t TOTAL_E_MIN_ADC;
   Double_t TOTAL_E_MAX_ADC;
+
+  Double_t GRID_MIN_ADC;
+  Double_t GRID_MAX_ADC;
+
+  Double_t REFERENCE_CHANNEL_MIN_ADC;
+  Double_t REFERENCE_CHANNEL_MAX_ADC;
+
+  Double_t STRIP0_MAX_ADC;
+  Double_t STRIP17_MAX_ADC;
+  Double_t CATHODE_MAX_ADC;
+
+  Double_t LEFT_EVEN_MAX_ADC;
+  Double_t LEFT_ODD_MAX_ADC;
+  Double_t RIGHT_EVEN_MAX_ADC;
+  Double_t RIGHT_ODD_MAX_ADC;
 
   std::map<std::pair<Int_t, Int_t>, TString> channelMap;
   std::map<std::pair<Int_t, Int_t>, TString> channelMap64;

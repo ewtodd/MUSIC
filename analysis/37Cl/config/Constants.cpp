@@ -1,4 +1,5 @@
 #include "Constants.hpp"
+#include <RtypesCore.h>
 
 namespace Constants {
 
@@ -13,8 +14,8 @@ void InitDatasetConfig() {
   gInstance.SOL_N_SPLIT_WORKERS = 32;
   gInstance.SOL_SPLIT_CHUNK_SECONDS = 60;
   gInstance.COMPASS_BASE_DIR = "/labdata/MUSIC/37Cl/";
-  gInstance.RUN_NUMBERS = {30};
-  gInstance.N_CHUNKS = -1;
+  gInstance.RUN_NUMBERS = {30, 84};
+  gInstance.N_CHUNKS = 3;
   gInstance.SIM_BEAM_FILE = "traces_37Cl_beam.root";
 
   gInstance.N_BOARDS = 1;
@@ -22,7 +23,10 @@ void InitDatasetConfig() {
   gInstance.TIMING_REF_BOARD = 0;
   gInstance.TIMING_REF_BOARD_CHANNELS = {8};
 
+  gInstance.HAS_CATHODE = kFALSE;
   gInstance.REFERENCE_CHANNEL = "Grid";
+  gInstance.REFERENCE_CHANNEL_MIN_ADC = 500;
+  gInstance.REFERENCE_CHANNEL_MAX_ADC = 4500;
   gInstance.EVENT_TIME_WINDOW_US = 8.0;
   gInstance.DEDUP_STRATEGY = kLARGEST_ENERGY;
 
@@ -38,6 +42,15 @@ void InitDatasetConfig() {
       {7, {0, 17.5}},  {8, {0, 17.5}}, {9, {0, 17.5}}, {10, {0, 17.5}},
       {11, {0, 17.5}}, {12, {3.5, 6}}, {13, {2, 5}},   {14, {2, 5}},
       {15, {1, 4}}};
+
+  gInstance.STRIP0_MAX_ADC = 1000;
+  gInstance.STRIP17_MAX_ADC = 10000;
+  gInstance.GRID_MAX_ADC = 10000;
+
+  gInstance.RIGHT_EVEN_MAX_ADC = 2500;
+  gInstance.RIGHT_ODD_MAX_ADC = 8000;
+  gInstance.LEFT_EVEN_MAX_ADC = 8000;
+  gInstance.LEFT_ODD_MAX_ADC = 2500;
 
   gInstance.STRIP_E_MAX_ADC = 4096.0;
   gInstance.TOTAL_E_MAX_ADC = 60000.0;
