@@ -117,11 +117,54 @@
             '';
           };
       in
+      let
+        mkPackage =
+          dataset:
+          pkgs.stdenv.mkDerivation {
+            name = "music-tooling-${dataset}";
+            src = ./.;
+            nativeBuildInputs = with pkgs; [
+              pkg-config
+              gnumake
+            ];
+            buildInputs = [
+              analysis-utils
+              root
+              pkgs.bash
+              pkgs.tomlplusplus
+            ]
+            ++ pkgs.lib.optionals isCUDA [
+              pkgs.cudaPackages.cuda_nvcc
+              pkgs.cudaPackages.cuda_cudart
+              pkgs.cudaPackages.cuda_cccl
+            ];
+
+            buildPhase = ''
+              export MUSIC_DATASET="${dataset}"
+              export MUSIC_DATASET_DIR="$sourceRoot/analysis/${dataset}"
+              make -j DATASET_DIR_OUT="$out/analysis/${dataset}" \
+                   GPU_LIB_OUT="$out/lib/libgpuaccel.so"
+            '';
+
+            installPhase = ''
+              mkdir -p $out/bin $out/lib $out/analysis/${dataset}/config
+              cp analysis/${dataset}/bin/* $out/bin/
+              cp tooling/gpu/libgpuaccel.so $out/lib/
+              cp -r analysis/${dataset}/config/* $out/analysis/${dataset}/config/
+            '';
+          };
+      in
       {
         devShells = {
           "87Rb" = mkDatasetShell "87Rb";
           "37Cl" = mkDatasetShell "37Cl";
           default = mkDatasetShell "37Cl";
+        };
+
+        packages = {
+          "87Rb" = mkPackage "87Rb";
+          "37Cl" = mkPackage "37Cl";
+          default = mkPackage "37Cl";
         };
       }
     );

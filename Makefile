@@ -48,7 +48,10 @@ BIN_DIR   := $(DATASET_DIR)/bin
 BUILD_DIR := $(DATASET_DIR)/build
 
 GIT_HASH := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
-GPU_LIB  := $(abspath $(GPU_DIR)/libgpuaccel.so)
+GPU_LIB  ?= $(abspath $(GPU_DIR)/libgpuaccel.so)
+# Runtime paths that can be overridden by nix build (default: same as build paths)
+DATASET_DIR_OUT ?= $(DATASET_DIR)
+GPU_LIB_OUT     ?= $(GPU_LIB)
 
 CXXFLAGS  := -O3 -g -Wall -Wno-unused-variable -fPIC -std=c++17 \
              -march=native -mtune=native \
@@ -56,9 +59,9 @@ CXXFLAGS  := -O3 -g -Wall -Wno-unused-variable -fPIC -std=c++17 \
              $(ROOT_CFLAGS) -I$(INC_DIR) \
              '-DR__ADD_INCLUDE_PATH(...)=' \
              -DMUSIC_DATASET_NAME='"$(DATASET)"' \
-             -DMUSIC_DATASET_DIR='"$(DATASET_DIR)"' \
+             -DMUSIC_DATASET_DIR='"$(DATASET_DIR_OUT)"' \
              -DMUSIC_GIT_HASH='"$(GIT_HASH)"' \
-             -DMUSIC_GPU_LIB='"$(GPU_LIB)"' \
+             -DMUSIC_GPU_LIB='"$(GPU_LIB_OUT)"' \
              -MMD -MP
 LDFLAGS   := -Wl,--gc-sections $(ROOT_LIBS) -lSpectrum -lMinuit \
              -l:libanalysis-utils.so -ldl -lpthread

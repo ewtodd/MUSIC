@@ -45,12 +45,19 @@ void Paths::PrintBanner(const TString &dataset_dir) {
 }
 
 TString Paths::DatasetDir() {
-  TString d = MUSIC_DATASET_DIR;
-  if (d.Length() == 0) {
-    std::cerr << "FATAL: this binary was built without a dataset dir baked in "
-                 "(MUSIC_DATASET_DIR). Rebuild via the Makefile."
-              << std::endl;
-    gSystem->Exit(1);
+  const Char_t *env = gSystem->Getenv("MUSIC_DATASET_DIR");
+  TString d;
+  if (env && env[0] != '\0') {
+    d = TString(env);
+  } else {
+    d = MUSIC_DATASET_DIR;
+    if (d.Length() == 0) {
+      std::cerr
+          << "FATAL: this binary was built without a dataset dir baked in "
+             "(MUSIC_DATASET_DIR). Rebuild via the Makefile."
+          << std::endl;
+      gSystem->Exit(1);
+    }
   }
   static Bool_t printed = kFALSE;
   if (!printed) {
