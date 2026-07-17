@@ -3,13 +3,13 @@
 
 #include "BeamFit2D.hpp"
 #include "Constants.hpp"
+#include "EventsSummary.hpp"
 #include "FileSet.hpp"
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
 #include "Normalization.hpp"
 #include "PlottingUtils.hpp"
 #include "RemixSim.hpp"
-#include "TraceCreator.hpp"
 #include <Rtypes.h>
 #include <TApplication.h>
 #include <TCanvas.h>

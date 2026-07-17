@@ -1,5 +1,5 @@
 #include "EventBuilder.hpp"
-#include "TraceCreator.hpp"
+#include "EventsSummary.hpp"
 
 void EventBuilder::ResetEventState(EventState &e) {
   for (Int_t k = 0; k < 18; k++) {
@@ -167,10 +167,9 @@ struct EventCounters {
 void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
                    UShort_t *left_0_17_branch, UShort_t *rightdE_branch,
                    UShort_t *hits_branch, Short_t &cathode_branch,
-                   Short_t &grid_branch, UInt_t &flags_or_branch, TH2F *h_music,
-                   TH1F *h_mult, TH2F *h2_R_vs_L[18], TH1F *h1_cathode,
-                   TH1F *h1_strip17, TH2F *h2_strip0_vs_grid, TH1F *h1_strip0,
-                   TH1F *h1_grid, EventCounters &c, Long64_t event_idx = -1,
+                   Short_t &grid_branch, UInt_t &flags_or_branch,
+                   SummaryHistograms &hSum, EventCounters &c,
+                   Long64_t event_idx = -1,
                    std::vector<TGraph *> *sample_traces = nullptr,
                    Long64_t sample_stride = 0, Int_t *n_sampled = nullptr) {
   for (Int_t s = 1; s < 17; s++)
@@ -183,7 +182,7 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
     Double_t total[18];
     for (Int_t s = 0; s < 18; s++)
       total[s] = Double_t(e.totaldE[s]);
-    sample_traces->push_back(TraceCreator::BuildTraceFromTotals(total));
+    sample_traces->push_back(EventsSummary::BuildTraceFromTotals(total));
     if (n_sampled)
       (*n_sampled)++;
   }
@@ -243,30 +242,30 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
       output_tree->Fill();
 
       for (Int_t s = 0; s < 18; s++)
-        h_music->Fill(Double_t(s), Double_t(e.totaldE[s]));
+        hSum.h_music->Fill(Double_t(s), Double_t(e.totaldE[s]));
 
       for (Int_t s = 1; s <= 16; s++)
-        h2_R_vs_L[s]->Fill(Double_t(e.rightdE[s]), Double_t(e.leftdE[s]));
+        hSum.h2_R_vs_L[s]->Fill(Double_t(e.leftdE[s]), Double_t(e.rightdE[s]));
 
-      if (h1_cathode && e.had_cathode)
-        h1_cathode->Fill(Double_t(e.cathode));
+      if (hSum.h1_cathode && e.had_cathode)
+        hSum.h1_cathode->Fill(Double_t(e.cathode));
 
-      if (h1_strip17)
-        h1_strip17->Fill(Double_t(e.totaldE[17]));
+      if (hSum.h1_strip17)
+        hSum.h1_strip17->Fill(Double_t(e.totaldE[17]));
 
-      if (h2_strip0_vs_grid)
-        h2_strip0_vs_grid->Fill(Double_t(e.grid), Double_t(e.totaldE[0]));
+      if (hSum.h2_strip0_vs_grid)
+        hSum.h2_strip0_vs_grid->Fill(Double_t(e.grid), Double_t(e.totaldE[0]));
 
-      if (h1_strip0)
-        h1_strip0->Fill(Double_t(e.totaldE[0]));
+      if (hSum.h1_strip0)
+        hSum.h1_strip0->Fill(Double_t(e.totaldE[0]));
 
-      if (h1_grid)
-        h1_grid->Fill(Double_t(e.grid));
+      if (hSum.h1_grid)
+        hSum.h1_grid->Fill(Double_t(e.grid));
 
       Int_t mult = 0;
       for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++)
         mult += e.hits[k];
-      h_mult->Fill(Double_t(mult));
+      hSum.h_mult->Fill(Double_t(mult));
     } else {
       c.complete_rejected++;
     }
@@ -332,60 +331,23 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     branch->SetBasketSize(128 * 1024 * 1024);
   }
 
-  TH2F *h_music = new TH2F(PlottingUtils::GetRandomName().Data(),
-                           "MUSIC strip energies (complete events);"
-                           "Strip;Energy [ADC]",
-                           18, -0.5, 17.5, 2000, 0, 16384);
-  TH1F *h_mult = new TH1F(PlottingUtils::GetRandomName().Data(),
-                          "Event multiplicity (complete events);"
-                          "Multiplicity;Counts",
-                          36, -0.5, 35.5);
+  SummaryHistConfig cfg;
+  cfg.unit_label = "ADC";
+  cfg.strip_e_min = Constants::cfg.STRIP_E_MIN_ADC;
+  cfg.strip_e_max = Constants::cfg.STRIP_E_MAX_ADC;
+  cfg.odd_even_split = kTRUE;
+  cfg.left_odd_max = Constants::cfg.LEFT_ODD_MAX_ADC;
+  cfg.left_even_max = Constants::cfg.LEFT_EVEN_MAX_ADC;
+  cfg.right_odd_max = Constants::cfg.RIGHT_ODD_MAX_ADC;
+  cfg.right_even_max = Constants::cfg.RIGHT_EVEN_MAX_ADC;
+  cfg.cathode_max = Constants::cfg.CATHODE_MAX_ADC;
+  cfg.strip17_max = Constants::cfg.STRIP17_MAX_ADC;
+  cfg.grid_max = Constants::cfg.GRID_MAX_ADC;
+  cfg.strip0_max = Constants::cfg.STRIP0_MAX_ADC;
+  cfg.music_energy_bins = 2000;
 
-  // Right vs left for each split strip (1..16). Indices 0 and 17 unused
-  // (guard strips are unsplit).
-  TH2F *h2_R_vs_L[18] = {nullptr};
-  for (Int_t s = 1; s <= 16; s++) {
-    Double_t leftMax = (s % 2 == 0) ? Constants::cfg.LEFT_EVEN_MAX_ADC
-                                    : Constants::cfg.LEFT_ODD_MAX_ADC;
-    Double_t rightMax = (s % 2 == 0) ? Constants::cfg.RIGHT_EVEN_MAX_ADC
-                                     : Constants::cfg.RIGHT_ODD_MAX_ADC;
-    h2_R_vs_L[s] = new TH2F(
-        PlottingUtils::GetRandomName().Data(),
-        Form(";Strip %d L #DeltaE [ADC];Strip %d R #DeltaE [ADC]", s, s), 200,
-        Constants::cfg.STRIP_E_MIN_ADC, leftMax, 200,
-        Constants::cfg.STRIP_E_MIN_ADC, rightMax);
-  }
-
-  // Optional 1D histograms based on hardware flags.
-  TH1F *h1_cathode = nullptr;
-  TH1F *h1_strip17 = nullptr;
-  if (Constants::cfg.HAS_CATHODE)
-    h1_cathode = new TH1F(PlottingUtils::GetRandomName().Data(),
-                          ";Cathode #DeltaE [ADC];Counts", 400, 0.0,
-                          Constants::cfg.CATHODE_MAX_ADC);
-  if (Constants::cfg.HAS_STRIP17)
-    h1_strip17 = new TH1F(PlottingUtils::GetRandomName().Data(),
-                          ";Strip17 #DeltaE [ADC];Counts", 400, 0.0,
-                          Constants::cfg.STRIP17_MAX_ADC);
-
-  // Strip0 vs grid (2D if both present, else 1D of whichever exists).
-  TH2F *h2_strip0_vs_grid = nullptr;
-  TH1F *h1_strip0 = nullptr;
-  TH1F *h1_grid = nullptr;
-  if (Constants::cfg.HAS_STRIP0 && Constants::cfg.HAS_GRID) {
-    h2_strip0_vs_grid = new TH2F(PlottingUtils::GetRandomName().Data(),
-                                 ";Grid #DeltaE [ADC];Strip0 #DeltaE [ADC]",
-                                 200, 0.0, Constants::cfg.GRID_MAX_ADC, 200,
-                                 0.0, Constants::cfg.STRIP0_MAX_ADC);
-  } else if (Constants::cfg.HAS_STRIP0) {
-    h1_strip0 = new TH1F(PlottingUtils::GetRandomName().Data(),
-                         ";Strip0 #DeltaE [ADC];Counts", 400, 0.0,
-                         Constants::cfg.STRIP0_MAX_ADC);
-  } else if (Constants::cfg.HAS_GRID) {
-    h1_grid = new TH1F(PlottingUtils::GetRandomName().Data(),
-                       ";Grid #DeltaE [ADC];Counts", 400, 0.0,
-                       Constants::cfg.GRID_MAX_ADC);
-  }
+  SummaryHistograms hSum;
+  CreateSummaryHistograms(hSum, cfg);
 
   // Sample traces for overlay plot
   std::vector<TGraph *> sample_traces;
@@ -426,15 +388,15 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
                 << std::endl;
       output_file->Close();
       delete output_file;
-      delete h_music;
-      delete h_mult;
       for (Int_t s = 1; s <= 16; s++)
-        delete h2_R_vs_L[s];
-      delete h1_cathode;
-      delete h1_strip17;
-      delete h2_strip0_vs_grid;
-      delete h1_strip0;
-      delete h1_grid;
+        delete hSum.h2_R_vs_L[s];
+      delete hSum.h_music;
+      delete hSum.h_mult;
+      delete hSum.h1_cathode;
+      delete hSum.h1_strip17;
+      delete hSum.h2_strip0_vs_grid;
+      delete hSum.h1_strip0;
+      delete hSum.h1_grid;
       for (std::size_t i = 0; i < sample_traces.size(); i++)
         delete sample_traces[i];
       return kFALSE;
@@ -563,10 +525,8 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
 
           // Finalize the completed event.
           FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
-                        hits_arr, cathode, grid, flags_or, h_music, h_mult,
-                        h2_R_vs_L, h1_cathode, h1_strip17, h2_strip0_vs_grid,
-                        h1_strip0, h1_grid, cnt, event_idx, &sample_traces,
-                        sample_stride, &n_sampled);
+                        hits_arr, cathode, grid, flags_or, hSum, cnt, event_idx,
+                        &sample_traces, sample_stride, &n_sampled);
           event_idx++;
         }
 
@@ -604,10 +564,8 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       } else {
         // Window exceeded — finalize and start new window.
         FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
-                      hits_arr, cathode, grid, flags_or, h_music, h_mult,
-                      h2_R_vs_L, h1_cathode, h1_strip17, h2_strip0_vs_grid,
-                      h1_strip0, h1_grid, cnt, event_idx, &sample_traces,
-                      sample_stride, &n_sampled);
+                      hits_arr, cathode, grid, flags_or, hSum, cnt, event_idx,
+                      &sample_traces, sample_stride, &n_sampled);
         event_idx++;
         ResetEventState(cur_event);
         ResetPerChannelData(cur_per_channel);
@@ -636,9 +594,8 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       pending.clear();
     }
     FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
-                  hits_arr, cathode, grid, flags_or, h_music, h_mult, h2_R_vs_L,
-                  h1_cathode, h1_strip17, h2_strip0_vs_grid, h1_strip0, h1_grid,
-                  cnt, event_idx, &sample_traces, sample_stride, &n_sampled);
+                  hits_arr, cathode, grid, flags_or, hSum, cnt, event_idx,
+                  &sample_traces, sample_stride, &n_sampled);
     event_idx++;
   }
 
@@ -650,15 +607,15 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
               << " hits in file, skipping." << std::endl;
     output_file->Close();
     delete output_file;
-    delete h_music;
-    delete h_mult;
     for (Int_t s = 1; s <= 16; s++)
-      delete h2_R_vs_L[s];
-    delete h1_cathode;
-    delete h1_strip17;
-    delete h2_strip0_vs_grid;
-    delete h1_strip0;
-    delete h1_grid;
+      delete hSum.h2_R_vs_L[s];
+    delete hSum.h_music;
+    delete hSum.h_mult;
+    delete hSum.h1_cathode;
+    delete hSum.h1_strip17;
+    delete hSum.h2_strip0_vs_grid;
+    delete hSum.h1_strip0;
+    delete hSum.h1_grid;
     return kFALSE;
   }
 
@@ -670,121 +627,20 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   output_file->cd();
   TParameter<Double_t>("grid_rate_hz", ref_rate_hz).Write();
   output_tree->Write("events", TObject::kOverwrite);
-  h_mult->Write("", TObject::kOverwrite);
+  hSum.h_mult->Write("", TObject::kOverwrite);
 
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
     TString subdir = "events_summary/" + file_label;
-
-    // hMUSIC
-    TCanvas *c_music = PlottingUtils::GetConfiguredCanvas(kFALSE);
-    c_music->cd();
-    PlottingUtils::ConfigureAndDraw2DHistogram(h_music, c_music);
-    h_music->GetYaxis()->SetTitleOffset(1.4);
-    c_music->SetLeftMargin(0.18);
-    if (Constants::cfg.SAVE_PLOTS)
-      PlottingUtils::SaveFigure(c_music, "music_strip_energies", subdir,
-                                PlotSaveOptions::kLINEAR);
-    output_file->cd();
-    c_music->Write(h_music->GetName(), TObject::kOverwrite);
-    delete c_music;
-
-    // hMult
-    TCanvas *c_mult = PlottingUtils::GetConfiguredCanvas(kFALSE);
-    c_mult->cd();
-    PlottingUtils::ConfigureAndDrawHistogram(h_mult, kBlue + 1);
-    if (Constants::cfg.SAVE_PLOTS)
-      PlottingUtils::SaveFigure(c_mult, "multiplicity", subdir,
-                                PlotSaveOptions::kLOG);
-    delete c_mult;
-
-    // R vs L for each split strip
-    for (Int_t s = 1; s <= 16; s++) {
-      TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
-      c->cd();
-      PlottingUtils::ConfigureAndDraw2DHistogram(h2_R_vs_L[s], c);
-      h2_R_vs_L[s]->GetYaxis()->SetTitleOffset(1.3);
-      if (Constants::cfg.SAVE_PLOTS)
-        PlottingUtils::SaveFigure(c, Form("R_vs_L_s%d", s), subdir,
-                                  PlotSaveOptions::kLINEAR);
-      output_file->cd();
-      c->Write(h2_R_vs_L[s]->GetName(), TObject::kOverwrite);
-      delete c;
-    }
-
-    // Optional cathode histogram
-    if (h1_cathode) {
-      TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
-      c->cd();
-      PlottingUtils::ConfigureAndDrawHistogram(h1_cathode, kBlue + 1);
-      if (Constants::cfg.SAVE_PLOTS)
-        PlottingUtils::SaveFigure(c, "cathode", subdir, PlotSaveOptions::kLOG);
-      output_file->cd();
-      h1_cathode->Write(h1_cathode->GetName(), TObject::kOverwrite);
-      delete c;
-    }
-
-    // Optional strip17 histogram
-    if (h1_strip17) {
-      TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
-      c->cd();
-      PlottingUtils::ConfigureAndDrawHistogram(h1_strip17, kBlue + 1);
-      if (Constants::cfg.SAVE_PLOTS)
-        PlottingUtils::SaveFigure(c, "strip17", subdir, PlotSaveOptions::kLOG);
-      output_file->cd();
-      h1_strip17->Write(h1_strip17->GetName(), TObject::kOverwrite);
-      delete c;
-    }
-
-    // Strip0 vs grid (2D) or strip0/grid (1D)
-    if (h2_strip0_vs_grid) {
-      TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
-      c->cd();
-      PlottingUtils::ConfigureAndDraw2DHistogram(h2_strip0_vs_grid, c);
-      h2_strip0_vs_grid->GetYaxis()->SetTitleOffset(1.3);
-      if (Constants::cfg.SAVE_PLOTS)
-        PlottingUtils::SaveFigure(c, "strip0_vs_grid", subdir,
-                                  PlotSaveOptions::kLINEAR);
-      output_file->cd();
-      c->Write(h2_strip0_vs_grid->GetName(), TObject::kOverwrite);
-      delete c;
-    }
-    if (h1_strip0) {
-      TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
-      c->cd();
-      PlottingUtils::ConfigureAndDrawHistogram(h1_strip0, kBlue + 1);
-      if (Constants::cfg.SAVE_PLOTS)
-        PlottingUtils::SaveFigure(c, "strip0", subdir, PlotSaveOptions::kLOG);
-      output_file->cd();
-      h1_strip0->Write(h1_strip0->GetName(), TObject::kOverwrite);
-      delete c;
-    }
-    if (h1_grid) {
-      TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
-      c->cd();
-      PlottingUtils::ConfigureAndDrawHistogram(h1_grid, kBlue + 1);
-      if (Constants::cfg.SAVE_PLOTS)
-        PlottingUtils::SaveFigure(c, "grid", subdir, PlotSaveOptions::kLOG);
-      output_file->cd();
-      h1_grid->Write(h1_grid->GetName(), TObject::kOverwrite);
-      delete c;
-    }
+    SaveAndDeleteSummaryHistograms(hSum, output_file, subdir, "");
 
     // Sample traces overlay
     if (!sample_traces.empty()) {
-      TraceCreator::SaveSampleTraces(sample_traces, "sample_traces", subdir,
-                                     0.0, Constants::cfg.STRIP_E_MAX_ADC,
-                                     "Energy [ADC]");
+      EventsSummary::SaveSampleTraces(sample_traces, "sample_traces", subdir,
+                                      0.0, Constants::cfg.STRIP_E_MAX_ADC,
+                                      "Energy [ADC]");
     }
   }
-
-  for (Int_t s = 1; s <= 16; s++)
-    delete h2_R_vs_L[s];
-  delete h1_cathode;
-  delete h1_strip17;
-  delete h2_strip0_vs_grid;
-  delete h1_strip0;
-  delete h1_grid;
 
   output_file->Close();
   delete output_file;

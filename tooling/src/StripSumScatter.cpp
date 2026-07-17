@@ -296,7 +296,7 @@ TGraph *StripSumScatter::TraceFromTotal(const Float_t *total) {
   Double_t td[18];
   for (Int_t s = 0; s < 18; s++)
     td[s] = Double_t(total[s]);
-  return TraceCreator::BuildTraceFromTotals(td);
+  return EventsSummary::BuildTraceFromTotals(td);
 }
 
 void StripSumScatter::DrawRegionTraces(const TString &save_name,
@@ -547,7 +547,7 @@ TGraph *StripSumScatter::SmoothedTraceFromTotal(const Float_t *total) {
   for (Int_t s = 0; s < 18; s++)
     td[s] = Double_t(total[s]);
   SavitzkyGolay(td, sgd);
-  return TraceCreator::BuildTraceFromTotals(sgd);
+  return EventsSummary::BuildTraceFromTotals(sgd);
 }
 
 void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
@@ -1162,7 +1162,7 @@ std::vector<TGraph *> StripSumScatter::SimPopTraces(const TString &file,
     t->GetEntry(j);
     Double_t total[18];
     SimTotal(left, right, gain, total);
-    traces.push_back(TraceCreator::BuildTraceFromTotals(total));
+    traces.push_back(EventsSummary::BuildTraceFromTotals(total));
   }
   f->Close();
   delete f;

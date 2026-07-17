@@ -36,7 +36,7 @@ void InitDatasetConfig() {
   gInstance.TIMING_DO_BOARD_SYNC = kFALSE;
   gInstance.TIMING_DO_SORT = kFALSE;
 
-  gInstance.IGNORE_STRIP_17 = kTRUE;
+  gInstance.IGNORE_STRIP_17 = kFALSE;
   gInstance.MAX_FUSED_WORKERS = 12;
 
   gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 4;
@@ -50,12 +50,12 @@ void InitDatasetConfig() {
   gInstance.STRIP17_MAX_ADC = 10000;
   gInstance.GRID_MAX_ADC = 10000;
 
-  gInstance.RIGHT_EVEN_MAX_ADC = 2500;
-  gInstance.RIGHT_ODD_MAX_ADC = 8000;
-  gInstance.LEFT_EVEN_MAX_ADC = 8000;
-  gInstance.LEFT_ODD_MAX_ADC = 2500;
+  gInstance.RIGHT_ODD_MAX_ADC = 2500;
+  gInstance.RIGHT_EVEN_MAX_ADC = 8000;
+  gInstance.LEFT_ODD_MAX_ADC = 8000;
+  gInstance.LEFT_EVEN_MAX_ADC = 2500;
 
-  gInstance.STRIP_E_MAX_ADC = 4096.0;
+  gInstance.STRIP_E_MAX_ADC = 16384.0;
   gInstance.TOTAL_E_MAX_ADC = 60000.0;
 
   gInstance.channelMap64 = {

@@ -6,13 +6,13 @@
 #include "CalibrateBeam.hpp"
 #include "Constants.hpp"
 #include "EventBuilder.hpp"
+#include "EventsSummary.hpp"
 #include "FileSet.hpp"
 #include "GpuAccel.hpp"
 #include "HitAdapter.hpp"
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
 #include "Timing.hpp"
-#include "TraceCreator.hpp"
 #include <TError.h>
 #include <TMath.h>
 #include <TROOT.h>

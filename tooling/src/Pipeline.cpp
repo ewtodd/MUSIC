@@ -218,8 +218,8 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
   // Normed summary histograms (requires calibration from above).
   {
     t0 = std::chrono::steady_clock::now();
-    TraceCreator::BuildNormedSummaryHistograms(FileSet::EventsName(spec),
-                                               file_label);
+    EventsSummary::BuildNormedSummaryHistograms(FileSet::EventsName(spec),
+                                                file_label);
     Double_t t_normed = FusedSecSince(t0);
     std::lock_guard<std::mutex> lock(fused_log_mutex);
     std::cout << "  normed summary: " << t_normed << "s" << std::endl;
