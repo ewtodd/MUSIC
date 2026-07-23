@@ -3,6 +3,7 @@
 upstream
 *.log
 *.html
+*.md
 CLAUDE.md
 QWEN.md 
 AGENTS.md

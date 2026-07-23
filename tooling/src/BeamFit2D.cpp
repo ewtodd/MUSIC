@@ -2,9 +2,19 @@
 
 Bool_t BeamFitUtils::InEllipseXY(const BeamFit2D &b, Double_t x, Double_t y,
                                  Double_t nx, Double_t ny) {
-  Double_t dx = (x - b.mu_x) / (nx * b.sigma_x);
-  Double_t dy = (y - b.mu_y) / (ny * b.sigma_y);
-  return dx * dx + dy * dy < 1.0;
+  Double_t dx = x - b.mu_x;
+  Double_t dy = y - b.mu_y;
+  Double_t sx = b.sigma_x, sy = b.sigma_y, rho = b.rho;
+  if (sx <= 0 || sy <= 0)
+    return kFALSE;
+  // Correlated 2D Gaussian ellipse (Mahalanobis distance):
+  //   χ² = [(dx/σx)² + (dy/σy)² - 2ρ·dx·dy/(σx·σy)] / (1-ρ²)
+  // Inside n-sigma: χ² < n²  (nx serves as the n-sigma level).
+  Double_t dx_s = dx / sx, dy_s = dy / sy;
+  Double_t r2 = rho * rho;
+  Double_t chi2 =
+      (dx_s * dx_s + dy_s * dy_s - 2.0 * rho * dx_s * dy_s) / (1.0 - r2);
+  return chi2 < nx * nx;
 }
 
 Moments2D BeamFitUtils::ComputeMoments(TH2F *h, Int_t lo_bx, Int_t hi_bx,

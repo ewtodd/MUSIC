@@ -14,8 +14,8 @@ void InitDatasetConfig() {
   gInstance.SOL_N_SPLIT_WORKERS = 32;
   gInstance.SOL_SPLIT_CHUNK_SECONDS = 60;
   gInstance.COMPASS_BASE_DIR = "/labdata/MUSIC/37Cl/";
-  gInstance.RUN_NUMBERS = {30, 84};
-  gInstance.N_CHUNKS = 3;
+  gInstance.RUN_NUMBERS = {84, 85, 86, 87, 88, 89, 90, 91, 92, 93};
+  gInstance.N_CHUNKS = -1;
   gInstance.SIM_BEAM_FILE = "traces_37Cl_beam.root";
 
   gInstance.N_BOARDS = 1;
@@ -36,10 +36,10 @@ void InitDatasetConfig() {
   gInstance.TIMING_DO_BOARD_SYNC = kFALSE;
   gInstance.TIMING_DO_SORT = kFALSE;
 
-  gInstance.IGNORE_STRIP_17 = kFALSE;
-  gInstance.MAX_FUSED_WORKERS = 12;
+  gInstance.IGNORE_STRIP_17 = kTRUE;
+  gInstance.MAX_FUSED_WORKERS = 32;
 
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 4;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 2;
   gInstance.STRIP_SUM_SCATTER_CONFIG.Y_RANGE = {
       {3, {0, 17.5}},  {4, {0, 17.5}}, {5, {0, 17.5}}, {6, {0, 17.5}},
       {7, {0, 17.5}},  {8, {0, 17.5}}, {9, {0, 17.5}}, {10, {0, 17.5}},
@@ -54,6 +54,9 @@ void InitDatasetConfig() {
   gInstance.RIGHT_EVEN_MAX_ADC = 8000;
   gInstance.LEFT_ODD_MAX_ADC = 8000;
   gInstance.LEFT_EVEN_MAX_ADC = 2500;
+
+  gInstance.STRIP_DE_MIN_NORMED = 0;
+  gInstance.STRIP_DE_MAX_NORMED = 4;
 
   gInstance.STRIP_E_MAX_ADC = 16384.0;
   gInstance.TOTAL_E_MAX_ADC = 60000.0;

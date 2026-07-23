@@ -269,8 +269,19 @@ StripSumScatter::FindBeamGate(TChain *chain, Int_t sx, Int_t sy,
   std::lock_guard<std::mutex> lock(g_plot_mutex);
   TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
   PlottingUtils::ConfigureAndDraw2DHistogram(h, c);
-  TEllipse *e = new TEllipse(out.mu_x, out.mu_y, kGateNSigmaX * out.sigma_x,
-                             kGateNSigmaY * out.sigma_y);
+  // Correlated 2D Gaussian ellipse matching the InEllipseXY gate.
+  Double_t sxx = out.sigma_x * out.sigma_x;
+  Double_t syy = out.sigma_y * out.sigma_y;
+  Double_t sxy = out.rho * out.sigma_x * out.sigma_y;
+  Double_t sum = sxx + syy;
+  Double_t diff = sxx - syy;
+  Double_t det = TMath::Sqrt(diff * diff + 4.0 * sxy * sxy);
+  Double_t lambda1 = 0.5 * (sum + det);
+  Double_t lambda2 = 0.5 * (sum - det);
+  Double_t theta = 0.5 * TMath::ATan2(2.0 * sxy, diff) * 180.0 / TMath::Pi();
+  TEllipse *e =
+      new TEllipse(out.mu_x, out.mu_y, kGateNSigmaX * TMath::Sqrt(lambda1),
+                   kGateNSigmaX * TMath::Sqrt(lambda2), 0, 360, theta);
   e->SetFillStyle(0);
   e->SetLineColor(kRed + 1);
   e->SetLineWidth(2);
@@ -1916,12 +1927,10 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
             << " (a,a')=" << tr_aa.size() << " (a,n)=" << tr_an.size()
             << std::endl;
   DrawRegionTraces(Form("region_traces_reac%d", reac), "strip_sum_scatter",
-                   tr_beam, tr_aa, tr_an, Constants::cfg.STRIP_DE_MIN_NORMED,
-                   Constants::cfg.STRIP_DE_MAX_NORMED, "#DeltaE [a.u.]");
+                   tr_beam, tr_aa, tr_an, 0.7, 1.3, "#DeltaE [a.u.]");
   DrawRegionMeanTraces(Form("region_mean_traces_reac%d", reac),
-                       "strip_sum_scatter", tr_beam, tr_aa, tr_an,
-                       Constants::cfg.STRIP_DE_MIN_NORMED,
-                       Constants::cfg.STRIP_DE_MAX_NORMED, "#DeltaE [a.u.]");
+                       "strip_sum_scatter", tr_beam, tr_aa, tr_an, 0.7, 1.3,
+                       "#DeltaE [a.u.]");
   Double_t adc_y_lo = 0.0, adc_y_hi = 0.0;
   TraceYRange(tr_beam_adc, tr_aa_adc, tr_an_adc, adc_y_lo, adc_y_hi);
   DrawRegionTraces(Form("region_traces_reac%d_adc", reac), "strip_sum_scatter",
@@ -1931,13 +1940,10 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
                        "strip_sum_scatter", tr_beam_adc, tr_aa_adc, tr_an_adc,
                        adc_y_lo, adc_y_hi, "#DeltaE [ADC]");
   DrawRegionTraces(Form("region_traces_reac%d_sg", reac), "strip_sum_scatter",
-                   tr_beam_sg, tr_aa_sg, tr_an_sg,
-                   Constants::cfg.STRIP_DE_MIN_NORMED,
-                   Constants::cfg.STRIP_DE_MAX_NORMED, "#DeltaE [a.u.]");
+                   tr_beam_sg, tr_aa_sg, tr_an_sg, 0.7, 1.3, "#DeltaE [a.u.]");
   DrawRegionMeanTraces(Form("region_mean_traces_reac%d_sg", reac),
-                       "strip_sum_scatter", tr_beam_sg, tr_aa_sg, tr_an_sg,
-                       Constants::cfg.STRIP_DE_MIN_NORMED,
-                       Constants::cfg.STRIP_DE_MAX_NORMED, "#DeltaE [a.u.]");
+                       "strip_sum_scatter", tr_beam_sg, tr_aa_sg, tr_an_sg, 0.7,
+                       1.3, "#DeltaE [a.u.]");
 
   for (std::size_t i = 0; i < tr_an.size(); i++)
     delete tr_an[i];

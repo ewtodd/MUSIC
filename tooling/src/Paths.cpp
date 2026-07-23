@@ -49,6 +49,24 @@ TString Paths::DatasetDir() {
   TString d;
   if (env && env[0] != '\0') {
     d = TString(env);
+    // Guard against running a binary built for one dataset inside another
+    // dataset's dev shell: the env override would silently mix configs
+    // (e.g. an 87Rb binary reading 87Rb raw data but writing into the 37Cl
+    // analysis tree). The env path must contain the baked-in dataset name
+    // as a path component.
+    TString name = TString(MUSIC_DATASET_NAME);
+    if (name.Length() > 0 && name != "unknown" && !d.Contains("/" + name)) {
+      std::cerr << "FATAL: this binary was built for dataset '" << name
+                << "' but MUSIC_DATASET_DIR points to '" << d << "'."
+                << std::endl;
+      std::cerr << "You are probably running the wrong ./result symlink or "
+                   "are in the wrong dataset dev shell."
+                << std::endl;
+      std::cerr << "Rebuild with `nix build .#" << name
+                << "` or enter the matching shell (`nix develop .#" << name
+                << "`)." << std::endl;
+      gSystem->Exit(1);
+    }
   } else {
     d = MUSIC_DATASET_DIR;
     if (d.Length() == 0) {
