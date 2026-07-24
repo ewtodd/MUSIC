@@ -12,6 +12,9 @@
 #include <vector>
 
 struct StripSumScatterConfig {
+  enum PureBeamGate { PURE_BEAM_GATE_S0_S1, PURE_BEAM_GATE_S1_S2 };
+  PureBeamGate PURE_BEAM_GATE;
+
   Int_t REACTION_STRIP_MIN;
   Int_t REACTION_STRIP_MAX;
 
@@ -20,7 +23,7 @@ struct StripSumScatterConfig {
 
   Double_t REAC_JUMP_MIN;
   Double_t REAC_JUMP_MAX;
-  Double_t STRIP_17_MAX;
+  Double_t END_STRIP_MAX;
 
   Double_t PILEUP_THRESHOLD;
   Double_t NOISE_THRESHOLD;
@@ -75,6 +78,8 @@ struct StripSumScatterConfig {
   Bool_t REQUIRE_SMOOTHNESS;
   Bool_t REQUIRE_GATE_S3_S4;
   Bool_t REQUIRE_GATE_S5_S6;
+  Bool_t SKIP_SAVGOL_PLOTS;
+  Bool_t REQUIRE_STRIP_16_BELOW_BEAM;
 
   void SetDefaults();
 };
@@ -193,7 +198,7 @@ inline const std::map<std::pair<Int_t, Int_t>, TString> &ActiveChannelMap() {
     return cfg.channelMap;
   std::cerr << "FATAL: neither channelMap nor channelMap64 is configured."
             << std::endl;
-  return cfg.channelMap;
+  std::abort();
 }
 } // namespace Constants
 

@@ -43,10 +43,12 @@ struct GateSpec {
   Int_t sy;
 };
 
-// Beam classification ellipses: (s0,s1) entrance AND (s16,s17) exit.
-// An event is "pure beam" only if it passes both ellipses.
+// Beam classification ellipses: entrance (s0,s1 or s1,s2, per config's
+// PURE_BEAM_GATE) AND exit (s16,s17 or s15,s16). An event is "pure beam"
+// only if it passes both ellipses.
 struct BeamEllipses {
   BeamFit2D s0_s1;
+  BeamFit2D s1_s2;
   BeamFit2D s16_s17;
   BeamFit2D s15_s16;
   Bool_t ok;

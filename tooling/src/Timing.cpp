@@ -743,18 +743,18 @@ Double_t Timing::FindDensestTimeWindowStartS(std::vector<Double_t> times,
 
   std::sort(times.begin(), times.end());
 
-  size_t best_i = 0;
-  size_t best_count = 0;
-  size_t j = 0;
+  Long64_t best_i = 0;
+  Long64_t best_count = 0;
+  Long64_t j = 0;
 
-  for (size_t i = 0; i < times.size(); i++) {
+  for (Long64_t i = 0; i < Long64_t(times.size()); i++) {
     if (j < i)
       j = i;
 
-    while (j < times.size() && times[j] <= times[i] + window_width_s)
+    while (j < Long64_t(times.size()) && times[j] <= times[i] + window_width_s)
       j++;
 
-    size_t count = j - i;
+    Long64_t count = j - i;
     if (count > best_count) {
       best_count = count;
       best_i = i;

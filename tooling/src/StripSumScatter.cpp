@@ -30,7 +30,9 @@ void StripSumScatter::EnableEventBranches(TChain *chain) {
 }
 
 Bool_t StripSumScatter::AllStripsFired(const EnergyView &ev) {
-  if (!(ev.total[0] > 0.0 && ev.total[17] > 0.0))
+  if (!Constants::cfg.IGNORE_STRIP_0 && !(ev.total[0] > 0.0))
+    return kFALSE;
+  if (!Constants::cfg.IGNORE_STRIP_17 && !(ev.total[17] > 0.0))
     return kFALSE;
   for (Int_t s = 1; s <= 16; s++)
     if (!(ev.total[s] > 0.0))
@@ -47,8 +49,8 @@ Bool_t StripSumScatter::PassesReaction(const EnergyView &ev, Int_t reac) {
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS_MAX_STEP;
   const Int_t kSmoothHiStrip =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS_END_STRIP;
-  const Double_t kStrip17Max =
-      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.STRIP_17_MAX;
+  const Double_t kEndStripMax =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.END_STRIP_MAX;
 
   if (!AllStripsFired(ev))
     return kFALSE;
@@ -63,8 +65,11 @@ Bool_t StripSumScatter::PassesReaction(const EnergyView &ev, Int_t reac) {
       if (TMath::Abs(ev.total[s] - ev.total[s - 1]) > kSmoothMaxStep)
         return kFALSE;
   if (Constants::cfg.IGNORE_STRIP_17)
-    return kTRUE;
-  return ev.total[17] < kStrip17Max;
+    return ev.total[16] < kEndStripMax;
+  Int_t end_strip =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_STRIP_16_BELOW_BEAM ? 16
+                                                                          : 17;
+  return ev.total[end_strip] < kEndStripMax;
 }
 
 Bool_t StripSumScatter::IsPureBeam(const EnergyView &ev,
@@ -73,9 +78,15 @@ Bool_t StripSumScatter::IsPureBeam(const EnergyView &ev,
     return kFALSE;
   if (!AllStripsFired(ev))
     return kFALSE;
-  // Must pass BOTH the (s0,s1) entrance AND (s16,s17) exit ellipses.
-  if (!PassesGate(be.s0_s1, ev, 0, 1))
-    return kFALSE;
+  // Must pass BOTH the entrance AND exit ellipses.
+  if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PURE_BEAM_GATE ==
+      StripSumScatterConfig::PURE_BEAM_GATE_S1_S2) {
+    if (!PassesGate(be.s1_s2, ev, 1, 2))
+      return kFALSE;
+  } else {
+    if (!PassesGate(be.s0_s1, ev, 0, 1))
+      return kFALSE;
+  }
   if (be.use_s15_s16) {
     if (!PassesGate(be.s15_s16, ev, 15, 16))
       return kFALSE;
@@ -100,9 +111,11 @@ Bool_t StripSumScatter::IsPileup(const EnergyView &ev) {
   }
   const Double_t kThresh =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PILEUP_THRESHOLD;
+  const Int_t kMinStrips =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PILEUP_MIN_STRIPS;
   Int_t n = 0;
   for (Int_t s = 1; s <= 16; s++)
-    if (ev.total[s] >= kThresh && ++n >= 2)
+    if (ev.total[s] >= kThresh && ++n >= kMinStrips)
       return kTRUE;
   return kFALSE;
 }
@@ -121,9 +134,11 @@ Bool_t StripSumScatter::IsNoise(const EnergyView &ev) {
   }
   const Double_t kThresh =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.NOISE_THRESHOLD;
+  const Int_t kMinStrips =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.NOISE_MIN_STRIPS;
   Int_t n = 0;
   for (Int_t s = 1; s <= 16; s++)
-    if (ev.total[s] <= kThresh && ++n >= 3)
+    if (ev.total[s] <= kThresh && ++n >= kMinStrips)
       return kTRUE;
   return kFALSE;
 }
@@ -221,7 +236,7 @@ StripSumScatter::FindBeamGate(TChain *chain, Int_t sx, Int_t sy,
     ev.Decode();
     // Series gating: only events passing every prior gate feed this fit.
     Bool_t prior_ok = kTRUE;
-    for (std::size_t gi = 0; gi < prior_specs.size(); gi++)
+    for (Int_t gi = 0; gi < prior_specs.size(); gi++)
       if (!PassesGate(prior_gates[gi], ev, prior_specs[gi].sx,
                       prior_specs[gi].sy)) {
         prior_ok = kFALSE;
@@ -296,7 +311,7 @@ StripSumScatter::FindBeamGate(TChain *chain, Int_t sx, Int_t sy,
 
 void StripSumScatter::DrawTraceSet(const std::vector<TGraph *> &traces,
                                    Int_t color) {
-  for (std::size_t i = 0; i < traces.size(); i++) {
+  for (Int_t i = 0; i < traces.size(); i++) {
     traces[i]->SetLineColor(color);
     traces[i]->SetLineWidth(1);
     traces[i]->Draw("L SAME");
@@ -318,8 +333,11 @@ void StripSumScatter::DrawRegionTraces(const TString &save_name,
                                        Double_t y_min, Double_t y_max,
                                        const char *y_title) {
   std::lock_guard<std::mutex> lock(g_plot_mutex);
-  TH2F *frame = new TH2F("h_region_trace_frame", Form(";Strip;%s", y_title), 18,
-                         -0.5, 17.5, 100, y_min, y_max);
+  Int_t s_lo = Constants::cfg.IGNORE_STRIP_0 ? 1 : 0;
+  Int_t s_hi = Constants::cfg.IGNORE_STRIP_17 ? 16 : 17;
+  TH2F *frame =
+      new TH2F("h_region_trace_frame", Form(";Strip;%s", y_title),
+               s_hi - s_lo + 1, s_lo - 0.5, s_hi + 0.5, 100, y_min, y_max);
   frame->SetStats(0);
   TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
   frame->Draw();
@@ -379,7 +397,7 @@ void StripSumScatter::DrawRegionMeanTraces(const TString &save_name,
       continue;
     Int_t npts = tr[0]->GetN();
     std::vector<Double_t> mean(npts, 0.0), m2(npts, 0.0);
-    for (std::size_t t = 0; t < tr.size(); t++) {
+    for (Int_t t = 0; t < tr.size(); t++) {
       Double_t *yv = tr[t]->GetY();
       for (Int_t p = 0; p < npts; p++) {
         mean[p] += yv[p];
@@ -403,12 +421,12 @@ void StripSumScatter::DrawRegionMeanTraces(const TString &save_name,
     leg->AddEntry(ge, labels[r], "l");
   }
   // Mean lines on top of every band.
-  for (std::size_t i = 0; i < means.size(); i++)
+  for (Int_t i = 0; i < means.size(); i++)
     means[i]->Draw("LX SAME"); // mean line, no end caps
   leg->Draw();
 
   PlottingUtils::SaveFigure(c, save_name, subdir, PlotSaveOptions::kLINEAR);
-  for (std::size_t i = 0; i < means.size(); i++)
+  for (Int_t i = 0; i < means.size(); i++)
     delete means[i];
   delete leg;
   delete c;
@@ -424,7 +442,7 @@ void StripSumScatter::TraceYRange(const std::vector<TGraph *> &beam,
   const std::vector<TGraph *> *sets[3] = {&beam, &aa, &an};
   for (Int_t si = 0; si < 3; si++) {
     const std::vector<TGraph *> &v = *sets[si];
-    for (std::size_t i = 0; i < v.size(); i++) {
+    for (Int_t i = 0; i < v.size(); i++) {
       Double_t x = 0.0, y = 0.0;
       for (Int_t k = 0; k < v[i]->GetN(); k++) {
         v[i]->GetPoint(k, x, y);
@@ -454,7 +472,7 @@ TCutG *StripSumScatter::PromptCut(TCanvas *c, const char *name,
             << " region: left-click vertices, double-click to close"
             << std::endl;
   c->cd();
-  TCutG *cut = dynamic_cast<TCutG *>(c->WaitPrimitive("CUTG", "CutG"));
+  TCutG *cut = static_cast<TCutG *>(c->WaitPrimitive("CUTG", "CutG"));
   if (!cut) {
     std::cerr << "  no " << label << " cut drawn" << std::endl;
     return nullptr;
@@ -601,7 +619,7 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
   for (Int_t s = 0; s < 18; s++)
     base[s] = 0.0;
   Long64_t nbeam = 0;
-  for (std::size_t k = 0; k < m_reservoir.size(); k++)
+  for (Int_t k = 0; k < m_reservoir.size(); k++)
     if (m_reservoir[k].beam_flat) {
       for (Int_t s = 0; s < 18; s++)
         base[s] += Double_t(m_reservoir[k].total[s]);
@@ -616,7 +634,7 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
   // the excess does NOT cross on average and the event gets NO trigger.
   Double_t beam_sumsq = 0.0;
   Long64_t beam_npt = 0;
-  for (std::size_t k = 0; k < m_reservoir.size(); k++)
+  for (Int_t k = 0; k < m_reservoir.size(); k++)
     if (m_reservoir[k].beam_flat)
       for (Int_t s = 0; s < 18; s++) {
         Double_t d = Double_t(m_reservoir[k].total[s]) - base[s];
@@ -630,7 +648,7 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
   // the numbers are directly comparable to the Python pipeline.
   Long64_t triggered = 0, no_trigger = 0;
   Double_t td_all[18];
-  for (std::size_t k = 0; k < m_reservoir.size(); k++) {
+  for (Int_t k = 0; k < m_reservoir.size(); k++) {
     for (Int_t s = 0; s < 18; s++)
       td_all[s] = Double_t(m_reservoir[k].total[s]);
     if (FindTrigger(td_all, base, beam_sigma) >= 0)
@@ -652,7 +670,7 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
                     (long long)m_reservoir.size(), (long long)no_trigger)
             << std::endl;
 
-  for (std::size_t k = 0; k < m_reservoir.size(); k++) {
+  for (Int_t k = 0; k < m_reservoir.size(); k++) {
     const TraceEvt &e = m_reservoir[k];
     Double_t td[18];
     for (Int_t s = 0; s < 18; s++)
@@ -818,12 +836,14 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
   const char *pass_label[kNP] = {"raw", "sg"};
 
   for (Int_t ip = 0; ip < kNP; ip++) {
+    if (ip == 1 && Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS)
+      continue;
     std::vector<Double_t>(*vals)[NC][NV] = (ip == 0) ? &vals_raw : &vals_sg;
     for (Int_t iv = 0; iv < NV; iv++) {
       Double_t lo = 1.0e30, hi = -1.0e30;
       Double_t mean[NC] = {0.0, 0.0, 0.0};
       for (Int_t ic = 0; ic < NC; ic++) {
-        for (std::size_t m = 0; m < (*vals)[ic][iv].size(); m++) {
+        for (Int_t m = 0; m < (*vals)[ic][iv].size(); m++) {
           lo = TMath::Min(lo, (*vals)[ic][iv][m]);
           hi = TMath::Max(hi, (*vals)[ic][iv][m]);
           mean[ic] += (*vals)[ic][iv][m];
@@ -865,7 +885,7 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
             Form("h_cv_%s_%s_c%d_r%d", vkey[iv], pass_label[ip], ic, reac),
             axis, nbins, lo, hi);
         h->SetDirectory(nullptr);
-        for (std::size_t m = 0; m < (*vals)[ic][iv].size(); m++)
+        for (Int_t m = 0; m < (*vals)[ic][iv].size(); m++)
           h->Fill((*vals)[ic][iv][m]);
 
         PlottingUtils::ConfigureHistogram(h, colors[ic % Int_t(colors.size())],
@@ -895,7 +915,7 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
       PlottingUtils::SaveFigure(
           c, Form("cluster_var_%s_%s_reac%d", vkey[iv], pass_label[ip], reac),
           sub_subdir, PlotSaveOptions::kLOG);
-      for (std::size_t m = 0; m < hs.size(); m++)
+      for (Int_t m = 0; m < hs.size(); m++)
         delete hs[m];
       delete c;
     }
@@ -916,8 +936,8 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS_END_STRIP;
   const Double_t kSmoothMaxStep =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS_MAX_STEP;
-  const Double_t kStrip17Max =
-      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.STRIP_17_MAX;
+  const Double_t kEndStripMax =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.END_STRIP_MAX;
 
   const Int_t kGateStripX =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_X;
@@ -942,13 +962,13 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
       "ybins=%d",
       kReacMin, kReacMax, kReacJumpMin, kReacJumpMax,
       Int_t(Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS),
-      kSmoothHiStrip, kSmoothMaxStep, kStrip17Max, kGateStripX, kGateStripY,
+      kSmoothHiStrip, kSmoothMaxStep, kEndStripMax, kGateStripX, kGateStripY,
       kGateNSigmaX, kGateNSigmaY, kGateBins, kGateMin, kGateMax, kXMin, kXMax,
       kXBins, kYBins);
   // Active beam gates (also keyed by cache filename, but folded in here too so
   // a mismatch never silently reuses a stale same-named cache).
   std::vector<GateSpec> gates = ActiveGates();
-  for (std::size_t i = 0; i < gates.size(); i++)
+  for (Int_t i = 0; i < gates.size(); i++)
     s += Form(" g[s%d,s%d]", gates[i].sx, gates[i].sy);
 
   Double_t y_lo[64], y_hi[64];
@@ -959,7 +979,7 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
         y_lo[reac - Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN],
         y_hi[reac -
              Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN]);
-  for (std::size_t i = 0; i < run_order.size(); i++) {
+  for (Int_t i = 0; i < run_order.size(); i++) {
     Int_t run = run_order[i];
     s += Form(" r%d:%lld", run, chains[run]->GetEntries());
   }
@@ -1021,7 +1041,7 @@ Bool_t StripSumScatter::SimBeamGains(Double_t *gain) {
   // control file is present.
   TString file;
   std::vector<RemixSim::SimFileSpec> specs = RemixSim::BuildFileSpecs();
-  for (std::size_t i = 0; i < specs.size(); i++) {
+  for (Int_t i = 0; i < specs.size(); i++) {
     if (!RemixSim::IsEresTag(specs[i].tag))
       std::cout << "No eres sim file for " << specs[i].tag << ", using standard"
                 << std::endl;
@@ -1197,7 +1217,7 @@ void StripSumScatter::SimTraceOverlay() {
     return;
   std::map<Int_t, TString> aa_file, an_file; // reaction strip -> sim file
   std::vector<TString> beam_files;
-  for (std::size_t i = 0; i < specs.size(); i++) {
+  for (Int_t i = 0; i < specs.size(); i++) {
     if (!RemixSim::IsEresTag(specs[i].tag))
       std::cout << "No eres sim file for " << specs[i].tag << ", using standard"
                 << std::endl;
@@ -1221,12 +1241,12 @@ void StripSumScatter::SimTraceOverlay() {
       gain[s] = 1.0;
 
   std::vector<TGraph *> beam_traces;
-  for (std::size_t i = 0;
+  for (Int_t i = 0;
        i < beam_files.size() && Int_t(beam_traces.size()) < kTracesPerRegion;
        i++) {
     std::vector<TGraph *> t = SimPopTraces(
         beam_files[i], gain, kTracesPerRegion - Int_t(beam_traces.size()));
-    for (std::size_t k = 0; k < t.size(); k++)
+    for (Int_t k = 0; k < t.size(); k++)
       beam_traces.push_back(t[k]);
   }
 
@@ -1239,15 +1259,14 @@ void StripSumScatter::SimTraceOverlay() {
     if (aa_traces.empty() && an_traces.empty())
       continue;
     DrawRegionTraces(Form("sim_region_traces_reac%d", r), "sim_scatter",
-                     beam_traces, aa_traces, an_traces,
-                     Constants::cfg.STRIP_DE_MIN_NORMED,
-                     Constants::cfg.STRIP_DE_MAX_NORMED, "#DeltaE [a.u.]");
-    for (std::size_t i = 0; i < aa_traces.size(); i++)
+                     beam_traces, aa_traces, an_traces, 0.6, 1.6,
+                     "#DeltaE [a.u.]");
+    for (Int_t i = 0; i < aa_traces.size(); i++)
       delete aa_traces[i];
-    for (std::size_t i = 0; i < an_traces.size(); i++)
+    for (Int_t i = 0; i < an_traces.size(); i++)
       delete an_traces[i];
   }
-  for (std::size_t i = 0; i < beam_traces.size(); i++)
+  for (Int_t i = 0; i < beam_traces.size(); i++)
     delete beam_traces[i];
 }
 
@@ -1269,7 +1288,7 @@ TString StripSumScatter::SimFingerprint(
   const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
 
   TString s = Form("v3 reac[%d,%d] x[%d,%d]", kReacMin, kReacMax, kXLo, kXHi);
-  for (std::size_t i = 0; i < specs.size(); i++) {
+  for (Int_t i = 0; i < specs.size(); i++) {
     if (!RemixSim::IsEresTag(specs[i].tag))
       std::cout << "No eres sim file for " << specs[i].tag << ", using standard"
                 << std::endl;
@@ -1301,7 +1320,7 @@ Bool_t StripSumScatter::LoadSimCache(
       delete f;
     return kFALSE;
   }
-  TNamed *cfp = dynamic_cast<TNamed *>(f->Get("sim_fingerprint"));
+  TNamed *cfp = static_cast<TNamed *>(f->Get("sim_fingerprint"));
   if (!cfp || fp != cfp->GetTitle()) {
     f->Close();
     delete f;
@@ -1318,7 +1337,7 @@ Bool_t StripSumScatter::LoadSimCache(
     if (us < 0)
       continue;
     Int_t r = TString(rest(0, us)).Atoi();
-    TGraph *g = dynamic_cast<TGraph *>(f->Get(name));
+    TGraph *g = static_cast<TGraph *>(f->Get(name));
     if (!g)
       continue;
     by_strip[r].push_back(static_cast<TGraph *>(g->Clone()));
@@ -1341,7 +1360,7 @@ void StripSumScatter::WriteSimCache(
   cfp.Write();
   std::map<Int_t, std::vector<TGraph *>>::const_iterator it;
   for (it = by_strip.begin(); it != by_strip.end(); ++it)
-    for (std::size_t i = 0; i < it->second.size(); i++)
+    for (Int_t i = 0; i < it->second.size(); i++)
       it->second[i]->Write(Form("simg_r%d_p%d", it->first, Int_t(i)));
   out->Close();
   delete out;
@@ -1376,7 +1395,7 @@ void StripSumScatter::SimOverlay() {
   if (!loaded) {
     std::map<Int_t, std::vector<SimPop>> reacted;
     std::vector<SimPop> refs;
-    for (std::size_t i = 0; i < specs.size(); i++) {
+    for (Int_t i = 0; i < specs.size(); i++) {
       if (!RemixSim::IsEresTag(specs[i].tag))
         std::cout << "No eres sim file for " << specs[i].tag
                   << ", using standard" << std::endl;
@@ -1396,9 +1415,9 @@ void StripSumScatter::SimOverlay() {
     const Long64_t kSimMaxPoints = 25000;
     for (Int_t r = kReacMin; r <= kReacMax; r++) {
       std::vector<SimPop> group = reacted[r];
-      for (std::size_t i = 0; i < refs.size(); i++)
+      for (Int_t i = 0; i < refs.size(); i++)
         group.push_back(refs[i]);
-      for (std::size_t i = 0; i < group.size(); i++) {
+      for (Int_t i = 0; i < group.size(); i++) {
         TGraph *g = SimPopScatter(group[i].file, r, gain, kSimMaxPoints);
         if (!g || g->GetN() == 0) {
           if (g)
@@ -1448,7 +1467,7 @@ void StripSumScatter::SimOverlay() {
     frame->Draw();
     // Match the experimental region-traces legend placement (top-right).
     TLegend *leg = PlottingUtils::AddLegend(0.725, 0.875, 0.70, 0.86);
-    for (std::size_t i = 0; i < it->second.size(); i++) {
+    for (Int_t i = 0; i < it->second.size(); i++) {
       TGraph *g = it->second[i];
       // Match the experimental region-trace colours (DrawRegionTraces): beam
       // grey, (a,a') azure, (a,n) red -- keyed off the population label.
@@ -1479,7 +1498,7 @@ void StripSumScatter::SimOverlay() {
 
   std::map<Int_t, std::vector<TGraph *>>::iterator dit;
   for (dit = by_strip.begin(); dit != by_strip.end(); ++dit)
-    for (std::size_t i = 0; i < dit->second.size(); i++)
+    for (Int_t i = 0; i < dit->second.size(); i++)
       delete dit->second[i];
 }
 
@@ -1506,7 +1525,7 @@ Bool_t StripSumScatter::TryLoadCache(const TString &cacheName,
     return kFALSE;
   }
 
-  TNamed *fp = dynamic_cast<TNamed *>(cf->Get("fingerprint"));
+  TNamed *fp = static_cast<TNamed *>(cf->Get("fingerprint"));
   if (!fp || fingerprint != fp->GetTitle()) {
     cf->Close();
     delete cf;
@@ -1517,7 +1536,7 @@ Bool_t StripSumScatter::TryLoadCache(const TString &cacheName,
 
   Bool_t ok = kTRUE;
   for (Int_t reac = kReacMin; reac <= kReacMax && ok; reac++) {
-    TH2F *h = dynamic_cast<TH2F *>(cf->Get(Form("scatter_r%d", reac)));
+    TH2F *h = static_cast<TH2F *>(cf->Get(Form("scatter_r%d", reac)));
     if (!h) {
       ok = kFALSE;
       break;
@@ -1527,7 +1546,7 @@ Bool_t StripSumScatter::TryLoadCache(const TString &cacheName,
     m_scatter[reac] = hc;
   }
 
-  TTree *tt = dynamic_cast<TTree *>(cf->Get("traces"));
+  TTree *tt = static_cast<TTree *>(cf->Get("traces"));
   if (ok && tt) {
     TraceEvt e;
     tt->SetBranchAddress("total", e.total);
@@ -1583,7 +1602,7 @@ void StripSumScatter::WriteCache(const TString &cacheName,
   tt->Branch("reac_mask", &e.reac_mask, "reac_mask/i");
   tt->Branch("beam_flat", &e.beam_flat, "beam_flat/O");
   tt->Branch("both_mult", &e.both_mult, "both_mult/I");
-  for (std::size_t k = 0; k < m_reservoir.size(); k++) {
+  for (Int_t k = 0; k < m_reservoir.size(); k++) {
     e = m_reservoir[k];
     tt->Fill();
   }
@@ -1634,7 +1653,7 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
   // all prior gates).
   std::map<Int_t, std::vector<BeamFit2D>> gates;
   std::map<Int_t, Bool_t> ok;
-  for (std::size_t i = 0; i < runOrder.size(); i++) {
+  for (Int_t i = 0; i < runOrder.size(); i++) {
     Int_t run = runOrder[i];
     ok[run] = kFALSE;
     if (!chains[run] || chains[run]->GetEntries() == 0)
@@ -1648,14 +1667,26 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
       std::vector<BeamFit2D> emptyGates;
       const TString tag = Form("run%d", run);
       const TString subdir = Form("strip_sum_scatter/run%d", run);
-      be.s0_s1 =
-          FindBeamGate(chains[run], 0, 1, emptyPrior, emptyGates, tag, subdir);
-      if (be.s0_s1.ok)
-        std::cout << "  run " << run << " beam ellipse s0/s1: mu=("
-                  << be.s0_s1.mu_x << "," << be.s0_s1.mu_y << ")" << std::endl;
+      Int_t ent_sx = 0, ent_sy = 1;
+      const Char_t *ent_tag = "s0/s1";
+      if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PURE_BEAM_GATE ==
+          StripSumScatterConfig::PURE_BEAM_GATE_S1_S2) {
+        ent_sx = 1;
+        ent_sy = 2;
+        ent_tag = "s1/s2";
+      }
+      BeamFit2D ent_ell = FindBeamGate(chains[run], ent_sx, ent_sy, emptyPrior,
+                                       emptyGates, tag, subdir);
+      if (ent_sx == 0)
+        be.s0_s1 = ent_ell;
+      else
+        be.s1_s2 = ent_ell;
+      if (ent_ell.ok)
+        std::cout << "  run " << run << " beam ellipse " << ent_tag << ": mu=("
+                  << ent_ell.mu_x << "," << ent_ell.mu_y << ")" << std::endl;
       else {
-        std::cerr << "  run " << run
-                  << " beam ellipse s0/s1 failed; skipping run" << std::endl;
+        std::cerr << "  run " << run << " beam ellipse " << ent_tag
+                  << " failed; skipping run" << std::endl;
         continue;
       }
       if (Constants::cfg.IGNORE_STRIP_17) {
@@ -1695,7 +1726,7 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
     std::vector<BeamFit2D> runGates;
     std::vector<GateSpec> priorSpecs;
     Bool_t allOk = kTRUE;
-    for (std::size_t gi = 0; gi < activeGates.size(); gi++) {
+    for (Int_t gi = 0; gi < activeGates.size(); gi++) {
       BeamFit2D g = FindBeamGate(
           chains[run], activeGates[gi].sx, activeGates[gi].sy, priorSpecs,
           runGates, Form("run%d", run), Form("strip_sum_scatter/run%d", run));
@@ -1719,7 +1750,7 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
   Long64_t totalGated = 0, totalSeen = 0;
   Int_t nBeamKept = 0;
 
-  for (std::size_t i = 0; i < runOrder.size(); i++) {
+  for (Int_t i = 0; i < runOrder.size(); i++) {
     Int_t run = runOrder[i];
     TChain *chain = chains[run];
     if (!chain || !ok[run])
@@ -1742,7 +1773,7 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
       totalSeen++;
 
       Bool_t passesAll = kTRUE;
-      for (std::size_t gi = 0; gi < activeGates.size(); gi++)
+      for (Int_t gi = 0; gi < activeGates.size(); gi++)
         if (!PassesGate(runGates[gi], ev, activeGates[gi].sx,
                         activeGates[gi].sy)) {
           passesAll = kFALSE;
@@ -1888,19 +1919,22 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
   // Same selected events again, Savitzky-Golay smoothed (normed a.u. space),
   // for the with-smoothing overlay -- also in lock-step with the raw normed
   // traces, so the two a.u. overlays show the identical events.
+  const Bool_t kSkipSg =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS;
   std::vector<TGraph *> tr_an_sg, tr_aa_sg, tr_beam_sg;
   UInt_t bit = (1u << ReacIndex(reac));
 
-  for (std::size_t k = 0; k < m_reservoir.size(); k++) {
-    if (tr_an.size() >= std::size_t(kTracesPerRegion) &&
-        tr_aa.size() >= std::size_t(kTracesPerRegion) &&
-        tr_beam.size() >= std::size_t(kTracesPerRegion))
+  for (Int_t k = 0; k < m_reservoir.size(); k++) {
+    if (Int_t(tr_an.size()) >= kTracesPerRegion &&
+        Int_t(tr_aa.size()) >= kTracesPerRegion &&
+        Int_t(tr_beam.size()) >= kTracesPerRegion)
       break;
     const TraceEvt &e = m_reservoir[k];
-    if (e.beam_flat && tr_beam.size() < std::size_t(kTracesPerRegion)) {
+    if (e.beam_flat && Int_t(tr_beam.size()) < kTracesPerRegion) {
       tr_beam.push_back(TraceFromTotal(e.total));
       tr_beam_adc.push_back(TraceFromTotal(e.total_adc));
-      tr_beam_sg.push_back(SmoothedTraceFromTotal(e.total));
+      if (!kSkipSg)
+        tr_beam_sg.push_back(SmoothedTraceFromTotal(e.total));
       continue;
     }
     if (!(e.reac_mask & bit))
@@ -1910,16 +1944,18 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
       td[s] = Double_t(e.total[s]);
     Double_t x = SumRange(td, kXLo, kXHi);
     Double_t y = SumRange(td, YLoOf(reac), YHiOf(reac));
-    if (cutAn && tr_an.size() < std::size_t(kTracesPerRegion) &&
+    if (cutAn && Int_t(tr_an.size()) < kTracesPerRegion &&
         cutAn->IsInside(x, y)) {
       tr_an.push_back(TraceFromTotal(e.total));
       tr_an_adc.push_back(TraceFromTotal(e.total_adc));
-      tr_an_sg.push_back(SmoothedTraceFromTotal(e.total));
-    } else if (cutAa && tr_aa.size() < std::size_t(kTracesPerRegion) &&
+      if (!kSkipSg)
+        tr_an_sg.push_back(SmoothedTraceFromTotal(e.total));
+    } else if (cutAa && Int_t(tr_aa.size()) < kTracesPerRegion &&
                cutAa->IsInside(x, y)) {
       tr_aa.push_back(TraceFromTotal(e.total));
       tr_aa_adc.push_back(TraceFromTotal(e.total_adc));
-      tr_aa_sg.push_back(SmoothedTraceFromTotal(e.total));
+      if (!kSkipSg)
+        tr_aa_sg.push_back(SmoothedTraceFromTotal(e.total));
     }
   }
 
@@ -1927,9 +1963,9 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
             << " (a,a')=" << tr_aa.size() << " (a,n)=" << tr_an.size()
             << std::endl;
   DrawRegionTraces(Form("region_traces_reac%d", reac), "strip_sum_scatter",
-                   tr_beam, tr_aa, tr_an, 0.7, 1.3, "#DeltaE [a.u.]");
+                   tr_beam, tr_aa, tr_an, 0.6, 1.6, "#DeltaE [a.u.]");
   DrawRegionMeanTraces(Form("region_mean_traces_reac%d", reac),
-                       "strip_sum_scatter", tr_beam, tr_aa, tr_an, 0.7, 1.3,
+                       "strip_sum_scatter", tr_beam, tr_aa, tr_an, 0.6, 1.6,
                        "#DeltaE [a.u.]");
   Double_t adc_y_lo = 0.0, adc_y_hi = 0.0;
   TraceYRange(tr_beam_adc, tr_aa_adc, tr_an_adc, adc_y_lo, adc_y_hi);
@@ -1939,29 +1975,32 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
   DrawRegionMeanTraces(Form("region_mean_traces_reac%d_adc", reac),
                        "strip_sum_scatter", tr_beam_adc, tr_aa_adc, tr_an_adc,
                        adc_y_lo, adc_y_hi, "#DeltaE [ADC]");
-  DrawRegionTraces(Form("region_traces_reac%d_sg", reac), "strip_sum_scatter",
-                   tr_beam_sg, tr_aa_sg, tr_an_sg, 0.7, 1.3, "#DeltaE [a.u.]");
-  DrawRegionMeanTraces(Form("region_mean_traces_reac%d_sg", reac),
-                       "strip_sum_scatter", tr_beam_sg, tr_aa_sg, tr_an_sg, 0.7,
-                       1.3, "#DeltaE [a.u.]");
+  if (!kSkipSg) {
+    DrawRegionTraces(Form("region_traces_reac%d_sg", reac), "strip_sum_scatter",
+                     tr_beam_sg, tr_aa_sg, tr_an_sg, 0.6, 1.6,
+                     "#DeltaE [a.u.]");
+    DrawRegionMeanTraces(Form("region_mean_traces_reac%d_sg", reac),
+                         "strip_sum_scatter", tr_beam_sg, tr_aa_sg, tr_an_sg,
+                         0.7, 1.3, "#DeltaE [a.u.]");
+  }
 
-  for (std::size_t i = 0; i < tr_an.size(); i++)
+  for (Int_t i = 0; i < tr_an.size(); i++)
     delete tr_an[i];
-  for (std::size_t i = 0; i < tr_aa.size(); i++)
+  for (Int_t i = 0; i < tr_aa.size(); i++)
     delete tr_aa[i];
-  for (std::size_t i = 0; i < tr_beam.size(); i++)
+  for (Int_t i = 0; i < tr_beam.size(); i++)
     delete tr_beam[i];
-  for (std::size_t i = 0; i < tr_an_adc.size(); i++)
+  for (Int_t i = 0; i < tr_an_adc.size(); i++)
     delete tr_an_adc[i];
-  for (std::size_t i = 0; i < tr_aa_adc.size(); i++)
+  for (Int_t i = 0; i < tr_aa_adc.size(); i++)
     delete tr_aa_adc[i];
-  for (std::size_t i = 0; i < tr_beam_adc.size(); i++)
+  for (Int_t i = 0; i < tr_beam_adc.size(); i++)
     delete tr_beam_adc[i];
-  for (std::size_t i = 0; i < tr_an_sg.size(); i++)
+  for (Int_t i = 0; i < tr_an_sg.size(); i++)
     delete tr_an_sg[i];
-  for (std::size_t i = 0; i < tr_aa_sg.size(); i++)
+  for (Int_t i = 0; i < tr_aa_sg.size(); i++)
     delete tr_aa_sg[i];
-  for (std::size_t i = 0; i < tr_beam_sg.size(); i++)
+  for (Int_t i = 0; i < tr_beam_sg.size(); i++)
     delete tr_beam_sg[i];
 
   delete cutAn;
@@ -2006,6 +2045,6 @@ void StripSumScatter::Run() {
   InteractiveOverlay(reac);
 
   // Cleanup chains.
-  for (std::size_t i = 0; i < run_order.size(); i++)
+  for (Int_t i = 0; i < run_order.size(); i++)
     delete chain_by_run[run_order[i]];
 }

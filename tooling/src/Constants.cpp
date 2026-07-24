@@ -1,6 +1,8 @@
 #include "Constants.hpp"
 
 void StripSumScatterConfig::SetDefaults() {
+  PURE_BEAM_GATE = PURE_BEAM_GATE_S0_S1;
+
   REACTION_STRIP_MIN = 2;
   REACTION_STRIP_MAX = 15;
 
@@ -9,7 +11,7 @@ void StripSumScatterConfig::SetDefaults() {
 
   REAC_JUMP_MIN = 0.1;
   REAC_JUMP_MAX = 2.0;
-  STRIP_17_MAX = 1.0;
+  END_STRIP_MAX = 1.0;
 
   PILEUP_THRESHOLD = 1.75;
   NOISE_THRESHOLD = 0.85;
@@ -62,6 +64,8 @@ void StripSumScatterConfig::SetDefaults() {
   REQUIRE_SMOOTHNESS = kTRUE;
   REQUIRE_GATE_S3_S4 = kFALSE;
   REQUIRE_GATE_S5_S6 = kFALSE;
+  SKIP_SAVGOL_PLOTS = kFALSE;
+  REQUIRE_STRIP_16_BELOW_BEAM = kFALSE;
 }
 
 DatasetConfig::DatasetConfig() {

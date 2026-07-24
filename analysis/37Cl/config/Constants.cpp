@@ -14,7 +14,11 @@ void InitDatasetConfig() {
   gInstance.SOL_N_SPLIT_WORKERS = 32;
   gInstance.SOL_SPLIT_CHUNK_SECONDS = 60;
   gInstance.COMPASS_BASE_DIR = "/labdata/MUSIC/37Cl/";
-  gInstance.RUN_NUMBERS = {84, 85, 86, 87, 88, 89, 90, 91, 92, 93};
+  std::vector<Int_t> RUNS;
+  for (Int_t i = 84; i < 138; i++) {
+    RUNS.push_back(i);
+  };
+  gInstance.RUN_NUMBERS = RUNS;
   gInstance.N_CHUNKS = -1;
   gInstance.SIM_BEAM_FILE = "traces_37Cl_beam.root";
 
@@ -23,7 +27,7 @@ void InitDatasetConfig() {
   gInstance.TIMING_REF_BOARD = 0;
   gInstance.TIMING_REF_BOARD_CHANNELS = {8};
 
-  gInstance.SAVE_PLOTS = kTRUE;
+  gInstance.SAVE_PLOTS = kFALSE;
   gInstance.SAVE_SAMPLE_TRACES = 10;
 
   gInstance.HAS_CATHODE = kFALSE;
@@ -36,15 +40,30 @@ void InitDatasetConfig() {
   gInstance.TIMING_DO_BOARD_SYNC = kFALSE;
   gInstance.TIMING_DO_SORT = kFALSE;
 
+  gInstance.IGNORE_STRIP_0 = kTRUE;
   gInstance.IGNORE_STRIP_17 = kTRUE;
   gInstance.MAX_FUSED_WORKERS = 32;
 
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 2;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.PURE_BEAM_GATE =
+      StripSumScatterConfig::PURE_BEAM_GATE_S1_S2;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.RERUN_SIM = kFALSE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 5;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.XMIN = 11;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.XMAX = 19;
   gInstance.STRIP_SUM_SCATTER_CONFIG.Y_RANGE = {
       {3, {0, 17.5}},  {4, {0, 17.5}}, {5, {0, 17.5}}, {6, {0, 17.5}},
       {7, {0, 17.5}},  {8, {0, 17.5}}, {9, {0, 17.5}}, {10, {0, 17.5}},
-      {11, {0, 17.5}}, {12, {3.5, 6}}, {13, {2, 5}},   {14, {2, 5}},
-      {15, {1, 4}}};
+      {11, {0, 17.5}}, {12, {0, 10}},  {13, {0, 10}},  {14, {0, 10}},
+      {15, {0, 10}}};
+  gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS = kTRUE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REJECT_NOISE = kTRUE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REJECT_PILEUP = kTRUE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.NOISE_THRESHOLD = 0.5;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.NOISE_MIN_STRIPS = 4;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_STRIP_16_BELOW_BEAM = kTRUE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.END_STRIP_MAX = 1.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.PILEUP_THRESHOLD = 2;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS = kFALSE;
 
   gInstance.STRIP0_MAX_ADC = 1000;
   gInstance.STRIP17_MAX_ADC = 10000;
@@ -58,7 +77,7 @@ void InitDatasetConfig() {
   gInstance.STRIP_DE_MIN_NORMED = 0;
   gInstance.STRIP_DE_MAX_NORMED = 4;
 
-  gInstance.STRIP_E_MAX_ADC = 16384.0;
+  gInstance.STRIP_E_MAX_ADC = 4096.0;
   gInstance.TOTAL_E_MAX_ADC = 60000.0;
 
   gInstance.channelMap64 = {

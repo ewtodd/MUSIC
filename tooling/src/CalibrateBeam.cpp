@@ -1,4 +1,5 @@
 #include "CalibrateBeam.hpp"
+#include <Rtypes.h>
 
 const Int_t kMaxChannels = 35;
 const Double_t kEllipseNSigmaX = 3;
@@ -72,10 +73,6 @@ Bool_t IsBeamdEChannel(const ChannelCal &c) {
     return kFALSE;
   return c.side == LongSide(c.strip);
 }
-
-//  each beam-dE channel's beam-peak ADC is scaled to 1 a.u. by a single gain
-//  through the origin
-// it was found that linear/polynomial gain didn't change the results
 
 Bool_t IsCalibrated(const ChannelCal &c) { return c.fit_adc > 0; }
 
@@ -223,7 +220,7 @@ BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
     TEllipse *e = new TEllipse(out.mu_x, out.mu_y, n * TMath::Sqrt(lambda1),
                                n * TMath::Sqrt(lambda2), 0, 360, theta);
     e->SetFillStyle(0);
-    e->SetLineColor(kRed + 1);
+    e->SetLineColor(kViolet + 2);
     e->SetLineWidth(2);
     e->Draw();
     if (Constants::cfg.SAVE_PLOTS)
@@ -235,10 +232,147 @@ BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
   return out;
 }
 
+BeamFit2D FindBeamGateStp0VsGrid(const FileSpec &spec, const TString &run_label,
+                                 const TString &plot_subdir,
+                                 const BeamFit2D &beam,
+                                 Bool_t save_plot = kTRUE) {
+  BeamFit2D out;
+
+  TString sub = FileSet::EventsName(spec) + ".root";
+  TFile *sf = IO::OpenForReading(sub);
+  if (!sf || sf->IsZombie()) {
+    if (sf)
+      delete sf;
+    return out;
+  }
+  TTree *tree = static_cast<TTree *>(sf->Get("events"));
+  if (!tree) {
+    sf->Close();
+    delete sf;
+    return out;
+  }
+  UShort_t left_0_17_adc[18], rightdE_adc[18];
+  Short_t grid_adc = 0;
+  tree->SetBranchAddress("Left_0_17_dE", left_0_17_adc);
+  tree->SetBranchAddress("RightdE", rightdE_adc);
+  tree->SetBranchAddress("Grid", &grid_adc);
+
+  const Int_t kBeamGateNBins = 256;
+  const Double_t kGridMaxADC = 4096.0;
+  const Double_t kStrip0MaxADC = 1024.0;
+  TH2F *h = new TH2F(Form("h2_stp0_vs_grid_%s", run_label.Data()),
+                     ";Grid #DeltaE [ADC];Strip0 #DeltaE [ADC]", kBeamGateNBins,
+                     0.0, kGridMaxADC, kBeamGateNBins, 0.0, kStrip0MaxADC);
+  h->SetDirectory(nullptr);
+  Long64_t n = tree->GetEntries();
+  for (Long64_t j = 0; j < n; j++) {
+    tree->GetEntry(j);
+    if (beam.ok) {
+      Double_t x = Double_t(left_0_17_adc[1]) + Double_t(rightdE_adc[1]);
+      Double_t y = Double_t(left_0_17_adc[2]) + Double_t(rightdE_adc[2]);
+      if (x <= 0 || y <= 0)
+        continue;
+      if (!BeamFitUtils::InEllipseXY(beam, x, y, kEllipseNSigmaX,
+                                     kEllipseNSigmaY))
+        continue;
+    }
+    Int_t s0 = Int_t(left_0_17_adc[0]);
+    Int_t g = Int_t(grid_adc);
+    if (s0 > 0 && g > 0)
+      h->Fill(Double_t(g), Double_t(s0));
+  }
+  sf->Close();
+  delete sf;
+
+  if (h->GetEntries() < 100) {
+    std::cerr << "  " << run_label
+              << ": too few events for Strip0-vs-Grid beam gate" << std::endl;
+    delete h;
+    return out;
+  }
+
+  const Double_t kSeedFrac = 0.30;
+  const Int_t kSeedHalfBins = 40;
+  const Int_t kMomentRefineIters = 4;
+  const Double_t kMomentRefineNSigma = 2.5;
+  Double_t bw_x = h->GetXaxis()->GetBinWidth(1);
+  Double_t bw_y = h->GetYaxis()->GetBinWidth(1);
+  Int_t bx, by, bz;
+  h->GetMaximumBin(bx, by, bz);
+  Double_t peak_val = h->GetBinContent(bx, by);
+  Int_t lo_bx = std::max(1, bx - kSeedHalfBins);
+  Int_t hi_bx = std::min(h->GetNbinsX(), bx + kSeedHalfBins);
+  Int_t lo_by = std::max(1, by - kSeedHalfBins);
+  Int_t hi_by = std::min(h->GetNbinsY(), by + kSeedHalfBins);
+  Moments2D m = BeamFitUtils::ComputeMoments(h, lo_bx, hi_bx, lo_by, hi_by,
+                                             kSeedFrac * peak_val, bw_x, bw_y);
+  if (m.weight <= 0) {
+    std::cerr << "  " << run_label
+              << ": no bins above beam seed threshold in Strip0-vs-Grid"
+              << std::endl;
+    delete h;
+    return out;
+  }
+  for (Int_t iter = 0; iter < kMomentRefineIters; iter++) {
+    Int_t wlo_bx = std::max(
+        1, h->GetXaxis()->FindBin(m.mu_x - kMomentRefineNSigma * m.sigma_x));
+    Int_t whi_bx = std::min(
+        h->GetNbinsX(),
+        h->GetXaxis()->FindBin(m.mu_x + kMomentRefineNSigma * m.sigma_x));
+    Int_t wlo_by = std::max(
+        1, h->GetYaxis()->FindBin(m.mu_y - kMomentRefineNSigma * m.sigma_y));
+    Int_t whi_by = std::min(
+        h->GetNbinsY(),
+        h->GetYaxis()->FindBin(m.mu_y + kMomentRefineNSigma * m.sigma_y));
+    Moments2D m_ref = BeamFitUtils::ComputeMoments(
+        h, wlo_bx, whi_bx, wlo_by, whi_by, kSeedFrac * peak_val, bw_x, bw_y);
+    if (m_ref.weight <= 0)
+      break;
+    m = m_ref;
+  }
+  out.amp = peak_val;
+  out.mu_x = m.mu_x;
+  out.mu_y = m.mu_y;
+  out.sigma_x = m.sigma_x;
+  out.sigma_y = m.sigma_y;
+  out.rho = m.rho;
+  out.ok = kTRUE;
+  std::cout << "  beam gate (Strip0 vs Grid): mu=(" << out.mu_x << ","
+            << out.mu_y << ") sigma=(" << out.sigma_x << "," << out.sigma_y
+            << ") rho=" << out.rho << std::endl;
+
+  if (save_plot) {
+    TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
+    PlottingUtils::ConfigureAndDraw2DHistogram(h, cv);
+    Double_t sxx = out.sigma_x * out.sigma_x;
+    Double_t syy = out.sigma_y * out.sigma_y;
+    Double_t sxy = out.rho * out.sigma_x * out.sigma_y;
+    Double_t sum = sxx + syy;
+    Double_t diff = sxx - syy;
+    Double_t det = TMath::Sqrt(diff * diff + 4.0 * sxy * sxy);
+    Double_t lambda1 = 0.5 * (sum + det);
+    Double_t lambda2 = 0.5 * (sum - det);
+    Double_t theta = 0.5 * TMath::ATan2(2.0 * sxy, diff) * 180.0 / TMath::Pi();
+    Double_t n = 0.5 * (kEllipseNSigmaX + kEllipseNSigmaY);
+    TEllipse *e = new TEllipse(out.mu_x, out.mu_y, n * TMath::Sqrt(lambda1),
+                               n * TMath::Sqrt(lambda2), 0, 360, theta);
+    e->SetFillStyle(0);
+    e->SetLineColor(kViolet + 2);
+    e->SetLineWidth(2);
+    e->Draw();
+    if (Constants::cfg.SAVE_PLOTS)
+      PlottingUtils::SaveFigure(cv, "beam_gate_stp0_vs_grid", plot_subdir,
+                                PlotSaveOptions::kLINEAR);
+    delete cv;
+  }
+  delete h;
+  return out;
+}
+
 inline Double_t Median(std::vector<Float_t> &v) {
   if (v.empty())
     return 0.0;
-  size_t n = v.size();
+  Int_t n = Int_t(v.size());
   std::nth_element(v.begin(), v.begin() + n / 2, v.end());
   Double_t med = Double_t(v[n / 2]);
   if (n % 2 == 0) {
@@ -253,9 +387,9 @@ inline Double_t Median(std::vector<Float_t> &v) {
 inline Double_t InterquartileRange(std::vector<Float_t> &v) {
   if (v.size() < 4)
     return 0.0;
-  size_t n = v.size();
-  size_t i1 = n / 4;
-  size_t i3 = (3 * n) / 4;
+  Int_t n = Int_t(v.size());
+  Int_t i1 = n / 4;
+  Int_t i3 = (3 * n) / 4;
   std::nth_element(v.begin(), v.begin() + i1, v.end());
   Double_t q1 = Double_t(v[i1]);
   std::nth_element(v.begin(), v.begin() + i3, v.end());
@@ -468,10 +602,12 @@ struct StripPairSamples {
 const Double_t kGmOffsetLongL = 350.0; // ADC slice centre when L is long
 const Double_t kGmOffsetLongR = 300.0; // ADC slice centre when R is long
 const Double_t kGmOffsetWin = 80.0;    // ADC slice half-width
+const Double_t kGmPeakWin = 150.0;     // ADC near-peak gate half-width
 
 void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
                                     const std::vector<ChannelCal> &chans,
                                     const BeamFit2D &beam,
+                                    const BeamFit2D &beam0vGrid,
                                     std::vector<std::vector<Float_t>> &samples,
                                     StripPairSamples pairs[18]) {
   Int_t n_chans = Int_t(chans.size());
@@ -496,10 +632,11 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
   // Left_0_17_dE; right ends in RightdE. Strip totals are L+R; the gate uses
   // the strip1 total (L1+R1) and the strip2 total (L2+R2).
   UShort_t left_0_17_adc[18], rightdE_adc[18];
-  Short_t cathode_adc = 0;
+  Short_t cathode_adc = 0, grid_adc = 0;
   tree->SetBranchAddress("Left_0_17_dE", left_0_17_adc);
   tree->SetBranchAddress("RightdE", rightdE_adc);
   tree->SetBranchAddress("Cathode", &cathode_adc);
+  tree->SetBranchAddress("Grid", &grid_adc);
 
   Long64_t n = tree->GetEntries();
   for (Long64_t j = 0; j < n; j++) {
@@ -538,6 +675,15 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
     if (!BeamFitUtils::InEllipseXY(beam, x, y, kEllipseNSigmaX,
                                    kEllipseNSigmaY))
       continue;
+    if (beam0vGrid.ok) {
+      Double_t g0 = Double_t(grid_adc);
+      Double_t s0 = Double_t(left_0_17_adc[0]);
+      if (g0 <= 0 || s0 <= 0)
+        continue;
+      if (!BeamFitUtils::InEllipseXY(beam0vGrid, g0, s0, kEllipseNSigmaX,
+                                     kEllipseNSigmaY))
+        continue;
+    }
     for (Int_t i = 0; i < n_chans; i++) {
       if (Long64_t(samples[i].size()) >= kSampleCap)
         continue;
@@ -575,10 +721,10 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
 //
 // Pass 2 — per-strip eSum alignment via the SHORT side only:
 //   * eSum = gain_L·L + gain_R·R over the pairs; per-strip beam peak found
-//     in (1.05, 2.5) a.u. — the window starts above 1.0 to exclude the
-//     long-side-only pile at exactly TARGET.
+//     in (0.8, 2.5) a.u. (notebook: TARGET=1000, eSum ≈1200 →
+//     (1100/1000, 2500/1000) = (1.1, 2.5); widened slightly here).
 //   * reference = median of the per-strip peaks.
-//   * strips with |peak − ref| > 0.03 get gain_short *= (ref−1)/(peak−1),
+//   * strips with |peak − ref| > 0.05 get gain_short *= (ref−1)/(peak−1),
 //     which moves the strip's eSum peak onto the reference without touching
 //     the long side.
 //
@@ -595,9 +741,9 @@ const Double_t kGmShortHi = 2000.0;
 const Int_t kGmBins = 512;
 const Double_t kGmSkipFrac = 0.05;
 const Long64_t kGmMinSlice = 100; // min entries in the shoulder slice
-const Double_t kGmEsumLo = 1.05;  // a.u. eSum peak search window (pass 2)
+const Double_t kGmEsumLo = 0.8;   // a.u. eSum peak search window (pass 2)
 const Double_t kGmEsumHi = 2.5;
-const Double_t kGmCorrThresh = 0.03; // a.u. (notebook: 30 ADC / TARGET 1000)
+const Double_t kGmCorrThresh = 0.05; // a.u. (notebook: 30/1000 = 3% of TARGET)
 
 // Histogram-mode peak finder, mirroring the notebook's find_peak(): histogram
 // `v` over [lo, hi] with kGmBins bins, skip the first skip_frac of bins (to
@@ -646,46 +792,110 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
     }
   }
 
-  // ── Pass 1: long-side peak + short-side shoulder anchors ──
-  // First sweep: strips with enough shoulder-slice statistics measure their
-  // own shoulder. Second sweep: the rest fall back to the median measured
-  // shoulder (same electronics scale on every strip); pass 2 then fine-tunes
-  // per strip with full beam statistics.
+  // ── Pass 1: per-side peak anchors, matching the notebook cell 7 ──
+  // Even strips (s % 2 == 0, R=LONG): shoulder method — find the short
+  //   side (L) peak in events where R reads low (~300 ADC ± 80).
+  // Odd strips (s % 2 == 1, L=LONG): 2D correlation ridge — build a 2D
+  //   histogram of (R, L), find the most probable R value given the L
+  //   beam peak, then extract peak_R.
+  // Strips without measured anchors fall back to the median.
+  const Int_t kNCorrBins = 256;
+  const Double_t kCorrRange = 2000.0;
+  const Int_t kCorrMinCounts = 20;
+
   Bool_t matched[18] = {kFALSE};
-  Double_t shoulder_adc[18] = {0};
-  std::vector<Double_t> shoulders_found;
+  Double_t short_anchor_adc[18] = {0};
+  std::vector<Double_t> anchors_found;
   for (Int_t s = 1; s <= 16; s++) {
     if (idx_l[s] < 0 || idx_r[s] < 0)
       continue;
     Bool_t l_is_long = (LongSide(s) == 'L');
     ChannelCal &c_long = chans[l_is_long ? idx_l[s] : idx_r[s]];
+    ChannelCal &c_short = chans[l_is_long ? idx_r[s] : idx_l[s]];
     if (!IsCalibrated(c_long)) {
       std::cerr << "  strip " << s
                 << ": long side uncalibrated; skipping L/R gain match"
                 << std::endl;
       continue;
     }
-    const std::vector<Float_t> &slice = pairs[s].shoulder;
-    if (Long64_t(slice.size()) < kGmMinSlice)
-      continue;
-    Double_t peak_short =
-        GmFindPeak(slice, kGmShortLo, kGmShortHi, kGmSkipFrac);
+    Double_t peak_short = 0.0;
+
+    if (l_is_long) {
+      // Odd strip (L=LONG, R=SHORT): 2D correlation ridge for peak_R
+      const StripPairSamples &p = pairs[s];
+      if (Long64_t(p.l.size()) > 100) {
+        TH2F *h2d = new TH2F(Form("h2d_lr_corr_s%d", s),
+                             ";R (short) [ADC];L (long) [ADC]", kNCorrBins, 0.0,
+                             kCorrRange, kNCorrBins, 0.0, kCorrRange);
+        h2d->SetDirectory(nullptr);
+        for (Int_t j = 0; j < Int_t(p.l.size()); j++)
+          h2d->Fill(Double_t(p.r[j]), Double_t(p.l[j]));
+
+        // Notebook: scan from high R downward, find first R bin whose
+        // column (projection onto L) has any bin >= 20 counts.
+        Double_t rough_R = 0.0;
+        for (Int_t ix = kNCorrBins; ix >= 1; ix--) {
+          Double_t col_max = 0.0;
+          for (Int_t iy = 1; iy <= kNCorrBins; iy++) {
+            Double_t v = h2d->GetBinContent(ix, iy);
+            if (v > col_max)
+              col_max = v;
+          }
+          if (col_max >= kCorrMinCounts) {
+            rough_R = h2d->GetXaxis()->GetBinCenter(ix);
+            break;
+          }
+        }
+
+        // Find offset_r: R peak in events where L ≈ long peak
+        Double_t long_peak = c_long.fit_adc;
+        std::vector<Float_t> r_near_long;
+        for (Int_t j = 0; j < Int_t(p.l.size()); j++) {
+          if (TMath::Abs(Double_t(p.l[j]) - long_peak) < kGmPeakWin)
+            r_near_long.push_back(p.r[j]);
+        }
+        Double_t offset_r = 0.0;
+        if (r_near_long.size() > 50)
+          offset_r = GmFindPeak(r_near_long, 50.0, 600.0, 0.05);
+
+        if (rough_R > 0) {
+          peak_short = GmFindPeak(p.r, rough_R * 0.85, rough_R * 1.15, 0.0);
+        } else {
+          Double_t lo = (offset_r > 0) ? offset_r + 100.0 : 500.0;
+          peak_short = GmFindPeak(p.r, lo, 2000.0, 0.05);
+        }
+        delete h2d;
+      }
+      if (peak_short <= 0) {
+        // Fall back to shoulder if 2D correlation fails
+        const std::vector<Float_t> &slice = pairs[s].shoulder;
+        if (Long64_t(slice.size()) >= kGmMinSlice)
+          peak_short = GmFindPeak(slice, kGmShortLo, kGmShortHi, kGmSkipFrac);
+      }
+    } else {
+      // Even strip (L=SHORT, R=LONG): shoulder method (notebook cell 7)
+      const std::vector<Float_t> &slice = pairs[s].shoulder;
+      if (Long64_t(slice.size()) >= kGmMinSlice)
+        peak_short = GmFindPeak(slice, kGmShortLo, kGmShortHi, kGmSkipFrac);
+    }
+
     if (peak_short <= 0)
       continue;
-    shoulder_adc[s] = peak_short;
-    shoulders_found.push_back(peak_short);
-    std::cout << "  strip " << s << " shoulder=" << Form("%.1f", peak_short)
-              << " ADC (slice n=" << slice.size() << ")" << std::endl;
+    short_anchor_adc[s] = peak_short;
+    anchors_found.push_back(peak_short);
+    std::cout << "  strip " << s << " short_anchor=" << Form("%.1f", peak_short)
+              << " ADC (method=" << (l_is_long ? "2Dcorr" : "shoulder") << ")"
+              << std::endl;
   }
 
-  Double_t median_shoulder = 0.0;
-  if (!shoulders_found.empty()) {
-    std::sort(shoulders_found.begin(), shoulders_found.end());
-    std::size_t ms = shoulders_found.size();
-    median_shoulder =
+  Double_t median_anchor = 0.0;
+  if (!anchors_found.empty()) {
+    std::sort(anchors_found.begin(), anchors_found.end());
+    Int_t ms = Int_t(anchors_found.size());
+    median_anchor =
         (ms % 2 == 1)
-            ? shoulders_found[ms / 2]
-            : 0.5 * (shoulders_found[ms / 2 - 1] + shoulders_found[ms / 2]);
+            ? anchors_found[ms / 2]
+            : 0.5 * (anchors_found[ms / 2 - 1] + anchors_found[ms / 2]);
   }
 
   for (Int_t s = 1; s <= 16; s++) {
@@ -696,26 +906,24 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
     ChannelCal &c_short = chans[l_is_long ? idx_r[s] : idx_l[s]];
     if (!IsCalibrated(c_long))
       continue;
-    if (shoulder_adc[s] <= 0) {
-      if (median_shoulder <= 0) {
+    if (short_anchor_adc[s] <= 0) {
+      if (median_anchor <= 0) {
         std::cerr << "  strip " << s
-                  << ": no shoulder and no median fallback; keeping "
+                  << ": no anchor and no median fallback; keeping "
                      "independent gains"
                   << std::endl;
         continue;
       }
-      shoulder_adc[s] = median_shoulder;
-      std::cout << "  strip " << s << " shoulder=median fallback "
-                << Form("%.1f", median_shoulder)
-                << " ADC (slice n=" << pairs[s].shoulder.size() << ")"
-                << std::endl;
+      short_anchor_adc[s] = median_anchor;
+      std::cout << "  strip " << s << " short_anchor=median fallback "
+                << Form("%.1f", median_anchor) << " ADC" << std::endl;
     }
     c_long.gain = 1.0 / c_long.fit_adc;
-    c_short.gain = 1.0 / shoulder_adc[s];
+    c_short.gain = 1.0 / short_anchor_adc[s];
     matched[s] = kTRUE;
     std::cout << "  strip " << s
               << " L/R match: long peak=" << Form("%.1f", c_long.fit_adc)
-              << " ADC  short shoulder=" << Form("%.1f", shoulder_adc[s])
+              << " ADC  short anchor=" << Form("%.1f", short_anchor_adc[s])
               << " ADC" << std::endl;
   }
 
@@ -742,7 +950,7 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
               << std::endl;
   } else {
     std::sort(peaks_for_median.begin(), peaks_for_median.end());
-    std::size_t m = peaks_for_median.size();
+    Int_t m = Int_t(peaks_for_median.size());
     Double_t esum_ref =
         (m % 2 == 1)
             ? peaks_for_median[m / 2]
@@ -772,80 +980,6 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
                   << " delta=" << Form("%+.4f", delta) << " OK" << std::endl;
       }
     }
-  }
-
-  // ── Pass 3: short-side imputation gain ──
-  // The short side's trigger threshold sits near its beam deposit, so it
-  // fires probabilistically (strongly parity-dependent: even-strip shorts
-  // 7-100%, odd-strip shorts 1-25% of beam events). Adding zero when it
-  // doesn't fire makes the strip total bimodal and the traces sawtooth.
-  // Compute an effective long-side-only gain per strip:
-  //   impute_gain = gain_long + gain_short * ratio
-  //   ratio = short_beam_anchor / long_beam_anchor
-  // so that a beam event decodes to the same total whether or not the short
-  // end fired. EnergyView uses it when the short side reads zero. Strips
-  // without a measured short anchor interpolate the ratio from neighbours
-  // (the ratio varies smoothly with strip and is parity-independent).
-  Double_t ratio[18];
-  Bool_t ratio_ok[18];
-  for (Int_t s = 0; s < 18; s++) {
-    ratio[s] = 0.0;
-    ratio_ok[s] = kFALSE;
-  }
-  for (Int_t s = 1; s <= 16; s++) {
-    if (idx_l[s] < 0 || idx_r[s] < 0)
-      continue;
-    Bool_t l_is_long = (LongSide(s) == 'L');
-    const ChannelCal &c_long = chans[l_is_long ? idx_l[s] : idx_r[s]];
-    const ChannelCal &c_short = chans[l_is_long ? idx_r[s] : idx_l[s]];
-    if (IsCalibrated(c_long) && IsCalibrated(c_short) && c_long.fit_adc > 0 &&
-        c_short.fit_adc > 0) {
-      ratio[s] = c_short.fit_adc / c_long.fit_adc;
-      ratio_ok[s] = kTRUE;
-    }
-  }
-  for (Int_t s = 1; s <= 16; s++) {
-    if (ratio_ok[s])
-      continue;
-    // Nearest measured neighbours (ratio is parity-independent).
-    Double_t acc = 0.0;
-    Int_t n_acc = 0;
-    for (Int_t d = 1; d <= 15 && n_acc == 0; d++) {
-      if (s - d >= 1 && ratio_ok[s - d]) {
-        acc += ratio[s - d];
-        n_acc++;
-      }
-      if (s + d <= 16 && ratio_ok[s + d]) {
-        acc += ratio[s + d];
-        n_acc++;
-      }
-    }
-    if (n_acc > 0) {
-      ratio[s] = acc / n_acc;
-      std::cout << "  strip " << s
-                << " impute ratio interpolated: " << Form("%.3f", ratio[s])
-                << std::endl;
-    }
-  }
-  for (Int_t s = 1; s <= 16; s++) {
-    if (idx_l[s] < 0 || idx_r[s] < 0 || ratio[s] <= 0)
-      continue;
-    Bool_t l_is_long = (LongSide(s) == 'L');
-    ChannelCal &c_long = chans[l_is_long ? idx_l[s] : idx_r[s]];
-    ChannelCal &c_short = chans[l_is_long ? idx_r[s] : idx_l[s]];
-    // The short side does NOT need a beam anchor here: its gain comes from
-    // the pass-1 shoulder (median fallback when unmeasured), and its ratio
-    // from neighbour interpolation. Requiring IsCalibrated(c_short) would
-    // silently skip strips whose short side is below trigger threshold for
-    // nearly all beam events (R1/R3) — exactly the strips that need
-    // imputation most, and skipping them leaves their beam total at ~1.0
-    // while neighbours sit at ~1.2, which wrecks the alignment polynomial.
-    if (!IsCalibrated(c_long) || c_short.gain <= 0)
-      continue;
-    c_long.impute_gain = Gain(c_long) + c_short.gain * ratio[s];
-    std::cout << "  strip " << s
-              << " impute gain=" << Form("%.6f", c_long.impute_gain)
-              << " (ratio=" << Form("%.3f", ratio[s]) << ")" << std::endl;
   }
 }
 
@@ -974,18 +1108,9 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
   // stored.
   Float_t gain_left[18] = {0}, gain_right[18] = {0};
   Float_t gain_cathode = 0.0f;
-  // Effective long-side-only gain for events where the short side did not
-  // fire (short-side imputation, see ComputeLRGainMatch pass 3). Indexed by
-  // strip; 0 disables imputation for that strip.
-  Float_t gain_long_impute[18] = {0};
   Int_t n_actual = TMath::Min(Int_t(chans.size()), kMaxChannels);
   for (Int_t k = 0; k < n_actual; k++) {
     const ChannelCal &c = chans[k];
-    // A channel is usable when it has a beam anchor (1/fit_adc gain) OR an
-    // L/R gain-match override (shoulder gain). The latter covers short sides
-    // whose beam deposit is below trigger threshold (no anchor possible) but
-    // whose full-charge response was measured from the shoulder — their rare
-    // recorded hits must decode with that gain rather than read as 0.
     ok[k] = IsCalibrated(c) || c.gain > 0;
     gain[k] = ok[k] ? Float_t(Gain(c)) : 0.0f;
     fit_adc[k] = Float_t(c.fit_adc);
@@ -999,9 +1124,6 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
       gain_right[c.strip] = gain[k];
     else if (c.side == 'C')
       gain_cathode = gain[k];
-    if ((c.side == 'L' || c.side == 'R') && c.strip >= 1 && c.strip <= 16 &&
-        c.side == LongSide(c.strip) && c.impute_gain > 0)
-      gain_long_impute[c.strip] = Float_t(c.impute_gain);
   }
   cal->Branch("Gain", gain, Form("Gain[%d]/F", kMaxChannels));
   cal->Branch("Ok", ok, Form("Ok[%d]/O", kMaxChannels));
@@ -1012,35 +1134,26 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
   cal->Branch("GainLeft", gain_left, "GainLeft[18]/F");
   cal->Branch("GainRight", gain_right, "GainRight[18]/F");
   cal->Branch("GainCathode", &gain_cathode, "GainCathode/F");
-  cal->Branch("GainLongImpute", gain_long_impute, "GainLongImpute[18]/F");
 
-  // Beam-energy window (mu ± 3*sigma of the Strip0 beam peak, in a.u.) and
-  // per-strip linear alignment (slope + intercept) that flattens the Bragg
-  // curve to 1.0 using both the beam and pileup peaks. EnergyView applies
-  // total_corrected = slope * total + intercept after the per-channel gain.
-  // Default is IDENTITY (slope=1, intercept=0) so that the initial write
-  // (before FindStripCentroidAlignment runs) doesn't zero out strip totals.
+  // Beam-energy window and per-strip multiplicative alignment factors
+  // matching the notebook approach (pol3 reference / centroid).
+  // EnergyView applies total_corrected = factor * total after the
+  // per-channel gain. Default factor = 1.0 (identity).
   Float_t beam_e_min = 0.0f, beam_e_max = 0.0f;
-  Float_t strip_slope[18];
-  Float_t strip_intercept[18];
-  for (Int_t s = 0; s < 18; s++) {
-    strip_slope[s] = 1.0f;
-    strip_intercept[s] = 0.0f;
-  }
+  Float_t strip_factor[18];
+  for (Int_t s = 0; s < 18; s++)
+    strip_factor[s] = 1.0f;
   if (align) {
     beam_e_min = Float_t(align->beam_e_min);
     beam_e_max = Float_t(align->beam_e_max);
     if (align->ok) {
-      for (Int_t s = 0; s < 18; s++) {
-        strip_slope[s] = Float_t(align->slopes[s]);
-        strip_intercept[s] = Float_t(align->intercepts[s]);
-      }
+      for (Int_t s = 0; s < 18; s++)
+        strip_factor[s] = Float_t(align->factors[s]);
     }
   }
   cal->Branch("BeamEMin", &beam_e_min, "BeamEMin/F");
   cal->Branch("BeamEMax", &beam_e_max, "BeamEMax/F");
-  cal->Branch("StripSlope", strip_slope, "StripSlope[18]/F");
-  cal->Branch("StripIntercept", strip_intercept, "StripIntercept[18]/F");
+  cal->Branch("StripFactor", strip_factor, "StripFactor[18]/F");
   cal->Fill();
   cal->Write("calibration", TObject::kOverwrite);
 }
@@ -1068,7 +1181,7 @@ void SaveBeamPeakChannelHistograms(
     PlottingUtils::ConfigureAndDrawHistogram(h, kBlack);
     TF1 *fit = fits[i];
     if (fit) {
-      fit->SetLineColor(kRed + 1);
+      fit->SetLineColor(kViolet + 2);
       fit->SetLineWidth(2);
       fit->Draw("L SAME");
     }
@@ -1108,34 +1221,31 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
                              const std::vector<ChannelCal> &chans,
                              const TString &plot_subdir,
                              const TString &file_label) {
-  const Int_t n_chans = Int_t(chans.size());
+  const Int_t kNStrips = 18;
   const Int_t nbins = 300;
   const Double_t emin = Constants::cfg.STRIP_DE_MIN_NORMED;
   const Double_t emax = Constants::cfg.STRIP_DE_MAX_NORMED;
-  std::vector<TH1D *> h(n_chans, nullptr);
-  for (Int_t i = 0; i < n_chans; i++) {
-    if (!IsBeamdEChannel(chans[i]))
-      continue;
-    TString hname =
-        Form("h_dynrange_%s_%s", file_label.Data(), chans[i].name.Data());
-    h[i] = new TH1D(hname, ";#DeltaE [a.u.];Counts", nbins, emin, emax);
-    h[i]->SetDirectory(nullptr);
+  TH1D *h[kNStrips];
+  for (Int_t s = 0; s < kNStrips; s++) {
+    h[s] = new TH1D(Form("h_dynrange_%s_S%d", file_label.Data(), s),
+                    ";#DeltaE [a.u.];Counts", nbins, emin, emax);
+    h[s]->SetDirectory(nullptr);
   }
   TString sub = FileSet::EventsName(spec) + ".root";
   TFile *sf = IO::OpenForReading(sub);
   if (!sf || sf->IsZombie()) {
     if (sf)
       sf->Close();
-    for (Int_t i = 0; i < n_chans; i++)
-      delete h[i];
+    for (Int_t s = 0; s < kNStrips; s++)
+      delete h[s];
     return;
   }
   TTree *tree = static_cast<TTree *>(sf->Get("events"));
   if (!tree) {
     sf->Close();
     delete sf;
-    for (Int_t i = 0; i < n_chans; i++)
-      delete h[i];
+    for (Int_t s = 0; s < kNStrips; s++)
+      delete h[s];
     return;
   }
   EnergyView ev;
@@ -1143,67 +1253,51 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
   if (!ev.is_normed) {
     sf->Close();
     delete sf;
-    for (Int_t i = 0; i < n_chans; i++)
-      delete h[i];
+    for (Int_t s = 0; s < kNStrips; s++)
+      delete h[s];
     return;
   }
   Long64_t n = tree->GetEntries();
   for (Long64_t j = 0; j < n; j++) {
     tree->GetEntry(j);
     ev.Decode();
-    for (Int_t i = 0; i < n_chans; i++) {
-      if (!h[i])
-        continue;
-      const ChannelCal &c = chans[i];
-      Double_t v = 0.0;
-      if (c.side == 'S')
-        v = ev.total[c.strip];
-      else if (c.side == 'L')
-        v = ev.left[c.strip];
-      else
-        v = ev.right[c.strip];
+    for (Int_t s = 0; s < kNStrips; s++) {
+      Double_t v = ev.total[s];
       if (v > 0)
-        h[i]->Fill(v);
+        h[s]->Fill(v);
     }
   }
   sf->Close();
   delete sf;
   std::vector<Int_t> colors = PlottingUtils::GetDefaultColors();
   Double_t y_top = 0;
-  for (Int_t i = 0; i < n_chans; i++) {
-    if (!h[i])
-      continue;
-    Double_t m = h[i]->GetMaximum();
+  for (Int_t s = 0; s < kNStrips; s++) {
+    Double_t m = h[s]->GetMaximum();
     if (m > y_top)
       y_top = m;
   }
   TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
   cv->SetRightMargin(0.20);
   Bool_t first = kTRUE;
-  for (Int_t i = 0; i < n_chans; i++) {
-    if (!h[i])
-      continue;
-    Int_t color = colors[i % Int_t(colors.size())];
-    h[i]->SetLineColor(color);
-    h[i]->SetLineWidth(2);
-    h[i]->SetMaximum(1.15 * y_top);
-    h[i]->Draw(first ? "HIST" : "HIST SAME");
+  for (Int_t s = 0; s < kNStrips; s++) {
+    Int_t color = colors[s % Int_t(colors.size())];
+    h[s]->SetLineColor(color);
+    h[s]->SetLineWidth(2);
+    h[s]->SetMaximum(1.15 * y_top);
+    h[s]->Draw(first ? "HIST" : "HIST SAME");
     first = kFALSE;
   }
   TLegend *leg = PlottingUtils::AddLegend(0.81, 0.99, 0.10, 0.95);
-  for (Int_t i = 0; i < n_chans; i++) {
-    if (!h[i])
-      continue;
-    leg->AddEntry(h[i], chans[i].name.Data(), "l");
-  }
+  for (Int_t s = 0; s < kNStrips; s++)
+    leg->AddEntry(h[s], Form("S%d", s), "l");
   leg->Draw();
   if (Constants::cfg.SAVE_PLOTS)
     PlottingUtils::SaveFigure(cv, "dynamic_range_check", plot_subdir,
                               PlotSaveOptions::kLOG);
   delete cv;
   delete leg;
-  for (Int_t i = 0; i < n_chans; i++)
-    delete h[i];
+  for (Int_t s = 0; s < kNStrips; s++)
+    delete h[s];
 }
 
 // Overlay (one color per channel, log-y) of ONLY the events used for
@@ -1288,7 +1382,6 @@ void DeriveBeamEnergyWindow(const std::vector<ChannelCal> &chans,
       Double_t g = Gain(c);
       align.beam_e_min = g * (c.fit_adc - kBeamNSigma * c.fit_sigma_adc);
       align.beam_e_max = g * (c.fit_adc + kBeamNSigma * c.fit_sigma_adc);
-      align.ok = kTRUE;
       std::cout << "  beam energy window (from Strip0): [" << align.beam_e_min
                 << ", " << align.beam_e_max << "] a.u." << std::endl;
       return;
@@ -1298,124 +1391,33 @@ void DeriveBeamEnergyWindow(const std::vector<ChannelCal> &chans,
             << std::endl;
 }
 
-const Int_t kAlignNStrips = 18;
-const Double_t kAlignMisalignPct = 1.5;
-const Int_t kAlignMaxIter = 4;
-const Int_t kAlignPolyDeg = 3;
-const Double_t kAlignHistMin = 0.0;
-const Double_t kAlignHistMax = 10.0;
-const Int_t kAlignHistBins = 2000;
-const Int_t kAlignSmoothTimes = 5;
-const Double_t kAlignBeamTarget = 1.0;
-const Double_t kAlignPileupTarget = 2.0;
-const Double_t kAlignPileupSearchLo = 1.6;
-const Double_t kAlignPileupSearchHi = 2.4;
-const Double_t kAlignPileupMinFrac = 0.03;
-const Double_t kAlignGausFitHalfWidth =
-    0.15; // ± a.u. around seed for Gaussian fit
-
-// Refines a peak position with a Gaussian fit around the smoothed max-bin
-// seed, clamped to [lo, hi]. Needed for sub-bin precision: even at 0.005
-// a.u./bin the max-bin can jump ±1 bin between adjacent strips, which
-// zigzags the alignment. Returns the fitted centroid, or the seed when the
-// fit fails.
-Double_t RefinePeakGaussian(TH1D *proj, Double_t seed_peak,
-                            Double_t seed_height, Double_t lo, Double_t hi) {
-  if (seed_height <= 0 || seed_peak <= 0)
-    return 0.0;
-  Double_t fit_lo = seed_peak - kAlignGausFitHalfWidth;
-  Double_t fit_hi = seed_peak + kAlignGausFitHalfWidth;
-  if (fit_lo < lo)
-    fit_lo = lo;
-  if (fit_hi > hi)
-    fit_hi = hi;
-  TF1 *f = new TF1("f_align_peak_refine", "gaus", fit_lo, fit_hi);
-  f->SetParameters(seed_height, seed_peak, 0.05);
-  f->SetParLimits(1, fit_lo, fit_hi);
-  TFitResultPtr r = proj->Fit(f, "QSRN");
-  Double_t mu = f->GetParameter(1);
-  delete f;
-  if (r.Get() && r->IsValid() && mu > 0)
-    return mu;
-  return seed_peak;
-}
-
-// Fits pol3 to `g` with iterative worst-residual rejection. Mutates `g` by
-// removing outlier points; their strip numbers are inserted into `outliers`.
-// Returns the final fitted TF1 (caller owns) or nullptr when the fit fails.
-TF1 *FitPolyWithRejection(TGraph *g, const TString &name,
-                          std::set<Int_t> &outliers) {
-  outliers.clear();
-  for (Int_t iter = 0; iter < kAlignMaxIter; iter++) {
-    if (g->GetN() <= kAlignPolyDeg + 1)
-      break;
-    TF1 *fpol = new TF1(name + Form("_iter%d", iter), "pol3", -0.5,
-                        kAlignNStrips - 0.5);
-    TFitResultPtr r = g->Fit(fpol, "QSRN");
-    if (!r.Get() || !r->IsValid()) {
-      delete fpol;
-      break;
-    }
-    Double_t worst_pct = 0;
-    Int_t worst_idx = -1;
-    for (Int_t i = 0; i < g->GetN(); i++) {
-      Double_t x, y;
-      g->GetPoint(i, x, y);
-      Double_t pred = fpol->Eval(x);
-      if (pred <= 0)
-        continue;
-      Double_t resid_pct = TMath::Abs(y - pred) / pred * 100.0;
-      if (resid_pct > worst_pct) {
-        worst_pct = resid_pct;
-        worst_idx = i;
-      }
-    }
-    delete fpol;
-    if (worst_pct < kAlignMisalignPct || worst_idx < 0)
-      break;
-    Double_t rx, ry;
-    g->GetPoint(worst_idx, rx, ry);
-    outliers.insert(Int_t(rx + 0.5));
-    g->RemovePoint(worst_idx);
-  }
-  TF1 *f = new TF1(name, "pol3", -0.5, kAlignNStrips - 0.5);
-  TFitResultPtr r = g->Fit(f, "QSRN");
-  if (!r.Get() || !r->IsValid()) {
-    delete f;
-    return nullptr;
-  }
-  return f;
-}
-
-// Per-strip eSum centroid alignment with two-point linear calibration:
-//   1. Decode events using the per-channel gains already on disk.
-//   2. For each strip 1–16, project the 2D (strip vs eSum) histogram, smooth,
-//      and find BOTH the beam peak (global max bin) and the pileup peak (max
-//      bin in a window at ~2x beam). Each is then refined with a local
-//      Gaussian fit (RefinePeakGaussian) for sub-bin precision.
-//   3. Fit degree-3 polynomials through the beam centroids AND the pileup
-//      centroids (each with iterative outlier rejection). These follow the
-//      Bragg curve; the SMOOTH polynomial predictions — not the raw per-strip
-//      measurements — feed the slope/intercept so adjacent strips get
-//      consistent corrections.
-//   4. Two-point linear correction per strip:
-//        slope = 1.0 / (pileup_poly - beam_poly)
-//        intercept = 1.0 - slope * beam_poly
-//      maps beam→1.0 and pileup→2.0, flattening the Bragg curve and
-//      correcting the (sublinear, ~-1..-5%) response. When no pileup
-//      information exists, falls back to 2x beam (pure single-point scale).
-//   5. EnergyView applies: total_corrected = slope * total + intercept.
+// Per-strip multiplicative alignment, matching the notebook
+// (37Cl_an.ipynb cell 5). Decodes events with the per-channel gains already on
+// disk, finds each strip's beam-peak centroid from the eSum 2D histogram,
+// fits a robust degree-3 polynomial reference trend through the centroids
+// (strips 1-16 only — the single-ended anodes sit at a different scale), and
+// derives a multiplicative factor = reference[s] / centroid[s] for 1-16.
+// Strips 0/17 get factor = 1.0 / centroid (push beam peak to 1.0 a.u.).
 //
 // Uses ALL events (not beam-gated): the beam dominates every strip's
-// histogram by a wide margin. The histogram range is deliberately wide
-// ([0, 10] a.u.) to catch residual gain errors.
+// histogram by a wide margin.
 StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
                                                 const TString &plot_subdir,
                                                 const TString &file_label) {
+  const Int_t kNStrips = 18;
+  const Int_t kNHistBins = 200;
+  const Double_t kHistMin = 0.0;
+  const Double_t kHistMax = 10.0;
+  const Int_t kSmoothTimes = 5;
+  const Double_t kMisalignPct = 1.5;
+  const Int_t kMaxIter = 4;
+  const Int_t kPolyDeg = 3;
+  const Double_t kGausFitHalfWidth = 0.15;
+
   StripAlignmentResult result;
-  for (Int_t s = 0; s < 18; s++) {
-    result.slopes[s] = 1.0;
-    result.intercepts[s] = 0.0;
+  for (Int_t s = 0; s < kNStrips; s++) {
+    result.factors[s] = 1.0;
+    result.centroids[s] = 0.0;
   }
 
   TString sub = FileSet::EventsName(spec) + ".root";
@@ -1444,9 +1446,8 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
   }
 
   TH2D *h2 = new TH2D(Form("h2_strip_align_%s", file_label.Data()),
-                      ";Strip number;#DeltaE [a.u.]", kAlignNStrips, -0.5,
-                      kAlignNStrips - 0.5, kAlignHistBins, kAlignHistMin,
-                      kAlignHistMax);
+                      ";Strip number;#DeltaE [a.u.]", kNStrips, -0.5,
+                      kNStrips - 0.5, kNHistBins, kHistMin, kHistMax);
   h2->SetDirectory(nullptr);
 
   Long64_t n = tree->GetEntries();
@@ -1455,7 +1456,7 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
     tree->GetEntry(j);
     ev.Decode();
     Bool_t any = kFALSE;
-    for (Int_t s = 0; s < kAlignNStrips; s++) {
+    for (Int_t s = 0; s < kNStrips; s++) {
       Double_t v = ev.total[s];
       if (v <= 0)
         continue;
@@ -1471,13 +1472,11 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
   std::cout << "  strip alignment: " << n_used << " events decoded"
             << std::endl;
 
-  Double_t beam_centroids[kAlignNStrips + 1] = {0};
-  Double_t pileup_centroids[kAlignNStrips + 1] = {0};
-  Bool_t beam_ok[kAlignNStrips + 1] = {kFALSE};
-  Bool_t pileup_ok[kAlignNStrips + 1] = {kFALSE};
+  Double_t beam_centroids[kNStrips] = {0};
+  Bool_t beam_ok[kNStrips] = {kFALSE};
 
-  for (Int_t s = 0; s < kAlignNStrips; s++) {
-    Int_t bin_ix = s + 1; // histogram bin s+1 covers strip s
+  for (Int_t s = 0; s < kNStrips; s++) {
+    Int_t bin_ix = s + 1;
     TH1D *proj = h2->ProjectionY(
         Form("hproj_align_%s_s%d", file_label.Data(), s), bin_ix, bin_ix);
     proj->SetDirectory(nullptr);
@@ -1488,77 +1487,89 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
       delete proj;
       continue;
     }
-    proj->Smooth(kAlignSmoothTimes);
+    proj->Smooth(kSmoothTimes);
 
-    // Beam peak: search in [0.8, 1.8] a.u. so the pileup peak (~2.0+) is
-    // excluded. Without this window, strip 0 (beam=1.0, no L/R distortion)
-    // and strip 17 can mistake the pileup peak for the beam peak since its
-    // pileup is higher or comparable to the beam bin count after smoothing.
-    const Double_t kBeamSearchLo = 0.8, kBeamSearchHi = 1.8;
-    Int_t beam_bin_lo = proj->FindBin(kBeamSearchLo);
-    Int_t beam_bin_hi = proj->FindBin(kBeamSearchHi);
-    Int_t beam_bin = -1;
-    Double_t beam_max_val = 0;
-    for (Int_t b = beam_bin_lo; b <= beam_bin_hi; b++) {
+    // Strip 0/17: single-ended anode, beam at ~1.0, pileup at ~2.0.
+    // Strips 1-16: total is bimodal when the short side doesn't fire
+    // (long-only ≈ 0.5) — pick the peak nearest 1.0, which is the
+    // full-strip beam peak (both sides contributing, eSum ≈ 1.0).
+    Double_t peak_target = 1.0;
+    Double_t search_lo, search_hi;
+    if (s == 0 || s == 17) {
+      search_lo = 0.3;
+      search_hi = 1.6;
+    } else {
+      search_lo = 0.6;
+      search_hi = 1.5;
+    }
+    Int_t b_lo = proj->FindBin(search_lo);
+    Int_t b_hi = proj->FindBin(search_hi);
+    Int_t b_max = -1;
+    Double_t best_dist = 1e9;
+    for (Int_t b = b_lo; b <= b_hi; b++) {
       Double_t v = proj->GetBinContent(b);
-      if (v > beam_max_val) {
-        beam_max_val = v;
-        beam_bin = b;
+      if (v <= 0)
+        continue;
+      // Local maximum check: higher than neighbours
+      if (b > b_lo && proj->GetBinContent(b - 1) >= v)
+        continue;
+      if (b < b_hi && proj->GetBinContent(b + 1) > v)
+        continue;
+      Double_t bc = proj->GetBinCenter(b);
+      Double_t d = TMath::Abs(bc - peak_target);
+      if (d < best_dist) {
+        best_dist = d;
+        b_max = b;
       }
     }
-    if (beam_bin < 0) {
+    // Fallback: global maximum if no local peaks found near 1.0
+    if (b_max < 0) {
+      Double_t val_max = 0;
+      for (Int_t b = b_lo; b <= b_hi; b++) {
+        Double_t v = proj->GetBinContent(b);
+        if (v > val_max) {
+          val_max = v;
+          b_max = b;
+        }
+      }
+    }
+    if (b_max < 0) {
       delete proj;
       continue;
     }
-    Double_t beam_seed = proj->GetBinCenter(beam_bin);
-    Double_t beam_height = proj->GetBinContent(beam_bin);
-    if (beam_height <= 0 || beam_seed <= 0) {
+    Double_t seed_peak = proj->GetBinCenter(b_max);
+    Double_t seed_h = proj->GetBinContent(b_max);
+    if (seed_h <= 0 || seed_peak <= 0) {
       delete proj;
       continue;
     }
-    Double_t beam_peak = RefinePeakGaussian(proj, beam_seed, beam_height,
-                                            kAlignHistMin, kAlignHistMax);
+
+    // Sub-bin precision: Gaussian fit around the smoothed max-bin seed
+    Double_t fit_lo = seed_peak - kGausFitHalfWidth;
+    Double_t fit_hi = seed_peak + kGausFitHalfWidth;
+    if (fit_lo < kHistMin)
+      fit_lo = kHistMin;
+    if (fit_hi > kHistMax)
+      fit_hi = kHistMax;
+    TF1 *fg = new TF1("f_align_peak_refine", "gaus", fit_lo, fit_hi);
+    fg->SetParameters(seed_h, seed_peak, 0.05);
+    fg->SetParLimits(1, fit_lo, fit_hi);
+    TFitResultPtr r = proj->Fit(fg, "QSRN");
+    Double_t beam_peak = fg->GetParameter(1);
+    if (!(r.Get() && r->IsValid() && beam_peak > 0))
+      beam_peak = seed_peak;
+    delete fg;
+
     beam_centroids[s] = beam_peak;
     beam_ok[s] = kTRUE;
-
-    // Pileup peak: search in window [1.6×beam, 2.4×beam], refine with Gaussian.
-    Int_t bin_lo = proj->FindBin(kAlignPileupSearchLo * beam_peak);
-    Int_t bin_hi = proj->FindBin(kAlignPileupSearchHi * beam_peak);
-    Double_t pu_height = 0;
-    Int_t pu_bin = -1;
-    for (Int_t b = bin_lo; b <= bin_hi; b++) {
-      if (proj->GetBinContent(b) > pu_height) {
-        pu_height = proj->GetBinContent(b);
-        pu_bin = b;
-      }
-    }
-    if (pu_bin >= 0 && pu_height > kAlignPileupMinFrac * beam_height) {
-      Double_t pu_seed = proj->GetBinCenter(pu_bin);
-      Double_t pu_peak = RefinePeakGaussian(proj, pu_seed, pu_height,
-                                            kAlignPileupSearchLo * beam_peak,
-                                            kAlignPileupSearchHi * beam_peak);
-      pileup_centroids[s] = pu_peak;
-      pileup_ok[s] = kTRUE;
-    }
-
     std::cout << "  strip " << s << " beam=" << Form("%.4f", beam_peak)
-              << " a.u.";
-    if (pileup_ok[s])
-      std::cout << "  pileup=" << Form("%.4f", pileup_centroids[s])
-                << " a.u. (ratio="
-                << Form("%.3f", pileup_centroids[s] / beam_peak) << ")";
-    else
-      std::cout << "  pileup=NOT FOUND";
-    std::cout << "  (n=" << n_entries << ")" << std::endl;
+              << " a.u.  (n=" << n_entries << ")" << std::endl;
     delete proj;
   }
 
-  // Build beam and pileup graphs using ONLY strips 1-16 for the polynomial
-  // fit. Strips 0 and 17 are single-ended anodes (no L/R split, no gain-match
-  // distortion) — their beam centroids sit at ~2.0 a.u. while 1-16 sit at
-  // ~1.2, and including them would warp the pol3 away from the working strips.
-  // They keep identity alignment (slope=1, intercept=0) by not being set here.
-  TGraph *g_cent = new TGraph(kAlignNStrips);
+  // Robust pol3 reference trend through strips 1-16 centroids.
+  // Iteratively drop the strip with the worst residual > kMisalignPct.
+  TGraph *g_cent = new TGraph(kNStrips);
   Int_t np = 0;
   for (Int_t s = 1; s <= 16; s++) {
     if (beam_ok[s]) {
@@ -1568,199 +1579,109 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
   }
   g_cent->Set(np);
 
-  TGraph *g_pileup = new TGraph(kAlignNStrips);
-  np = 0;
-  for (Int_t s = 1; s <= 16; s++) {
-    if (pileup_ok[s]) {
-      g_pileup->SetPoint(np, Double_t(s), pileup_centroids[s]);
-      np++;
+  std::set<Int_t> outliers;
+  for (Int_t iter = 0; iter < kMaxIter; iter++) {
+    if (g_cent->GetN() <= kPolyDeg + 1)
+      break;
+    TF1 *fpol = new TF1(Form("fpol_align_%s_iter%d", file_label.Data(), iter),
+                        "pol3", -0.5, kNStrips - 0.5);
+    TFitResultPtr r = g_cent->Fit(fpol, "QSRN");
+    if (!r.Get() || !r->IsValid()) {
+      delete fpol;
+      break;
     }
-  }
-  g_pileup->Set(np);
-
-  // Keep copies of the full graphs (including strips 0/17) for plotting,
-  // since FitPolyWithRejection removes outliers from the input graph.
-  TGraph *g_beam_plot = new TGraph(kAlignNStrips);
-  np = 0;
-  for (Int_t s = 0; s < kAlignNStrips; s++) {
-    if (beam_ok[s]) {
-      g_beam_plot->SetPoint(np, Double_t(s), beam_centroids[s]);
-      np++;
-    }
-  }
-  g_beam_plot->Set(np);
-  TGraph *g_pileup_plot = new TGraph(kAlignNStrips);
-  np = 0;
-  for (Int_t s = 0; s < kAlignNStrips; s++) {
-    if (pileup_ok[s]) {
-      g_pileup_plot->SetPoint(np, Double_t(s), pileup_centroids[s]);
-      np++;
-    }
-  }
-  g_pileup_plot->Set(np);
-
-  // Fit polynomials to both beam and pileup centroids with outlier rejection.
-  // These follow the Bragg curve (beam) and ~2x Bragg + nonlinearity (pileup).
-  // Used to compute smooth slope/intercept per strip — the per-strip raw
-  // measurements are noisier and the slope formula 1/(pileup - beam)
-  // amplifies that noise into zigzag between adjacent strips.
-  std::set<Int_t> beam_outliers, pileup_outliers;
-  TF1 *fbeam = FitPolyWithRejection(
-      g_cent, Form("fbeam_align_%s", file_label.Data()), beam_outliers);
-  TF1 *fpileup = FitPolyWithRejection(
-      g_pileup, Form("fpileup_align_%s", file_label.Data()), pileup_outliers);
-
-  // Compute slope + intercept per strip using the SMOOTH polynomial predictions
-  // for both beam and pileup. This ensures adjacent strips get similar
-  // corrections, eliminating zigzag. For strips where pileup wasn't measured
-  // or the pileup polynomial failed, fall back to 2*beam_poly (physical
-  // expectation: pileup = 2x beam in linear regime) — still smooth.
-  // Strips 0 and 17 are single-ended anodes and KEEP IDENTITY ALIGNMENT
-  // (slope=1, intercept=0) — they are not included in the fit graphs above.
-  for (Int_t s = 0; s < kAlignNStrips; s++) {
-    if (s == 0 || s == 17) {
-      // Single-ended anode (no L/R split, no gain-match distortion). The
-      // two-point pileup correction from the polynomial doesn't apply, but
-      // the beam peak should still be pushed to 1.0 a.u. by brute force.
-      if (beam_centroids[s] > 0) {
-        result.slopes[s] = kAlignBeamTarget / beam_centroids[s];
-        result.intercepts[s] = 0.0;
-      } else {
-        result.slopes[s] = 1.0;
-        result.intercepts[s] = 0.0;
+    Double_t worst_pct = 0;
+    Int_t worst_idx = -1;
+    for (Int_t i = 0; i < g_cent->GetN(); i++) {
+      Double_t x, y;
+      g_cent->GetPoint(i, x, y);
+      Double_t pred = fpol->Eval(x);
+      if (pred <= 0)
+        continue;
+      Double_t resid_pct = TMath::Abs(y - pred) / pred * 100.0;
+      if (resid_pct > worst_pct) {
+        worst_pct = resid_pct;
+        worst_idx = i;
       }
-      continue;
     }
-    Double_t bc = 0, pc = 0;
-
-    if (fbeam && fbeam->Eval(Double_t(s)) > 0) {
-      bc = fbeam->Eval(Double_t(s));
-    } else if (beam_ok[s]) {
-      bc = beam_centroids[s];
-    } else {
-      result.slopes[s] = 1.0;
-      result.intercepts[s] = 0.0;
-      result.centroids[s] = 0.0;
-      result.pileup_centroids[s] = 0.0;
-      continue;
-    }
-
-    if (fpileup && fpileup->Eval(Double_t(s)) > 0) {
-      pc = fpileup->Eval(Double_t(s));
-    } else if (pileup_ok[s]) {
-      pc = pileup_centroids[s];
-    } else {
-      // Pileup polynomial failed or no pileup data — use 2x beam as estimate.
-      pc = 2.0 * bc;
-    }
-
-    result.centroids[s] = bc;
-    result.pileup_centroids[s] = pc;
-
-    if (pc > bc && pc > 0) {
-      result.slopes[s] = (kAlignPileupTarget - kAlignBeamTarget) / (pc - bc);
-      result.intercepts[s] = kAlignBeamTarget - result.slopes[s] * bc;
-    } else {
-      result.slopes[s] = kAlignBeamTarget / bc;
-      result.intercepts[s] = 0.0;
-    }
+    delete fpol;
+    if (worst_pct < kMisalignPct || worst_idx < 0)
+      break;
+    Double_t rx, ry;
+    g_cent->GetPoint(worst_idx, rx, ry);
+    std::cout << "  strip " << Int_t(rx) << " outlier "
+              << Form("%.1f", worst_pct) << "% — dropped" << std::endl;
+    outliers.insert(Int_t(rx));
+    g_cent->RemovePoint(worst_idx);
   }
+
+  TF1 *fbeam = nullptr;
+  if (g_cent->GetN() > kPolyDeg + 1) {
+    fbeam = new TF1(Form("fbeam_align_%s", file_label.Data()), "pol3", -0.5,
+                    kNStrips - 0.5);
+    g_cent->Fit(fbeam, "QSRN");
+    std::cout << "  strip alignment reference: pol3 fitted through "
+              << g_cent->GetN() << " strips" << std::endl;
+  }
+
+  // Notebook (37Cl_an.ipynb cell 5): factors = reference / centroid,
+  // where reference is the pol3 trend through strips 1-16 centroids.
+  // Strips 0/17 are single-ended anodes not in the pol3 fit; push to 1.0.
+  Int_t valid_strips = 0;
+  for (Int_t s = 0; s < kNStrips; s++) {
+    if (!beam_ok[s])
+      continue;
+    Double_t centro = beam_centroids[s];
+    if (centro <= 0)
+      continue;
+    result.centroids[s] = centro;
+    if (s >= 1 && s <= 16 && fbeam) {
+      Double_t ref = fbeam->Eval(Double_t(s));
+      if (ref > 0)
+        result.factors[s] = ref / centro;
+      else
+        result.factors[s] = 1.0 / centro;
+    } else {
+      result.factors[s] = 1.0 / centro;
+    }
+    valid_strips++;
+    std::cout << "  strip " << s << " centroid=" << Form("%.4f", centro)
+              << " factor=" << Form("%.4f", result.factors[s]) << std::endl;
+  }
+  result.ok = (valid_strips >= 4) ? kTRUE : kFALSE;
+
+  // Diagnostic plot
   {
-    Int_t valid_strips = 0;
-    for (Int_t s = 1; s < kAlignNStrips; s++) {
-      if (result.centroids[s] > 0)
-        valid_strips++;
-    }
-    result.ok = (valid_strips >= 4) ? kTRUE : kFALSE;
-    if (!result.ok)
-      std::cerr << "  strip alignment: only " << valid_strips << " of "
-                << kAlignNStrips << " strips valid; alignment not applied"
-                << std::endl;
-  }
-
-  std::cout << Form("  %-6s  %10s  %10s  %10s  %10s  %10s  %10s  %8s  %10s",
-                    "Strip", "BeamMeas", "BeamPoly", "PuMeas", "PuPoly",
-                    "Ratio", "Nonlin", "Slope", "Intercept")
-            << std::endl;
-  for (Int_t s = 0; s < kAlignNStrips; s++) {
-    if (result.centroids[s] <= 0)
-      continue;
-    Double_t beam_meas = beam_ok[s] ? beam_centroids[s] : 0.0;
-    Double_t beam_poly = (fbeam && fbeam->Eval(Double_t(s)) > 0)
-                             ? fbeam->Eval(Double_t(s))
-                             : 0.0;
-    Double_t pu_meas = pileup_ok[s] ? pileup_centroids[s] : 0.0;
-    Double_t pu_poly = (fpileup && fpileup->Eval(Double_t(s)) > 0)
-                           ? fpileup->Eval(Double_t(s))
-                           : 0.0;
-    Double_t ratio = (result.pileup_centroids[s] > 0)
-                         ? result.pileup_centroids[s] / result.centroids[s]
-                         : 0.0;
-    // Nonlinearity: how far is pileup/2 from beam? Ideal (linear) = 0%.
-    // Positive = pileup sits above 2*beam (supralinear), negative = below.
-    Double_t nonlin = 0.0;
-    if (result.pileup_centroids[s] > 0 && result.centroids[s] > 0)
-      nonlin = (result.pileup_centroids[s] - 2.0 * result.centroids[s]) /
-               (2.0 * result.centroids[s]) * 100.0;
-    std::cout
-        << Form(
-               "  %6d  %10.4f  %10.4f  %10.4f  %10.4f  %10.4f  %+8.2f  %10.4f  %10.4f",
-               s, beam_meas, beam_poly, pu_meas, pu_poly, ratio, nonlin,
-               result.slopes[s], result.intercepts[s])
-        << std::endl;
-  }
-
-  if (Constants::cfg.SAVE_PLOTS) {
     TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
     PlottingUtils::ConfigureAndDraw2DHistogram(h2, cv);
-    TLine *l_beam = new TLine(-0.5, kAlignBeamTarget, kAlignNStrips - 0.5,
-                              kAlignBeamTarget);
-    l_beam->SetLineColor(kRed + 1);
-    l_beam->SetLineWidth(2);
-    l_beam->Draw("SAME");
-    TLine *l_pileup = new TLine(-0.5, kAlignPileupTarget, kAlignNStrips - 0.5,
-                                kAlignPileupTarget);
-    l_pileup->SetLineColor(kRed + 1);
-    l_pileup->SetLineStyle(2);
-    l_pileup->SetLineWidth(1);
-    l_pileup->Draw("SAME");
-    if (fbeam) {
-      fbeam->SetLineColor(kBlue - 1);
-      fbeam->SetLineStyle(2);
-      fbeam->SetLineWidth(1);
-      fbeam->Draw("SAME");
+    TGraph *g_beam_plot = new TGraph(kNStrips);
+    Int_t nb = 0;
+    for (Int_t s = 0; s < kNStrips; s++) {
+      if (beam_ok[s]) {
+        g_beam_plot->SetPoint(nb, Double_t(s), beam_centroids[s]);
+        nb++;
+      }
     }
-    if (fpileup) {
-      fpileup->SetLineColor(kGreen - 2);
-      fpileup->SetLineStyle(2);
-      fpileup->SetLineWidth(1);
-      fpileup->Draw("SAME");
-    }
-    if (g_beam_plot->GetN() > 0) {
-      g_beam_plot->SetMarkerColor(kYellow);
+    g_beam_plot->Set(nb);
+    if (nb > 0) {
       g_beam_plot->SetMarkerStyle(20);
-      g_beam_plot->SetMarkerSize(0.8);
+      g_beam_plot->SetMarkerColor(kOrange);
       g_beam_plot->Draw("P SAME");
     }
-    if (g_pileup_plot->GetN() > 0) {
-      g_pileup_plot->SetMarkerColor(kOrange + 1);
-      g_pileup_plot->SetMarkerStyle(21);
-      g_pileup_plot->SetMarkerSize(0.8);
-      g_pileup_plot->Draw("P SAME");
+    if (fbeam) {
+      fbeam->SetLineColor(kViolet + 2);
+      fbeam->SetLineWidth(2);
+      fbeam->Draw("SAME");
     }
-    PlottingUtils::SaveFigure(cv, "strip_alignment_check", plot_subdir,
-                              PlotSaveOptions::kLINEAR);
+    if (Constants::cfg.SAVE_PLOTS)
+      PlottingUtils::SaveFigure(cv, "strip_alignment_check", plot_subdir,
+                                PlotSaveOptions::kLINEAR);
     delete cv;
-    delete l_beam;
-    delete l_pileup;
+    delete g_beam_plot;
   }
 
   delete fbeam;
-  delete fpileup;
   delete g_cent;
-  delete g_pileup;
-  delete g_beam_plot;
-  delete g_pileup_plot;
   delete h2;
 
   return result;
@@ -1783,10 +1704,20 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
     return;
   }
 
+  BeamFit2D beam0vGrid;
+  {
+    std::lock_guard<std::mutex> lock(g_plot_mutex);
+    beam0vGrid = FindBeamGateStp0VsGrid(spec, file_label, plot_subdir, beam);
+  }
+  if (!beam0vGrid.ok)
+    std::cerr << "  " << file_label
+              << ": Strip0-vs-Grid beam gate failed — continuing without it"
+              << std::endl;
+
   std::vector<ChannelCal> chans = chans_template;
   std::vector<std::vector<Float_t>> samples;
   StripPairSamples pairs[18];
-  CollectAnchorSamplesOneSubfile(spec, chans, beam, samples, pairs);
+  CollectAnchorSamplesOneSubfile(spec, chans, beam, beam0vGrid, samples, pairs);
   std::vector<TF1 *> peak_fits;
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
@@ -1829,35 +1760,32 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
                 << Form("%.2f", ResolutionFWHMPercent(chans[i])) << "% FWHM"
                 << std::endl;
 
-  // Derive beam energy window from Strip0 (mu ± 3*sigma in a.u.). The window
-  // is written to the calibration tree so downstream beam-selection code has a
-  // single data-driven cut instead of a hand-tuned constant.
+  // Derive beam energy window from Strip0 (mu ± 3*sigma in a.u.).
   StripAlignmentResult align;
-  for (Int_t s = 0; s < 18; s++) {
-    align.slopes[s] = 1.0;
-    align.intercepts[s] = 0.0;
-  }
   DeriveBeamEnergyWindow(chans, align);
 
   // Write initial calibration tree: per-channel gains + beam window. The
   // alignment step needs this on disk so EnergyView can decode events in a.u.
   WriteCalibrationToEvents(spec, chans, &align);
 
-  // Per-strip eSum centroid alignment: decode events with the per-channel
+  // Per-strip multiplicative alignment: decode events with the per-channel
+  // gains just written, find each strip's beam-peak centroid, fit a pol3
+  // reference trend, and derive factors = reference / centroid. Stored in
+  // the calibration tree and applied by EnergyView as total *= factor.
   // gains just written, find each strip's beam-peak AND pileup-peak centroids,
   // and derive a linear correction (slope + intercept) that maps beam→1.0 and
   // pileup→2.0, flattening the Bragg curve. The polynomial trend is used only
-  // for outlier rejection. The slope/intercept are stored in the calibration
-  // tree and applied by EnergyView after the per-channel gain — the per-
-  // channel gains themselves are NOT modified.
+  // Preserve beam energy window from DeriveBeamEnergyWindow across the
+  // alignment call (which returns a fresh StripAlignmentResult).
+  Double_t beam_e_min = align.beam_e_min;
+  Double_t beam_e_max = align.beam_e_max;
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
     align = FindStripCentroidAlignment(spec, plot_subdir, file_label);
   }
+  align.beam_e_min = beam_e_min;
+  align.beam_e_max = beam_e_max;
   if (align.ok) {
-    // Rewrite calibration tree with slope/intercept. Per-channel gains stay
-    // as-is from ReduceToAnchors; the strip-level linear correction is
-    // applied by EnergyView at decode time.
     WriteCalibrationToEvents(spec, chans, &align);
   }
 
@@ -1936,7 +1864,7 @@ void CalibrateBeam::AggregateEresTomlForRun(
     if (v.empty())
       continue;
     std::sort(v.begin(), v.end());
-    size_t m = v.size();
+    Int_t m = Int_t(v.size());
     eres_vals[i] = (m % 2 == 1) ? v[m / 2] : 0.5 * (v[m / 2 - 1] + v[m / 2]);
   }
   std::cout << "Run " << run << ": writing per-channel %FWHM medians"

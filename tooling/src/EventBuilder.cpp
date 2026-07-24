@@ -397,7 +397,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       delete hSum.h2_strip0_vs_grid;
       delete hSum.h1_strip0;
       delete hSum.h1_grid;
-      for (std::size_t i = 0; i < sample_traces.size(); i++)
+      for (Int_t i = 0; i < sample_traces.size(); i++)
         delete sample_traces[i];
       return kFALSE;
     }

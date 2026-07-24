@@ -175,15 +175,17 @@ void EventsSummary::SaveSampleTraces(const std::vector<TGraph *> &traces,
   if (traces.empty())
     return;
 
-  TH2F *frame =
-      new TH2F(PlottingUtils::GetRandomName().Data(),
-               Form(";Strip;%s", y_title), 18, -0.5, 17.5, 100, y_min, y_max);
+  Int_t s_lo = Constants::cfg.IGNORE_STRIP_0 ? 1 : 0;
+  Int_t s_hi = Constants::cfg.IGNORE_STRIP_17 ? 16 : 17;
+  TH2F *frame = new TH2F(PlottingUtils::GetRandomName().Data(),
+                         Form(";Strip;%s", y_title), s_hi - s_lo + 1,
+                         s_lo - 0.5, s_hi + 0.5, 100, y_min, y_max);
   frame->SetStats(0);
   TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
   c->cd();
   frame->Draw();
 
-  for (std::size_t i = 0; i < traces.size(); i++) {
+  for (Int_t i = 0; i < traces.size(); i++) {
     traces[i]->SetLineColor(kBlack);
     traces[i]->SetLineWidth(1);
     traces[i]->Draw("L SAME");
@@ -311,7 +313,7 @@ void EventsSummary::BuildNormedSummaryHistograms(const TString &input_filename,
     }
   }
 
-  for (std::size_t i = 0; i < sample_traces.size(); i++)
+  for (Int_t i = 0; i < sample_traces.size(); i++)
     delete sample_traces[i];
 
   input_file->Close();
