@@ -29,6 +29,44 @@
             cudaCapabilities = [ "8.9" ];
             cudaForwardCompat = false;
           };
+          overlays = [
+            # torch-bin 2.12 requires cuda-bindings >= 13.0.3; the default
+            # cudaPackages (12.9) is too old, so pin the 13.0 set instead.
+            (final: prev: {
+              cudaPackages = prev.cudaPackages_13_0;
+            })
+            # slicer (a dep of shap) fails its test suite on python 3.14 in
+            # the updated nixpkgs; skip the checks.
+            (final: prev: {
+              pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
+                (python-final: python-prev: {
+                  # slicer (a dep of shap) is broken in the updated nixpkgs:
+                  # its pyproject build lacks setuptools, and its test suite
+                  # fails on python 3.14. Fix the build and skip the checks.
+                  slicer = python-prev.slicer.overridePythonAttrs (old: {
+                    doCheck = false;
+                    nativeBuildInputs = (old.nativeBuildInputs or []) ++ [
+                      python-final.setuptools
+                    ];
+                  });
+                  # shap is missing typing-extensions in its nixpkgs deps; the
+                  # runtime-deps check fails without it.
+                  shap = python-prev.shap.overridePythonAttrs (old: {
+                    dependencies = (old.dependencies or []) ++ [
+                      python-final.typing-extensions
+                    ];
+                  });
+                  # torch-bin pins setuptools<82 but nixpkgs ships 83.0.0;
+                  # relax the constraint so the runtime-deps check passes.
+                  torch-bin = python-prev.torch-bin.overridePythonAttrs (old: {
+                    pythonRelaxDeps = (old.pythonRelaxDeps or []) ++ [
+                      "setuptools"
+                    ];
+                  });
+                })
+              ];
+            })
+          ];
         };
         isCUDA = true;
         analysis-utils =
@@ -81,7 +119,7 @@
             ++ pkgs.lib.optionals isCUDA [
               pkgs.cudaPackages.cuda_nvcc
               pkgs.cudaPackages.cuda_cudart
-              pkgs.cudaPackages.cuda_cccl
+              pkgs.cudaPackages.cccl
             ];
             shellHook = ''
                echo "Analysis-Utilities version: ${analysis-utils.version}${pkgs.lib.optionalString isCUDA " (CUDA)"}"
@@ -136,7 +174,7 @@
             ++ pkgs.lib.optionals isCUDA [
               pkgs.cudaPackages.cuda_nvcc
               pkgs.cudaPackages.cuda_cudart
-              pkgs.cudaPackages.cuda_cccl
+              pkgs.cudaPackages.cccl
             ];
 
             buildPhase = ''
