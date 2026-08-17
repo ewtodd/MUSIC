@@ -177,6 +177,18 @@ Bool_t FitBeamPeakGaussian(const std::vector<Float_t> &v, const TString &fname,
     delete f;
     return kFALSE;
   }
+  // Peak-like sanity gate: a "beam peak" whose fitted width is more than
+  // half its centroid is not a peak. Such spectra (e.g. a noisy guard strip
+  // smeared over the whole ADC range) let the narrow refit lock onto an
+  // arbitrary sub-peak, and the resulting gain then maps every reading onto
+  // nonsense a.u. (37Cl run 84: Strip17 anchored at 81 ADC with sigma 932,
+  // making its totals read 0-38 a.u. and killing the reaction-onset trigger
+  // discriminator). Treat the channel as uncalibrated so it reads 0 a.u. —
+  // the same net effect as an ignored/no-fire guard.
+  if (sigma_adc > 0.5 * peak_adc) {
+    delete f;
+    return kFALSE;
+  }
   fit_out = f;
   return kTRUE;
 }

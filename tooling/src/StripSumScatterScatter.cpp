@@ -498,7 +498,12 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
   gROOT->SetBatch(kTRUE);
   gVirtualX = gGXBatch;
 
-  ClusterVarHists(reac, cutAa, cutAn, "strip_sum_scatter");
+  if (!Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SKIP_CLUSTER_HISTS)
+    ClusterVarHists(reac, cutAa, cutAn, "strip_sum_scatter");
+  else
+    std::cout << "strip-sum-scatter: SKIP_CLUSTER_HISTS=true; skipping "
+                 "cluster-variable histograms."
+              << std::endl;
 
   std::vector<TGraph *> tr_an, tr_aa, tr_beam;
   // Same selected events, raw (un-normalized) ADC -- one entry per normed

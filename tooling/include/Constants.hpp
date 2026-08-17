@@ -89,6 +89,11 @@ struct StripSumScatterConfig {
   Bool_t SKIP_SAVGOL_PLOTS;
   Bool_t REQUIRE_STRIP_16_BELOW_BEAM;
 
+  // Skip the per-class cluster-variable histograms (ClusterVarHists) that the
+  // interactive region-trace overlay draws after the cuts are made. The
+  // region trace overlays themselves are still produced.
+  Bool_t SKIP_CLUSTER_HISTS;
+
   void SetDefaults();
 };
 
@@ -128,6 +133,12 @@ public:
   Bool_t TIMING_DO_SORT;
 
   Bool_t REJECT_FLAGGED_EVENTS;
+
+  // Reject complete events where any anode channel fired more than once
+  // inside the coincidence window (unambiguous pileup: two ions in one
+  // event). The per-channel hit counts are kept in the events tree's Hits
+  // branch regardless, so this is a pure read-side selection.
+  Bool_t REJECT_MULTI_HIT_EVENTS;
 
   Bool_t IGNORE_SHORT_STRIPS;
   Bool_t IGNORE_STRIP_0;

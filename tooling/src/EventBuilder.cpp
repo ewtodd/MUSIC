@@ -119,7 +119,12 @@ void EventBuilder::AssignHit(EventState &e, PerChannelData *pc,
 }
 
 Bool_t EventBuilder::CheckEventComplete(const EventState &e) {
-  if (e.totaldE[0] == 0)
+  // Guard strips count toward completeness only when the analysis actually
+  // uses them (IGNORE_STRIP_0/17 mirror the downstream strip-sum-scatter
+  // AllStripsFired predicate). 37Cl sets IGNORE_STRIP_0=kTRUE because its
+  // Strip0 rarely fires — requiring it discarded ~2/3 of otherwise complete
+  // events.
+  if (!Constants::cfg.IGNORE_STRIP_0 && e.totaldE[0] == 0)
     return kFALSE;
   for (Int_t strip = 1; strip <= 14; strip += 2) {
     if (e.leftdE[strip] == 0)
@@ -147,6 +152,7 @@ struct EventCounters {
   Int_t complete_with_saturation;
   Int_t complete_with_pileup;
   Int_t complete_rejected;
+  Int_t complete_rejected_multi; // rejected by REJECT_MULTI_HIT_EVENTS
   Int_t incomplete_events;
   Int_t incomplete_with_fake;
   Int_t incomplete_with_saturation;
@@ -224,6 +230,19 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
 
   if (is_complete) {
     Bool_t reject = Constants::cfg.REJECT_FLAGGED_EVENTS && has_any_flag;
+    // Multi-hit on any anode channel is the unambiguous signature of pileup
+    // (two ions in the coincidence window): the per-channel dedup already
+    // collapsed the hits to one energy value, so without this check such
+    // events pass through with one inflated strip. No energy thresholds are
+    // involved — it is the definition of pileup. Note it only catches
+    // ELECTRONICS-RESOLVED double hits: when the shaper merges two pulses
+    // into one hit (summed amplitude, count 1) there is no hit-count
+    // signature and the event slips through here — those are handled by the
+    // energy-based filters (IsPileup/IsHighStrip) downstream.
+    if (Constants::cfg.REJECT_MULTI_HIT_EVENTS && any_anode_multi) {
+      reject = kTRUE;
+      c.complete_rejected_multi++;
+    }
     if (!reject) {
       for (Int_t k = 0; k < 18; k++) {
         left_0_17_branch[k] = UShort_t(e.leftdE[k]);
@@ -427,6 +446,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   cnt.complete_with_saturation = 0;
   cnt.complete_with_pileup = 0;
   cnt.complete_rejected = 0;
+  cnt.complete_rejected_multi = 0;
   cnt.incomplete_events = 0;
   cnt.incomplete_with_fake = 0;
   cnt.incomplete_with_saturation = 0;
@@ -446,6 +466,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   Int_t &complete_with_saturation = cnt.complete_with_saturation;
   Int_t &complete_with_pileup = cnt.complete_with_pileup;
   Int_t &complete_rejected = cnt.complete_rejected;
+  Int_t &complete_rejected_multi = cnt.complete_rejected_multi;
   Int_t &incomplete_events = cnt.incomplete_events;
   Int_t &incomplete_with_fake = cnt.incomplete_with_fake;
   Int_t &incomplete_with_saturation = cnt.incomplete_with_saturation;
@@ -709,6 +730,14 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
               << (complete_events > 0 ? 100.0 * stored / complete_events : 0.0)
               << "% of complete; " << complete_rejected << " rejected)"
               << std::endl;
+  }
+  if (Constants::cfg.REJECT_MULTI_HIT_EVENTS) {
+    Int_t stored = complete_events - complete_rejected;
+    std::cout << "Stored events (REJECT_MULTI_HIT_EVENTS=true): " << stored
+              << " ("
+              << (complete_events > 0 ? 100.0 * stored / complete_events : 0.0)
+              << "% of complete; " << complete_rejected_multi
+              << " rejected as multi-hit pileup)" << std::endl;
   }
   if (complete_events > 0) {
     std::cout << "Complete events with rejection-quality flags:" << std::endl;

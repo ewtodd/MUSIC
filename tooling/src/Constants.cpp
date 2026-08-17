@@ -69,6 +69,7 @@ void StripSumScatterConfig::SetDefaults() {
   REQUIRE_GATE_S5_S6 = kFALSE;
   SKIP_SAVGOL_PLOTS = kFALSE;
   REQUIRE_STRIP_16_BELOW_BEAM = kFALSE;
+  SKIP_CLUSTER_HISTS = kFALSE;
 }
 
 DatasetConfig::DatasetConfig() {
@@ -98,6 +99,7 @@ DatasetConfig::DatasetConfig() {
   TIMING_DO_SORT = kFALSE;
 
   REJECT_FLAGGED_EVENTS = kFALSE;
+  REJECT_MULTI_HIT_EVENTS = kFALSE;
 
   IGNORE_SHORT_STRIPS = kFALSE;
   IGNORE_STRIP_0 = kFALSE;

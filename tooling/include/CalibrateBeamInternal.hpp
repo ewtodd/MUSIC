@@ -10,15 +10,18 @@ const Double_t kEllipseNSigmaY = 3;
 const Long64_t kMinSamples = 200;
 
 // Paired (L, R) raw-ADC samples for one strip, collected UNGATED from events
-// where both ends fire, plus the uncapped "shoulder" slice: short-side values
-// from events where the LONG side reads low (charge went mostly to the short
-// end). The slice is collected separately because those events are rare — the
-// capped pair vectors fill up with beam events long before enough slice
-// events arrive.
+// where both ends fire, plus the "shoulder" slice: (short, long) pairs from
+// events where the LONG side reads below kGmSliceLongCap ADC. Those events
+// carry most of the charge on the short end, so the short side reads its
+// full-charge scale there; the relative cut (long < fraction x beam peak) is
+// applied later in ComputeLRGainMatch once the beam peak is known. The slice
+// is collected separately because those events are rare — the capped pair
+// vectors fill up with beam events long before enough slice events arrive.
 struct StripPairSamples {
   std::vector<Float_t> l;
   std::vector<Float_t> r;
-  std::vector<Float_t> shoulder;
+  std::vector<Float_t> slice_short;
+  std::vector<Float_t> slice_long;
 };
 
 inline Char_t LongSide(Int_t strip) { return (strip % 2 == 0) ? 'R' : 'L'; }

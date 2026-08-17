@@ -43,6 +43,11 @@ void InitDatasetConfig() {
   gInstance.TIMING_DO_BOARD_SYNC = kFALSE;
   gInstance.TIMING_DO_SORT = kFALSE;
 
+  // Automatic pileup removal: any event where an anode channel fired twice
+  // inside the 8 us window is two ions, not one — drop it (the per-channel
+  // dedup would otherwise keep the larger hit and inflate one strip).
+  gInstance.REJECT_MULTI_HIT_EVENTS = kTRUE;
+
   gInstance.IGNORE_STRIP_0 = kTRUE;
   gInstance.IGNORE_STRIP_17 = kTRUE;
   gInstance.MAX_FUSED_WORKERS = 32;
@@ -61,6 +66,7 @@ void InitDatasetConfig() {
       {11, {0, 17.5}}, {12, {0, 10}},  {13, {0, 10}},  {14, {0, 10}},
       {15, {0, 10}}};
   gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS = kTRUE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_CLUSTER_HISTS = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REJECT_NOISE = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REJECT_PILEUP = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.NOISE_THRESHOLD = 0.85;
