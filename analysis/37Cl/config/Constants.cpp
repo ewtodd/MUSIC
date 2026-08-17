@@ -21,7 +21,6 @@ void InitDatasetConfig() {
   for (Int_t i = 84; i < 138; i++) {
     RUNS.push_back(i);
   };
-  RUNS.push_back(84);
   gInstance.RUN_NUMBERS = RUNS;
   gInstance.N_CHUNKS = -1;
   gInstance.SIM_BEAM_FILE = "traces_37Cl_beam.root";
