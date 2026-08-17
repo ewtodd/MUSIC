@@ -381,7 +381,7 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
   const Bool_t kIgnShort = Constants::cfg.IGNORE_SHORT_STRIPS;
 
   TString s = Form(
-      "v13 reac[%d,%d] jump[%.3f,%.3f] smooth=%d,%d "
+      "v14 reac[%d,%d] jump[%.3f,%.3f] smooth=%d,%d "
       "step=%.3f s17=%.3f gate[s%d,s%d,%.2f,%.2f,%d,%.3f,%.3f] x[%.3f,%.3f,%d] "
       "ybins=%d filt[noise:%d,%.3f,%d pileup:%d,%.3f,%d offbeam:%d,%.3f,%d "
       "high:%d,%.3f] "
@@ -415,29 +415,35 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
     // The scatters/reservoir are filled from CALIBRATED totals, so a changed
     // calibration must invalidate the cache even when every filter knob above
     // is identical. Fold per-run calibration content (sums of GainLeft,
-    // GainRight, StripFactor) into the fingerprint.
+    // GainRight, StripSlope, StripIntercept) into the fingerprint.
     ch->LoadTree(0);
     TFile *f = ch->GetFile();
-    Double_t sum_l = 0.0, sum_r = 0.0, sum_sf = 18.0; // identity factors = 1
+    Double_t sum_l = 0.0, sum_r = 0.0, sum_sl = 18.0, sum_ic = 0.0;
     if (f) {
       TTree *cal = static_cast<TTree *>(f->Get("calibration"));
       if (cal && cal->GetEntries() > 0) {
-        Float_t gl[18] = {0}, gr[18] = {0}, sf[18] = {0};
+        Float_t gl[18] = {0}, gr[18] = {0}, sl[18] = {0}, ic[18] = {0};
         cal->SetBranchAddress("GainLeft", gl);
         cal->SetBranchAddress("GainRight", gr);
-        Bool_t has_factor = cal->GetBranch("StripFactor") != nullptr;
-        if (has_factor)
-          cal->SetBranchAddress("StripFactor", sf);
+        Bool_t has_linear = cal->GetBranch("StripSlope") != nullptr;
+        if (has_linear) {
+          cal->SetBranchAddress("StripSlope", sl);
+          cal->SetBranchAddress("StripIntercept", ic);
+        } else if (cal->GetBranch("StripFactor")) {
+          // Legacy multiplicative factors -> slope = factor, intercept = 0.
+          cal->SetBranchAddress("StripFactor", sl);
+        }
         cal->GetEntry(0);
         for (Int_t k = 0; k < 18; k++) {
           sum_l += Double_t(gl[k]);
           sum_r += Double_t(gr[k]);
-          sum_sf += has_factor ? Double_t(sf[k]) : 1.0;
+          sum_sl += has_linear ? Double_t(sl[k]) : 1.0;
+          sum_ic += has_linear ? Double_t(ic[k]) : 0.0;
         }
       }
     }
-    s += Form(" r%d:%lld cal=%.6f,%.6f,%.6f", run, ch->GetEntries(), sum_l,
-              sum_r, sum_sf);
+    s += Form(" r%d:%lld cal=%.6f,%.6f,%.6f,%.6f", run, ch->GetEntries(), sum_l,
+              sum_r, sum_sl, sum_ic);
   }
   return s;
 }

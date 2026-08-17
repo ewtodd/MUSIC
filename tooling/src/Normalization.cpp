@@ -21,7 +21,8 @@ void EnergyView::LoadGains() {
   for (Int_t s = 0; s < 18; s++) {
     gain_left[s] = 0.0f;
     gain_right[s] = 0.0f;
-    strip_factor[s] = 1.0f;
+    slope[s] = 1.0f;
+    intercept[s] = 0.0f;
   }
   gain_cathode = 0.0f;
   is_normed = kFALSE;
@@ -34,22 +35,32 @@ void EnergyView::LoadGains() {
   if (!cal || cal->GetEntries() < 1)
     return;
   Float_t gl[18] = {0}, gr[18] = {0}, gc = 0.0f;
-  Float_t sf[18] = {0};
+  Float_t sl[18] = {0}, ic[18] = {0};
   cal->SetBranchAddress("GainLeft", gl);
   cal->SetBranchAddress("GainRight", gr);
   cal->SetBranchAddress("GainCathode", &gc);
-  // StripFactor is optional (added after the initial per-channel gain write,
-  // filled in by FindStripCentroidAlignment on the second write). When absent
-  // the default factor = 1.0 (identity) is used.
-  Bool_t has_factor = cal->GetBranch("StripFactor") != nullptr;
-  if (has_factor)
-    cal->SetBranchAddress("StripFactor", sf);
+  // StripSlope/StripIntercept are optional (written by the second
+  // calibration write; older files carry StripFactor instead). When absent
+  // the default slope = 1 / intercept = 0 (identity) is used.
+  Bool_t has_linear = cal->GetBranch("StripSlope") != nullptr;
+  if (has_linear) {
+    cal->SetBranchAddress("StripSlope", sl);
+    cal->SetBranchAddress("StripIntercept", ic);
+  } else if (cal->GetBranch("StripFactor")) {
+    // Legacy multiplicative factors -> linear form (factor * total + 0).
+    cal->SetBranchAddress("StripFactor", sl);
+  }
   cal->GetEntry(0);
   for (Int_t s = 0; s < 18; s++) {
     gain_left[s] = gl[s];
     gain_right[s] = gr[s];
-    if (has_factor)
-      strip_factor[s] = sf[s];
+    if (has_linear) {
+      slope[s] = sl[s];
+      intercept[s] = ic[s];
+    } else if (sl[s] > 0.0f) {
+      slope[s] = sl[s]; // legacy factor
+      intercept[s] = 0.0f;
+    }
   }
   gain_cathode = gc;
   is_normed = kTRUE;
@@ -97,12 +108,14 @@ void EnergyView::Decode() {
       }
     }
   }
-  // Apply per-strip multiplicative alignment factors (notebook approach).
-  // This pulls each strip's beam-peak centroid onto the pol3 reference trend
-  // and is applied after per-channel gain and IGNORE_SHORT_STRIPS.
+  // Apply the per-strip two-point linear correction (beam centroid -> 1.0,
+  // pileup centroid -> 2.0). Applied after per-channel gain and
+  // IGNORE_SHORT_STRIPS. This corrects the ADC sublinearity that a single
+  // multiplicative factor cannot (with beam at 1.0 the pileup would read
+  // ~1.88 instead of 2.0).
   if (is_normed) {
     for (Int_t s = 0; s <= 17; s++) {
-      total[s] *= Double_t(strip_factor[s]);
+      total[s] = Double_t(slope[s]) * total[s] + Double_t(intercept[s]);
     }
   }
 }

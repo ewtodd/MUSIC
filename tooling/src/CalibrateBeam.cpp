@@ -128,25 +128,32 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
   cal->Branch("GainRight", gain_right, "GainRight[18]/F");
   cal->Branch("GainCathode", &gain_cathode, "GainCathode/F");
 
-  // Beam-energy window and per-strip multiplicative alignment factors
-  // matching the notebook approach (pol3 reference / centroid).
-  // EnergyView applies total_corrected = factor * total after the
-  // per-channel gain. Default factor = 1.0 (identity).
+  // Beam-energy window and per-strip two-point linear correction
+  // (total_corrected = slope * total + intercept, line through the beam
+  // centroid at 1.0 and the pileup centroid at 2.0 — corrects the ADC
+  // sublinearity). EnergyView applies it after the per-channel gain.
+  // Default slope = 1.0, intercept = 0.0 (identity).
   Float_t beam_e_min = 0.0f, beam_e_max = 0.0f;
-  Float_t strip_factor[18];
-  for (Int_t s = 0; s < 18; s++)
-    strip_factor[s] = 1.0f;
+  Float_t strip_slope[18];
+  Float_t strip_intercept[18];
+  for (Int_t s = 0; s < 18; s++) {
+    strip_slope[s] = 1.0f;
+    strip_intercept[s] = 0.0f;
+  }
   if (align) {
     beam_e_min = Float_t(align->beam_e_min);
     beam_e_max = Float_t(align->beam_e_max);
     if (align->ok) {
-      for (Int_t s = 0; s < 18; s++)
-        strip_factor[s] = Float_t(align->factors[s]);
+      for (Int_t s = 0; s < 18; s++) {
+        strip_slope[s] = Float_t(align->slopes[s]);
+        strip_intercept[s] = Float_t(align->intercepts[s]);
+      }
     }
   }
   cal->Branch("BeamEMin", &beam_e_min, "BeamEMin/F");
   cal->Branch("BeamEMax", &beam_e_max, "BeamEMax/F");
-  cal->Branch("StripFactor", strip_factor, "StripFactor[18]/F");
+  cal->Branch("StripSlope", strip_slope, "StripSlope[18]/F");
+  cal->Branch("StripIntercept", strip_intercept, "StripIntercept[18]/F");
   cal->Fill();
   cal->Write("calibration", TObject::kOverwrite);
 }
@@ -197,13 +204,22 @@ void DeriveBeamEnergyWindow(const std::vector<ChannelCal> &chans,
             << std::endl;
 }
 
-// Per-strip multiplicative alignment, matching the notebook
-// (37Cl_an.ipynb cell 5). Decodes events with the per-channel gains already on
-// disk, finds each strip's beam-peak centroid from the eSum 2D histogram,
-// fits a robust degree-3 polynomial reference trend through the centroids
-// (strips 1-16 only — the single-ended anodes sit at a different scale), and
-// derives a multiplicative factor = reference[s] / centroid[s] for 1-16.
-// Strips 0/17 get factor = 1.0 / centroid (push beam peak to 1.0 a.u.).
+// Per-strip two-point linear normalization. Decodes events with the
+// per-channel gains already on disk, finds each strip's beam-peak centroid
+// (B) from the eSum 2D histogram and its pileup-peak centroid (P) from a
+// second 2D histogram gated on the double-beam population (per-event total
+// energy in the ~2x band — reactions only add a fraction, so the gate
+// isolates true two-ion pileup), then derives a line through (B, 1.0) and
+// (P, 2.0):  total_corrected = slope * total + intercept.
+//
+// The two-point line corrects the ADC sublinearity that a single
+// multiplicative factor cannot: with beam mapped to 1.0 the pileup reads
+// ~1.88 instead of 2.0, so reaction-scale energies are ~2-6% low. The line
+// passes through the measured centroids (no polynomial override of raw
+// measurements); strips whose pileup peak is unmeasurable (few double-beam
+// events with both ends firing, e.g. upstream) fall back to the MEDIAN slope
+// of the measured strips — sublinearity is a shared electronics property —
+// anchored on their own beam centroid.
 //
 // Uses ALL events (not beam-gated): the beam dominates every strip's
 // histogram by a wide margin.
@@ -219,11 +235,22 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
   const Int_t kMaxIter = 4;
   const Int_t kPolyDeg = 3;
   const Double_t kGausFitHalfWidth = 0.15;
+  // Pileup-peak search window (a.u.): above the beam band (~1.2), below the
+  // triple-pileup region (~3). The double-beam total-energy gate keeps the
+  // mode clean (no reaction contamination).
+  const Double_t kPileupLo = 1.4;
+  const Double_t kPileupHi = 3.2;
+  const Long64_t kMinPileupEntries = 100;
+  // Double-beam total-energy gate (fractions of the beam total-energy mode).
+  const Double_t kPileupGateLo = 1.7;
+  const Double_t kPileupGateHi = 2.4;
 
   StripAlignmentResult result;
   for (Int_t s = 0; s < kNStrips; s++) {
-    result.factors[s] = 1.0;
+    result.slopes[s] = 1.0;
+    result.intercepts[s] = 0.0;
     result.centroids[s] = 0.0;
+    result.pileup_centroids[s] = 0.0;
   }
 
   TString sub = FileSet::EventsName(spec) + ".root";
@@ -255,6 +282,11 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
                       ";Strip number;#DeltaE [a.u.]", kNStrips, -0.5,
                       kNStrips - 0.5, kNHistBins, kHistMin, kHistMax);
   h2->SetDirectory(nullptr);
+  // Per-event total-energy histogram (sum over strips 1-16): its mode is the
+  // beam total; the double-beam gate is a band around 2x that mode.
+  TH1D *h_sum = new TH1D(Form("h_sum_align_%s", file_label.Data()),
+                         ";#Sigma strips 1-16 [a.u.]", 200, 0.0, 60.0);
+  h_sum->SetDirectory(nullptr);
 
   Long64_t n = tree->GetEntries();
   Long64_t n_used = 0;
@@ -262,24 +294,73 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
     tree->GetEntry(j);
     ev.Decode();
     Bool_t any = kFALSE;
+    Double_t esum16 = 0.0;
     for (Int_t s = 0; s < kNStrips; s++) {
       Double_t v = ev.total[s];
       if (v <= 0)
         continue;
       h2->Fill(Double_t(s), v);
       any = kTRUE;
+      if (s >= 1 && s <= 16)
+        esum16 += v;
     }
     if (any)
       n_used++;
+    if (esum16 > 0.0)
+      h_sum->Fill(esum16);
+  }
+
+  // Second pass: fill the pileup-gated 2D histogram (double-beam population).
+  Double_t beam_sum_mode = h_sum->GetBinCenter(h_sum->GetMaximumBin());
+  TH2D *h2_pu = nullptr;
+  if (beam_sum_mode > 0.0) {
+    h2_pu =
+        new TH2D(Form("h2_strip_pu_%s", file_label.Data()),
+                 ";Strip number;#DeltaE [a.u.] (double-beam gated)", kNStrips,
+                 -0.5, kNStrips - 0.5, kNHistBins, kHistMin, kHistMax);
+    h2_pu->SetDirectory(nullptr);
+    Double_t gate_lo = kPileupGateLo * beam_sum_mode;
+    Double_t gate_hi = kPileupGateHi * beam_sum_mode;
+    for (Long64_t j = 0; j < n; j++) {
+      tree->GetEntry(j);
+      ev.Decode();
+      Double_t esum16 = 0.0;
+      for (Int_t s = 1; s <= 16; s++)
+        if (ev.total[s] > 0.0)
+          esum16 += ev.total[s];
+      if (esum16 < gate_lo || esum16 > gate_hi)
+        continue;
+      for (Int_t s = 0; s < kNStrips; s++) {
+        Double_t v = ev.total[s];
+        if (v <= 0.0)
+          continue;
+        // Split strips: only BOTH-ENDS events feed the pileup mode. The
+        // long-only pileup population is missing the short side's charge
+        // entirely (its "2x" total is ~1.98 vs ~2.05-2.15 with both ends),
+        // so including it would bias the 2x-charge anchor low. The single-
+        // ended guard strips 0/17 have no other side by construction.
+        if (s >= 1 && s <= 16 && (ev.left[s] <= 0.0 || ev.right[s] <= 0.0))
+          continue;
+        h2_pu->Fill(Double_t(s), v);
+      }
+    }
   }
   sf->Close();
   delete sf;
 
   std::cout << "  strip alignment: " << n_used << " events decoded"
             << std::endl;
+  if (h2_pu)
+    std::cout << "  strip alignment: beam total mode="
+              << Form("%.2f", beam_sum_mode) << " a.u.; double-beam gate ["
+              << Form("%.2f", kPileupGateLo * beam_sum_mode) << ", "
+              << Form("%.2f", kPileupGateHi * beam_sum_mode) << "]"
+              << std::endl;
 
   Double_t beam_centroids[kNStrips] = {0};
   Bool_t beam_ok[kNStrips] = {kFALSE};
+  Double_t pileup_centroids[kNStrips] = {0};
+  Bool_t pileup_ok[kNStrips] = {kFALSE};
 
   for (Int_t s = 0; s < kNStrips; s++) {
     Int_t bin_ix = s + 1;
@@ -373,8 +454,77 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
     delete proj;
   }
 
+  // Pileup-peak centroids from the double-beam-gated histogram: per-strip
+  // projection, smoothed, mode in [kPileupLo, kPileupHi]. The total-energy
+  // gate keeps reaction events out, so the mode is the true 2x-charge
+  // response of the strip.
+  for (Int_t s = 0; s < kNStrips; s++) {
+    if (!beam_ok[s] || !h2_pu)
+      continue;
+    Int_t bin_ix = s + 1;
+    TH1D *proj = h2_pu->ProjectionY(
+        Form("hproj_pu_align_%s_s%d", file_label.Data(), s), bin_ix, bin_ix);
+    proj->SetDirectory(nullptr);
+    Long64_t n_entries = Long64_t(proj->GetEntries());
+    if (n_entries < kMinPileupEntries) {
+      std::cerr << "  strip " << s << ": too few pileup entries for alignment ("
+                << n_entries << "); median-slope fallback" << std::endl;
+      delete proj;
+      continue;
+    }
+    // Smoothed max-bin seed, then Gaussian refinement for sub-bin precision.
+    // The Gaussian centroid is deliberately the anchor rather than the raw
+    // mode: it is STABLE across subfiles (a raw max-bin mode jumps by a bin
+    // with statistics and made per-subfile calibrations inconsistent). Its
+    // systematic offset above the skewed peak's mode (partial-pileup tail on
+    // the high side) leaves the corrected peak consistently ~1-2% below 2.0 —
+    // the SAME small offset in every subfile, which is what the downstream
+    // analysis sees.
+    proj->Smooth(kSmoothTimes);
+    Int_t b_lo = proj->FindBin(kPileupLo);
+    Int_t b_hi = proj->FindBin(kPileupHi);
+    Int_t b_max = -1;
+    Double_t val_max = 0;
+    for (Int_t b = b_lo; b <= b_hi; b++) {
+      Double_t v = proj->GetBinContent(b);
+      if (v > val_max) {
+        val_max = v;
+        b_max = b;
+      }
+    }
+    if (b_max < 0 || val_max <= 0) {
+      delete proj;
+      continue;
+    }
+    Double_t pileup_peak = proj->GetBinCenter(b_max);
+    if (pileup_peak <= beam_centroids[s]) {
+      // Unphysical: the "pileup" mode is not above the beam — fall back.
+      delete proj;
+      continue;
+    }
+    // Sub-bin precision: Gaussian fit around the smoothed max-bin seed.
+    Double_t fit_lo = TMath::Max(kPileupLo, pileup_peak - 0.15);
+    Double_t fit_hi = TMath::Min(kPileupHi, pileup_peak + 0.15);
+    TF1 *fg = new TF1("f_align_pu_refine", "gaus", fit_lo, fit_hi);
+    fg->SetParameters(proj->GetBinContent(b_max), pileup_peak, 0.10);
+    fg->SetParLimits(1, fit_lo, fit_hi);
+    TFitResultPtr r = proj->Fit(fg, "QSRN");
+    Double_t refined = fg->GetParameter(1);
+    if (r.Get() && r->IsValid() && refined > beam_centroids[s] &&
+        refined > kPileupLo && refined < kPileupHi)
+      pileup_peak = refined;
+    delete fg;
+    pileup_centroids[s] = pileup_peak;
+    pileup_ok[s] = kTRUE;
+    std::cout << "  strip " << s << " pileup=" << Form("%.4f", pileup_peak)
+              << " a.u.  (n=" << n_entries << ")" << std::endl;
+    delete proj;
+  }
+
   // Robust pol3 reference trend through strips 1-16 centroids.
   // Iteratively drop the strip with the worst residual > kMisalignPct.
+  // Kept as a DIAGNOSTIC overlay: the linear correction itself uses the raw
+  // measured centroids, never the polynomial predictions.
   TGraph *g_cent = new TGraph(kNStrips);
   Int_t np = 0;
   for (Int_t s = 1; s <= 16; s++) {
@@ -430,9 +580,40 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
               << g_cent->GetN() << " strips" << std::endl;
   }
 
-  // Notebook (37Cl_an.ipynb cell 5): factors = reference / centroid,
-  // where reference is the pol3 trend through strips 1-16 centroids.
-  // Strips 0/17 are single-ended anodes not in the pol3 fit; push to 1.0.
+  // Two-point linear correction: the line through (beam centroid, 1.0) and
+  // (pileup centroid, 2.0). slope = 1/(P - B), intercept = 1 - slope*B.
+  // The beam anchor uses the RAW measured centroid (no polynomial override);
+  // the pol3 fit above is only a diagnostic overlay. Strips without a
+  // measurable pileup peak fall back to the MEDIAN slope of the measured
+  // strips (sublinearity is a shared electronics property) anchored on their
+  // own beam centroid. With no pileup measurements at all, slope = 1 and the
+  // intercept alone pushes the beam to 1.0 (graceful degradation).
+  Double_t slope_med = 1.0;
+  std::vector<Double_t> slopes_measured;
+  for (Int_t s = 0; s < kNStrips; s++) {
+    if (!beam_ok[s] || !pileup_ok[s])
+      continue;
+    Double_t b = beam_centroids[s];
+    Double_t p = pileup_centroids[s];
+    if (p <= b)
+      continue;
+    Double_t slope = 1.0 / (p - b);
+    if (slope < 0.8 || slope > 1.25)
+      continue; // unphysical; keep as unmeasured
+    slopes_measured.push_back(slope);
+  }
+  if (!slopes_measured.empty()) {
+    std::sort(slopes_measured.begin(), slopes_measured.end());
+    Int_t m = Int_t(slopes_measured.size());
+    slope_med =
+        (m % 2 == 1)
+            ? slopes_measured[m / 2]
+            : 0.5 * (slopes_measured[m / 2 - 1] + slopes_measured[m / 2]);
+  }
+  std::cout << "  strip alignment: median slope = " << Form("%.4f", slope_med)
+            << " (" << slopes_measured.size() << " strips measured)"
+            << std::endl;
+
   Int_t valid_strips = 0;
   for (Int_t s = 0; s < kNStrips; s++) {
     if (!beam_ok[s])
@@ -441,18 +622,22 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
     if (centro <= 0)
       continue;
     result.centroids[s] = centro;
-    if (s >= 1 && s <= 16 && fbeam) {
-      Double_t ref = fbeam->Eval(Double_t(s));
-      if (ref > 0)
-        result.factors[s] = ref / centro;
-      else
-        result.factors[s] = 1.0 / centro;
-    } else {
-      result.factors[s] = 1.0 / centro;
+    result.pileup_centroids[s] = pileup_centroids[s];
+    Double_t slope = slope_med;
+    if (pileup_ok[s]) {
+      Double_t p = pileup_centroids[s];
+      Double_t s_own = 1.0 / (p - centro);
+      if (s_own >= 0.8 && s_own <= 1.25)
+        slope = s_own;
     }
+    result.slopes[s] = slope;
+    result.intercepts[s] = 1.0 - slope * centro;
     valid_strips++;
     std::cout << "  strip " << s << " centroid=" << Form("%.4f", centro)
-              << " factor=" << Form("%.4f", result.factors[s]) << std::endl;
+              << " pileup=" << Form("%.4f", pileup_centroids[s])
+              << " slope=" << Form("%.4f", result.slopes[s])
+              << " intercept=" << Form("%+.4f", result.intercepts[s])
+              << std::endl;
   }
   result.ok = (valid_strips >= 4) ? kTRUE : kFALSE;
 
@@ -474,6 +659,20 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
       g_beam_plot->SetMarkerColor(kOrange);
       g_beam_plot->Draw("P SAME");
     }
+    TGraph *g_pu_plot = new TGraph(kNStrips);
+    Int_t npu = 0;
+    for (Int_t s = 0; s < kNStrips; s++) {
+      if (pileup_ok[s]) {
+        g_pu_plot->SetPoint(npu, Double_t(s), pileup_centroids[s]);
+        npu++;
+      }
+    }
+    g_pu_plot->Set(npu);
+    if (npu > 0) {
+      g_pu_plot->SetMarkerStyle(21);
+      g_pu_plot->SetMarkerColor(kRed + 1);
+      g_pu_plot->Draw("P SAME");
+    }
     if (fbeam) {
       fbeam->SetLineColor(kViolet + 2);
       fbeam->SetLineWidth(2);
@@ -484,11 +683,15 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
                                 PlotSaveOptions::kLINEAR);
     delete cv;
     delete g_beam_plot;
+    delete g_pu_plot;
   }
 
   delete fbeam;
   delete g_cent;
   delete h2;
+  if (h2_pu)
+    delete h2_pu;
+  delete h_sum;
 
   return result;
 }
