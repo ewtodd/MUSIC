@@ -5,9 +5,11 @@ Per subfile the events tree's raw ADC arrays are calibrated per channel
 assembled into the per-strip totals exactly like EnergyView::Decode:
 total[s] = left[s] + right[s] (both ends summed), guard strips 0/17 kept
 unless INCLUDE_GUARD_STRIPS is off, split strips kept long-side-only when
-IGNORE_SHORT_STRIPS. The calibration already puts the beam at ~1 per strip,
-so downstream code uses UNIT gains. NO event selection is applied here --
-the blind clustering pipeline's step 1 is the first filter.
+IGNORE_SHORT_STRIPS. After gain, per-strip multiplicative alignment factors
+(StripFactor from the calibration tree) are applied:
+total[s] *= strip_factor[s]. The calibration already puts the beam at ~1 per
+strip, so downstream code uses UNIT gains. NO event selection is applied here
+-- the blind clustering pipeline's step 1 is the first filter.
 """
 
 import contextlib
@@ -19,7 +21,7 @@ from scipy.signal import savgol_filter
 import config
 
 
-def _assemble_totals(left, right):
+def _assemble_totals(left, right, strip_factor=None):
     """Per-strip totals view from (n, 18) left/right arrays, mirroring
     EnergyView::Decode exactly.
 
@@ -28,11 +30,21 @@ def _assemble_totals(left, right):
     single-ended (one of left/right is zero). With config.IGNORE_SHORT_STRIPS
     the split strips 1-16 instead keep only their long end (L_odd / R_even).
     Guard columns are dropped when INCLUDE_GUARD_STRIPS is off.
+
+    When strip_factor is provided (18-element array from the calibration
+    tree's StripFactor branch), it is applied after gain and
+    IGNORE_SHORT_STRIPS: total[s] *= strip_factor[s], matching
+    EnergyView::Decode.
     """
     total = left + right
     if config.IGNORE_SHORT_STRIPS:
         for s in range(1, 17):
             total[:, s] = left[:, s] if s % 2 == 1 else right[:, s]
+    # Apply per-strip multiplicative alignment factors (notebook approach).
+    # Matches EnergyView::Decode: total[s] *= strip_factor[s] after
+    # IGNORE_SHORT_STRIPS.
+    if strip_factor is not None:
+        total *= strip_factor[np.newaxis, :]
     if not config.INCLUDE_GUARD_STRIPS:
         total = total[:, 1:17]
     return total
@@ -52,8 +64,10 @@ def list_event_files():
 
 
 def _load_calibrated_lr(path, max_events_per_file=None):
-    """Calibrated (left, right) arrays for one events file, per channel
-    like EnergyView::Decode (the per-file one-row calibration tree)."""
+    """Calibrated (left, right) arrays and StripFactor for one events file,
+    per channel like EnergyView::Decode (the per-file one-row calibration
+    tree). Returns (left, right, both, strip_factor) where strip_factor is
+    a (18,) float32 array (identity 1.0 if the branch is absent)."""
     from analysis_utilities.io import load_leaf_array_data
     cache = str(config.CACHE_DIR)
     # Silence load_leaf_array_data's per-file "Loading cached leaf arrays"
@@ -65,19 +79,27 @@ def _load_calibrated_lr(path, max_events_per_file=None):
                                   max_events=max_events_per_file,
                                   cache_dir=cache)
         cal = load_leaf_array_data(path,
-                                   "calibration", ["GainLeft", "GainRight"],
+                                   "calibration",
+                                   ["GainLeft", "GainRight", "StripFactor"],
                                    cache_dir=cache)
     left = ev["Left_0_17_dE"].astype(np.float32) * \
         cal["GainLeft"][0].astype(np.float32)
     right = ev["RightdE"].astype(np.float32) * \
         cal["GainRight"][0].astype(np.float32)
+    # StripFactor: per-strip multiplicative alignment from the pol3 reference
+    # trend (replaced slope/intercept in the C++ rewrite). May be absent in
+    # old files; default to identity (1.0) like EnergyView::Decode.
+    if "StripFactor" in cal:
+        strip_factor = cal["StripFactor"][0].astype(np.float32)
+    else:
+        strip_factor = np.ones(18, dtype=np.float32)
     # Both-channel firing from the RAW ADC, not the calibrated ends: the
     # short-end gains are 0 (uncalibrated -- no sim anchor), so calibrated
     # short ends are always zero. We only care whether a channel fired, and
     # the raw ADC carries that regardless of gain.
     both = _both_fired(ev["Left_0_17_dE"], ev["RightdE"],
                        config.BLIND_MULT_THRESH)
-    return left, right, both
+    return left, right, both, strip_factor
 
 
 def _both_fired(left, right, thresh):
@@ -105,10 +127,11 @@ def load_experimental_totals(max_files=None, max_events_per_file=None):
     out = []
     both_out = []
     for path in files:
-        left, right, both = _load_calibrated_lr(path, max_events_per_file)
+        left, right, both, strip_factor = _load_calibrated_lr(
+            path, max_events_per_file)
         print(f"  {os.path.basename(path)}: {left.shape[0]} events "
               "(zero cuts)")
-        out.append(_assemble_totals(left, right))
+        out.append(_assemble_totals(left, right, strip_factor))
         both_out.append(both)
     if not out:
         raise RuntimeError("no experimental events loaded")

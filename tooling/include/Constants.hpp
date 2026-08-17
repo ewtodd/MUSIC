@@ -29,12 +29,16 @@ struct StripSumScatterConfig {
   Double_t NOISE_THRESHOLD;
 
   Bool_t REJECT_NOISE;
-  Double_t NOISE_THRESH_PY;
   Int_t NOISE_MIN_STRIPS;
 
   Bool_t REJECT_PILEUP;
-  Double_t PILEUP_THRESH_PY;
   Int_t PILEUP_MIN_STRIPS;
+
+  // Reject events where ANY strip's total exceeds the cap (a.u.) -- catches
+  // single-strip blowups (e.g. double-beam pileup on one strip) that the
+  // count-based pileup filter (>=5 strips) misses.
+  Bool_t REJECT_HIGH_STRIP;
+  Double_t HIGH_STRIP_THRESHOLD;
 
   Bool_t REJECT_OFFBEAM;
   Double_t OFFBEAM_DIST;
@@ -42,13 +46,17 @@ struct StripSumScatterConfig {
 
   Double_t TRIGGER_NSIGMA;
   Double_t TRIGGER_CFD_FRAC;
-  Int_t PLATEAU_POST;
+  Int_t POST_TRIGGER_SUM_STRIPS;
   Int_t CLUSTER_SMOOTH_WINDOW;
   Int_t SEED_HALF_BINS;
 
   Int_t SAVGOL_HALF;
 
   Int_t TRACES_PER_CLASS;
+
+  // Cap on the worker threads used for per-run gate fitting and scatter
+  // filling (auto-detected concurrency is also capped by this).
+  Int_t MAX_STRIP_SUM_WORKERS;
 
   Int_t X_LO;
   Int_t X_HI;

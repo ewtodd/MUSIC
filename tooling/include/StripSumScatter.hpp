@@ -7,6 +7,7 @@
 #include "FileSet.hpp"
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
+#include "InteractiveEditorX11Guard.hpp"
 #include "Normalization.hpp"
 #include "PlottingUtils.hpp"
 #include "RemixSim.hpp"
@@ -29,6 +30,7 @@
 #include <TString.h>
 #include <TSystem.h>
 #include <TTree.h>
+#include <TVirtualX.h>
 #include <algorithm>
 #include <iostream>
 #include <limits>
@@ -51,7 +53,7 @@ struct BeamEllipses {
   BeamFit2D s1_s2;
   BeamFit2D s16_s17;
   BeamFit2D s15_s16;
-  Bool_t ok;
+  Bool_t ok = kFALSE;
   Bool_t use_s15_s16;
 };
 
@@ -82,17 +84,44 @@ private:
   Double_t m_yLo[64];
   Double_t m_yHi[64];
 
-  const TString kSimCacheName = "StripSumScatter_simcache.root";
-
-  Int_t ReacIndex(Int_t reac);
-  Int_t YLoOf(Int_t reac);
-  Int_t YHiOf(Int_t reac);
+  static Int_t ReacIndex(Int_t reac);
+  static Int_t YLoOf(Int_t reac);
+  static Int_t YHiOf(Int_t reac);
 
   Bool_t TryLoadCache(const TString &cacheName, const TString &fingerprint);
   void WriteCache(const TString &cacheName, const TString &fingerprint);
 
   void FillScatters(const std::vector<Int_t> &runOrder,
                     std::map<Int_t, TChain *> &chains);
+
+  // Per-run result of the beam-ellipse + series-gate fits (FillScatters
+  // phase 1, one entry per run, computed on worker threads).
+  struct RunGateFit {
+    BeamEllipses beam;
+    std::vector<BeamFit2D> gates;
+    Bool_t ok = kFALSE;
+  };
+
+  // Per-run result of the event fill (FillScatters phase 2, one entry per
+  // run): the run's private scatter histograms (merged afterwards) and its
+  // trace reservoir slice.
+  struct FillRunResult {
+    std::vector<TH2F *> scatters;
+    std::vector<TraceEvt> reservoir;
+    Long64_t seen = 0;       // events read from the chain
+    Long64_t gated = 0;      // events passing all filters with a reaction mask
+    Long64_t n_rej_gate = 0; // rejected by the series beam gates
+    Long64_t n_rej_pileup = 0;    // rejected by IsPileup
+    Long64_t n_rej_noise = 0;     // rejected by IsNoise
+    Long64_t n_rej_highstrip = 0; // rejected by IsHighStrip
+    Long64_t n_rej_offbeam = 0;   // rejected by IsOffbeam
+  };
+
+  static RunGateFit FitRunGates(Int_t run, TChain *chain);
+  static FillRunResult FillRunScatters(
+      Int_t run, TChain *chain, const std::vector<GateSpec> &active_gates,
+      const std::vector<BeamFit2D> &run_gates, const BeamEllipses &run_beam,
+      const Double_t *y_lo, const Double_t *y_hi);
 
   void PlotScatters();
 
@@ -104,6 +133,7 @@ private:
   static Bool_t IsPureBeam(const EnergyView &ev, const BeamEllipses &be);
   static Bool_t IsPileup(const EnergyView &ev);
   static Bool_t IsNoise(const EnergyView &ev);
+  static Bool_t IsHighStrip(const EnergyView &ev);
   static Bool_t IsOffbeam(const EnergyView &ev);
   static Double_t SumRange(const Double_t *total, Int_t lo, Int_t hi);
   static std::vector<GateSpec> ActiveGates();
