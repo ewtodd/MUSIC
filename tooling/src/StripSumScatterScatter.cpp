@@ -308,6 +308,8 @@ StripSumScatter::FillRunResult StripSumScatter::FillRunScatters(
   const Int_t kYBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.YBINS;
   const Int_t kBeamReservoirCap =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TRACES_PER_CLASS * 10;
+  const Bool_t kScatterSavgol =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SCATTER_SAVGOL;
 
   FillRunResult out;
   const Int_t nReac = kReacMax - kReacMin + 1;
@@ -332,6 +334,7 @@ StripSumScatter::FillRunResult StripSumScatter::FillRunScatters(
             << " reaction-strip scatters over " << n << " events..."
             << std::endl;
 
+  Double_t sg_raw[18], sg_out[18];
   Int_t beam_kept = 0;
   for (Long64_t j = 0; j < n; j++) {
     chain->GetEntry(j);
@@ -367,14 +370,27 @@ StripSumScatter::FillRunResult StripSumScatter::FillRunScatters(
       continue;
     }
 
-    Double_t x = SumRange(ev.total, kXLo, kXHi);
+    // Scatter coordinates: raw normed totals, or SG-smoothed per-strip
+    // totals when SCATTER_SAVGOL (the SG kernel removes the
+    // L_odd/R_even sawtooth, which may let (a,a')/(a,n) clusters
+    // separate more cleanly). The event filters above keep running on
+    // the raw totals, and the trace reservoir / region-trace plots are
+    // unaffected.
+    const Double_t *scatter_src = ev.total;
+    if (kScatterSavgol) {
+      for (Int_t s = 0; s < 18; s++)
+        sg_raw[s] = ev.total[s];
+      SavitzkyGolay(sg_raw, sg_out);
+      scatter_src = sg_out;
+    }
+    Double_t x = SumRange(scatter_src, kXLo, kXHi);
     UInt_t mask = 0;
     for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
       if (!PassesReaction(ev, reac))
         continue;
       mask |= (1u << ReacIndex(reac));
       out.scatters[ReacIndex(reac)]->Fill(
-          x, SumRange(ev.total, YLoOf(reac), YHiOf(reac)));
+          x, SumRange(scatter_src, YLoOf(reac), YHiOf(reac)));
     }
 
     // Keep every reaction-passing event for traces; cap pure-beam events
@@ -449,6 +465,8 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
   const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
   const Int_t kTracesPerRegion =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TRACES_PER_CLASS;
+  const Bool_t kScatterSavgol =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SCATTER_SAVGOL;
 
   if (reac < kReacMin || reac > kReacMax) {
     std::cerr << "strip-sum-scatter: candidate reaction strip " << reac
@@ -535,8 +553,17 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
     Double_t td[18];
     for (Int_t s = 0; s < 18; s++)
       td[s] = Double_t(e.total[s]);
-    Double_t x = SumRange(td, kXLo, kXHi);
-    Double_t y = SumRange(td, YLoOf(reac), YHiOf(reac));
+    // The (cached) scatter -- and the cuts drawn over it -- use SG-smoothed
+    // sums when SCATTER_SAVGOL, so the region-membership test must run in
+    // that same coordinate space. The plotted traces stay raw.
+    Double_t td_sg[18];
+    const Double_t *coords = td;
+    if (kScatterSavgol) {
+      SavitzkyGolay(td, td_sg);
+      coords = td_sg;
+    }
+    Double_t x = SumRange(coords, kXLo, kXHi);
+    Double_t y = SumRange(coords, YLoOf(reac), YHiOf(reac));
     if (cutAn && Int_t(tr_an.size()) < kTracesPerRegion &&
         cutAn->IsInside(x, y)) {
       tr_an.push_back(TraceFromTotal(e.total));

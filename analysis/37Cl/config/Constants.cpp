@@ -56,16 +56,20 @@ void InitDatasetConfig() {
   gInstance.STRIP_SUM_SCATTER_CONFIG.PURE_BEAM_GATE =
       StripSumScatterConfig::PURE_BEAM_GATE_S1_S2;
   gInstance.STRIP_SUM_SCATTER_CONFIG.RERUN_SIM = kFALSE;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 4;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.XMIN = 7;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.XMAX = 16;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.X_HI = 12;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_RANGE = {
-      {3, {0, 17.5}},  {4, {0, 17.5}}, {5, {0, 17.5}}, {6, {0, 17.5}},
-      {7, {0, 17.5}},  {8, {0, 17.5}}, {9, {0, 17.5}}, {10, {0, 17.5}},
-      {11, {0, 17.5}}, {12, {0, 10}},  {13, {0, 10}},  {14, {0, 10}},
-      {15, {0, 10}}};
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 9;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS = 3;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.XMIN = 12;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.XMAX = 20;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.X_HI = 16;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.YMIN = 0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.YMAX = 6;
+  //  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_RANGE = {
+  //      {3, {0, 17.5}},  {4, {0, 17.5}}, {5, {0, 17.5}}, {6, {0, 17.5}},
+  //      {7, {0, 17.5}},  {8, {0, 17.5}}, {9, {0, 17.5}}, {10, {0, 17.5}},
+  //      {11, {0, 17.5}}, {12, {0, 10}},  {13, {0, 10}},  {14, {0, 10}},
+  //      {15, {0, 10}}};
   gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS = kTRUE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.SCATTER_SAVGOL = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_CLUSTER_HISTS = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REJECT_NOISE = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REJECT_PILEUP = kTRUE;

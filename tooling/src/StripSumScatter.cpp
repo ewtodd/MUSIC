@@ -370,6 +370,12 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
   // reaction/beam event predicates' top-level toggles.
   const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
   const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
+  // Y-axis strip span: scatter y = sum over YLoOf(reac)..YHiOf(reac), where
+  // YHiOf = min(reac + POST_TRIGGER_SUM_STRIPS, 17). Widening or narrowing
+  // the window changes every cached scatter's y values, so the knob itself
+  // must be stamped.
+  const Int_t kPostTrig =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS;
   const Int_t kPureBeamGate =
       Int_t(Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PURE_BEAM_GATE);
   const Int_t kTracesPerClass =
@@ -379,20 +385,25 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
   const Bool_t kIgnStrip0 = Constants::cfg.IGNORE_STRIP_0;
   const Bool_t kIgnStrip17 = Constants::cfg.IGNORE_STRIP_17;
   const Bool_t kIgnShort = Constants::cfg.IGNORE_SHORT_STRIPS;
+  // When set, the scatter x/y sums are taken from SG-smoothed totals
+  // (FillRunScatters), changing the cached scatter contents even with
+  // every other knob identical.
+  const Bool_t kScatterSavgol =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SCATTER_SAVGOL;
 
   TString s = Form(
-      "v14 reac[%d,%d] jump[%.3f,%.3f] smooth=%d,%d "
+      "v15 reac[%d,%d] jump[%.3f,%.3f] smooth=%d,%d "
       "step=%.3f s17=%.3f gate[s%d,s%d,%.2f,%.2f,%d,%.3f,%.3f] x[%.3f,%.3f,%d] "
-      "ybins=%d filt[noise:%d,%.3f,%d pileup:%d,%.3f,%d offbeam:%d,%.3f,%d "
-      "high:%d,%.3f] "
+      "ybins=%d post=%d savgol=%d filt[noise:%d,%.3f,%d pileup:%d,%.3f,%d "
+      "offbeam:%d,%.3f,%d high:%d,%.3f] "
       "xsum[%d,%d] beamgate=%d traces=%d s16below=%d ign[s0:%d,s17:%d,short:%d]",
       kReacMin, kReacMax, kReacJumpMin, kReacJumpMax,
       Int_t(Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS),
       kSmoothHiStrip, kSmoothMaxStep, kEndStripMax, kGateStripX, kGateStripY,
       kGateNSigmaX, kGateNSigmaY, kGateBins, kGateMin, kGateMax, kXMin, kXMax,
-      kXBins, kYBins, kRejNoise, kNoiseThresh, kNoiseMinStrips, kRejPileup,
-      kPileupThresh, kPileupMinStrips, kRejOffbeam, kOffbeamDist,
-      kOffbeamMinStrips, kRejHighStrip, kHighStripCap, kXLo, kXHi,
+      kXBins, kYBins, kPostTrig, kScatterSavgol, kRejNoise, kNoiseThresh,
+      kNoiseMinStrips, kRejPileup, kPileupThresh, kPileupMinStrips, kRejOffbeam,
+      kOffbeamDist, kOffbeamMinStrips, kRejHighStrip, kHighStripCap, kXLo, kXHi,
       kPureBeamGate, kTracesPerClass, kReqS16BelowBeam, kIgnStrip0, kIgnStrip17,
       kIgnShort);
   // Active beam gates (also keyed by cache filename, but folded in here too so

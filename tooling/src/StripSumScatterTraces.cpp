@@ -293,6 +293,8 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
   const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
   const Int_t kClusterSmoothWindow =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.CLUSTER_SMOOTH_WINDOW;
+  const Bool_t kScatterSavgol =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SCATTER_SAVGOL;
 
   // Per (class, variable) value lists for raw traces.
   std::vector<Double_t> vals_raw[NC][NV];
@@ -370,8 +372,18 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
     if (e.beam_flat)
       cls = 0;
     else if (e.reac_mask & bit) {
-      Double_t x = SumRange(td, kXLo, kXHi);
-      Double_t y = SumRange(td, YLoOf(reac), YHiOf(reac));
+      // The scatter (and the cuts drawn over it) is filled from
+      // SG-smoothed sums when SCATTER_SAVGOL, so classification into the
+      // user-drawn regions must use that same coordinate space; the
+      // cluster variables below still come from the raw trace.
+      Double_t td_sg[18];
+      const Double_t *coords = td;
+      if (kScatterSavgol) {
+        SavitzkyGolay(td, td_sg);
+        coords = td_sg;
+      }
+      Double_t x = SumRange(coords, kXLo, kXHi);
+      Double_t y = SumRange(coords, YLoOf(reac), YHiOf(reac));
       if (cut_aa && cut_aa->IsInside(x, y))
         cls = 1;
       else if (cut_an && cut_an->IsInside(x, y))

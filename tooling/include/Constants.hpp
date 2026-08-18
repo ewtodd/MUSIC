@@ -87,6 +87,12 @@ struct StripSumScatterConfig {
   Bool_t REQUIRE_GATE_S3_S4;
   Bool_t REQUIRE_GATE_S5_S6;
   Bool_t SKIP_SAVGOL_PLOTS;
+  // Fill the per-reaction 2D scatters from per-strip sums of the
+  // Savitzky-Golay-smoothed normed totals (same kernel as the smoothed
+  // trace plots), which can separate the (a,a')/(a,n) clusters more
+  // cleanly. Event filters, the trace reservoir, and the region-trace
+  // plots always stay on the raw totals.
+  Bool_t SCATTER_SAVGOL;
   Bool_t REQUIRE_STRIP_16_BELOW_BEAM;
 
   // Skip the per-class cluster-variable histograms (ClusterVarHists) that the
