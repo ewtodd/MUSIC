@@ -12,7 +12,7 @@ void InitDatasetConfig() {
   gInstance.SOL_BASE_DIR = "/labdata/MUSIC/New-37Cl/data_raw/";
   gInstance.SOL_SPLIT_DIR = "/labdata/MUSIC/New-37Cl/data_split/";
   gInstance.SOL_N_SPLIT_WORKERS = 32;
-  gInstance.SOL_SPLIT_CHUNK_SECONDS = 60;
+  gInstance.SOL_SPLIT_CHUNK_SECONDS = 15;
   gInstance.COMPASS_BASE_DIR = "/labdata/MUSIC/37Cl/";
   std::vector<Int_t> RUNS;
   for (Int_t i = 30; i < 53; i++) {
@@ -39,14 +39,10 @@ void InitDatasetConfig() {
   gInstance.REFERENCE_CHANNEL_MAX_ADC = 4500;
   gInstance.EVENT_TIME_WINDOW_US = 8.0;
   gInstance.DEDUP_STRATEGY = kLARGEST_ENERGY;
+  gInstance.REJECT_MULTI_HIT_EVENTS = kFALSE;
 
   gInstance.TIMING_DO_BOARD_SYNC = kFALSE;
   gInstance.TIMING_DO_SORT = kFALSE;
-
-  // Automatic pileup removal: any event where an anode channel fired twice
-  // inside the 8 us window is two ions, not one — drop it (the per-channel
-  // dedup would otherwise keep the larger hit and inflate one strip).
-  gInstance.REJECT_MULTI_HIT_EVENTS = kTRUE;
 
   gInstance.IGNORE_STRIP_0 = kTRUE;
   gInstance.IGNORE_STRIP_17 = kTRUE;
@@ -56,7 +52,7 @@ void InitDatasetConfig() {
   gInstance.STRIP_SUM_SCATTER_CONFIG.PURE_BEAM_GATE =
       StripSumScatterConfig::PURE_BEAM_GATE_S1_S2;
   gInstance.STRIP_SUM_SCATTER_CONFIG.RERUN_SIM = kFALSE;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 9;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 4;
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS = 3;
   gInstance.STRIP_SUM_SCATTER_CONFIG.XMIN = 12;
   gInstance.STRIP_SUM_SCATTER_CONFIG.XMAX = 20;
