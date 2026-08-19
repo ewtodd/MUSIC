@@ -335,8 +335,6 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
   const Double_t kGateMin = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_MIN;
   const Double_t kGateMax = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_MAX;
 
-  const Double_t kXMin = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMIN;
-  const Double_t kXMax = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMAX;
   const Int_t kXBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XBINS;
   const Int_t kYBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.YBINS;
 
@@ -391,19 +389,26 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
   const Bool_t kScatterSavgol =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SCATTER_SAVGOL;
 
+  // The scatter histograms are always built over the fixed ScatterBuildRange
+  // window, so the display-only windows (XMIN/XMAX, YMIN/YMAX, Y_RANGE) are
+  // deliberately NOT stamped here: changing them must not invalidate the
+  // cache. The build range itself and the bin counts are stamped, since they
+  // define the histogram structure.
   TString s = Form(
-      "v15 reac[%d,%d] jump[%.3f,%.3f] smooth=%d,%d "
-      "step=%.3f s17=%.3f gate[s%d,s%d,%.2f,%.2f,%d,%.3f,%.3f] x[%.3f,%.3f,%d] "
+      "v16 reac[%d,%d] jump[%.3f,%.3f] smooth=%d,%d "
+      "step=%.3f s17=%.3f gate[s%d,s%d,%.2f,%.2f,%d,%.3f,%.3f] "
+      "xbuild[%.3f,%.3f,%d] "
       "ybins=%d post=%d savgol=%d filt[noise:%d,%.3f,%d pileup:%d,%.3f,%d "
       "offbeam:%d,%.3f,%d high:%d,%.3f] "
       "xsum[%d,%d] beamgate=%d traces=%d s16below=%d ign[s0:%d,s17:%d,short:%d]",
       kReacMin, kReacMax, kReacJumpMin, kReacJumpMax,
       Int_t(Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS),
       kSmoothHiStrip, kSmoothMaxStep, kEndStripMax, kGateStripX, kGateStripY,
-      kGateNSigmaX, kGateNSigmaY, kGateBins, kGateMin, kGateMax, kXMin, kXMax,
-      kXBins, kYBins, kPostTrig, kScatterSavgol, kRejNoise, kNoiseThresh,
-      kNoiseMinStrips, kRejPileup, kPileupThresh, kPileupMinStrips, kRejOffbeam,
-      kOffbeamDist, kOffbeamMinStrips, kRejHighStrip, kHighStripCap, kXLo, kXHi,
+      kGateNSigmaX, kGateNSigmaY, kGateBins, kGateMin, kGateMax,
+      ScatterBuildRange::kMin, ScatterBuildRange::kMax, kXBins, kYBins,
+      kPostTrig, kScatterSavgol, kRejNoise, kNoiseThresh, kNoiseMinStrips,
+      kRejPileup, kPileupThresh, kPileupMinStrips, kRejOffbeam, kOffbeamDist,
+      kOffbeamMinStrips, kRejHighStrip, kHighStripCap, kXLo, kXHi,
       kPureBeamGate, kTracesPerClass, kReqS16BelowBeam, kIgnStrip0, kIgnStrip17,
       kIgnShort);
   // Active beam gates (also keyed by cache filename, but folded in here too so
@@ -412,14 +417,6 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
   for (Int_t i = 0; i < gates.size(); i++)
     s += Form(" g[s%d,s%d]", gates[i].sx, gates[i].sy);
 
-  Double_t y_lo[64], y_hi[64];
-  YBounds(y_lo, y_hi);
-  for (Int_t reac = kReacMin; reac <= kReacMax; reac++)
-    s += Form(
-        " y%d[%.3f,%.3f]", reac,
-        y_lo[reac - Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN],
-        y_hi[reac -
-             Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN]);
   for (Int_t i = 0; i < run_order.size(); i++) {
     Int_t run = run_order[i];
     TChain *ch = chains[run];
@@ -459,10 +456,12 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
   return s;
 }
 
-// Per-reaction-strip y-axis bounds straight from
+// Per-reaction-strip y-axis DISPLAY bounds straight from
 // Constants::cfg.STRIP_SUM_SCATTER_CONFIG.Y_RANGE (tunable per dataset,
 // per strip); strips absent from the map fall back to YMIN/YMAX. x stays
-// fixed (strip-independent).
+// fixed (strip-independent). These are applied at draw time via
+// SetRangeUser -- the histograms themselves are always built over the fixed
+// ScatterBuildRange window, so changing them never rebuilds the scatters.
 void StripSumScatter::YBounds(Double_t *y_lo, Double_t *y_hi) {
   const Int_t kReacMin =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;

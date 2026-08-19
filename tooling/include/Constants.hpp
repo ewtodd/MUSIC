@@ -69,6 +69,11 @@ struct StripSumScatterConfig {
   Double_t GATE_MAX;
   Int_t GATE_BINS;
 
+  // Display-only windows for the strip-sum scatters (a.u.). The histograms
+  // are always built over the fixed wide ScatterBuildRange window, and these
+  // values only zoom the drawn plot via SetRangeUser -- so retuning them
+  // never triggers the (expensive) scatter rebuild. XBINS/YBINS set the bin
+  // counts of the built histograms and DO require a rebuild.
   Double_t XMIN;
   Double_t XMAX;
   Int_t XBINS;
@@ -76,6 +81,8 @@ struct StripSumScatterConfig {
   Double_t YMAX;
   Int_t YBINS;
 
+  // Per-reaction-strip y-axis display windows, overriding YMIN/YMAX for
+  // individual reaction strips (display-only, same as XMIN/XMAX).
   std::map<Int_t, std::pair<Double_t, Double_t>> Y_RANGE;
 
   Long64_t SAMPLE_MAX_POINTS;

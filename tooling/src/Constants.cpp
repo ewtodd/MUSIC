@@ -54,10 +54,10 @@ void StripSumScatterConfig::SetDefaults() {
 
   XMIN = 14;
   XMAX = 26;
-  XBINS = 300;
+  XBINS = 1500;
   YMIN = 0;
   YMAX = 20;
-  YBINS = 300;
+  YBINS = 1500;
 
   SAMPLE_MAX_POINTS = 2000000;
 

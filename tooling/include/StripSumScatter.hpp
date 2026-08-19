@@ -45,6 +45,19 @@ struct GateSpec {
   Int_t sy;
 };
 
+// Fixed fill range (in a.u.) for the scatter histograms. The scatters are
+// always built over this wide window so no event that passes the filters can
+// fall outside it; the configured display windows (XMIN/XMAX, YMIN/YMAX,
+// Y_RANGE) are applied only at draw time via SetRangeUser. Retuning the plot
+// windows therefore never rebuilds the scatters -- only the display range
+// changes. 40 a.u. covers every case the filters admit: with pileup
+// rejection on no strip exceeds the pileup threshold (~1.75), so the x sum
+// over 16 strips stays below ~30.
+namespace ScatterBuildRange {
+const Double_t kMin = 0.0;
+const Double_t kMax = 40.0;
+} // namespace ScatterBuildRange
+
 // Beam classification ellipses: entrance (s0,s1 or s1,s2, per config's
 // PURE_BEAM_GATE) AND exit (s16,s17 or s15,s16). An event is "pure beam"
 // only if it passes both ellipses.
@@ -120,8 +133,7 @@ private:
   static RunGateFit FitRunGates(Int_t run, TChain *chain);
   static FillRunResult FillRunScatters(
       Int_t run, TChain *chain, const std::vector<GateSpec> &active_gates,
-      const std::vector<BeamFit2D> &run_gates, const BeamEllipses &run_beam,
-      const Double_t *y_lo, const Double_t *y_hi);
+      const std::vector<BeamFit2D> &run_gates, const BeamEllipses &run_beam);
 
   void PlotScatters();
 

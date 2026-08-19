@@ -12,25 +12,23 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
   const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
   const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
   const Int_t kXBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XBINS;
-  const Double_t kXMin = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMIN;
-  const Double_t kXMax = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMAX;
   const Int_t kYBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.YBINS;
   const Int_t kBeamReservoirCap =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TRACES_PER_CLASS * 10;
   const Int_t nReac = kReacMax - kReacMin + 1;
 
-  // Compute y-bounds once.
-  YBounds(m_yLo, m_yHi);
-
-  // Allocate scatter histograms.
+  // Allocate scatter histograms. They are ALWAYS built over the fixed wide
+  // ScatterBuildRange window; the configured display windows (XMIN/XMAX,
+  // YMIN/YMAX, Y_RANGE) are applied only at draw time, so retuning them
+  // never forces this (expensive) rebuild.
   for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
-    Int_t ri = ReacIndex(reac);
     TH2F *h = new TH2F(
         Form("scatter_r%d", reac),
         Form(";norm. #DeltaE strips %d#rightarrow%d [a.u.];norm. #DeltaE "
              "strips %d#rightarrow%d [a.u.]",
              kXLo, kXHi, YLoOf(reac), YHiOf(reac)),
-        kXBins, kXMin, kXMax, kYBins, m_yLo[ri], m_yHi[ri]);
+        kXBins, ScatterBuildRange::kMin, ScatterBuildRange::kMax, kYBins,
+        ScatterBuildRange::kMin, ScatterBuildRange::kMax);
     h->SetDirectory(nullptr);
     h->SetStats(0);
     m_scatter[reac] = h;
@@ -141,7 +139,7 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
           if (!ch || !ok[run])
             continue;
           fills[i] = FillRunScatters(run, ch, activeGates, gates[run],
-                                     beamEllipses[run], m_yLo, m_yHi);
+                                     beamEllipses[run]);
         }
       });
     }
@@ -294,8 +292,7 @@ StripSumScatter::RunGateFit StripSumScatter::FitRunGates(Int_t run,
 
 StripSumScatter::FillRunResult StripSumScatter::FillRunScatters(
     Int_t run, TChain *chain, const std::vector<GateSpec> &active_gates,
-    const std::vector<BeamFit2D> &run_gates, const BeamEllipses &run_beam,
-    const Double_t *y_lo, const Double_t *y_hi) {
+    const std::vector<BeamFit2D> &run_gates, const BeamEllipses &run_beam) {
   const Int_t kReacMin =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
   const Int_t kReacMax =
@@ -303,8 +300,6 @@ StripSumScatter::FillRunResult StripSumScatter::FillRunScatters(
   const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
   const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
   const Int_t kXBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XBINS;
-  const Double_t kXMin = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMIN;
-  const Double_t kXMax = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMAX;
   const Int_t kYBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.YBINS;
   const Int_t kBeamReservoirCap =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TRACES_PER_CLASS * 10;
@@ -316,12 +311,15 @@ StripSumScatter::FillRunResult StripSumScatter::FillRunScatters(
   out.scatters.resize(nReac);
   for (Int_t ri = 0; ri < nReac; ri++) {
     Int_t reac = kReacMin + ri;
+    // Wide fixed build range (see ScatterBuildRange); the configured display
+    // windows are applied only at draw time.
     out.scatters[ri] = new TH2F(
         Form("scatter_r%d", reac),
         Form(";norm. #DeltaE strips %d#rightarrow%d [a.u.];norm. #DeltaE "
              "strips %d#rightarrow%d [a.u.]",
              kXLo, kXHi, YLoOf(reac), YHiOf(reac)),
-        kXBins, kXMin, kXMax, kYBins, y_lo[ri], y_hi[ri]);
+        kXBins, ScatterBuildRange::kMin, ScatterBuildRange::kMax, kYBins,
+        ScatterBuildRange::kMin, ScatterBuildRange::kMax);
     out.scatters[ri]->SetDirectory(nullptr);
     out.scatters[ri]->SetStats(0);
   }
@@ -441,12 +439,24 @@ void StripSumScatter::PlotScatters() {
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
   const Int_t kReacMax =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
+  const Double_t kXMin = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMIN;
+  const Double_t kXMax = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMAX;
+
+  // The display windows (XMIN/XMAX and the Y_RANGE/YMIN/YMAX per-strip
+  // bounds) only zoom the fixed-range histograms; the underlying binned
+  // contents stay untouched, so these values can be retuned without a
+  // rebuild.
+  YBounds(m_yLo, m_yHi);
 
   std::lock_guard<std::mutex> lock(g_plot_mutex);
   for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
+    Int_t ri = ReacIndex(reac);
+    TH2F *h = m_scatter[reac];
+    h->GetXaxis()->SetRangeUser(kXMin, kXMax);
+    h->GetYaxis()->SetRangeUser(m_yLo[ri], m_yHi[ri]);
     TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
-    PlottingUtils::ConfigureAndDraw2DHistogram(m_scatter[reac], c);
-    m_scatter[reac]->GetYaxis()->SetTitleOffset(1.3);
+    PlottingUtils::ConfigureAndDraw2DHistogram(h, c);
+    h->GetYaxis()->SetTitleOffset(1.3);
     c->SetLeftMargin(0.18);
     PlottingUtils::SaveFigure(c,
                               Form("normsumE_reac%d_s%d_%d_vs_s%d_%d", reac,
@@ -496,6 +506,14 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
   TCanvas *cutCanvas = new TCanvas("c_strip_sum_regions",
                                    "Draw (a,n) then (a,a') regions", 900, 700);
   cutCanvas->SetLogz(kTRUE); // match the saved scatter's z-scale
+  // Zoom to the same display window as the saved scatter plots, so the
+  // interactive cuts are drawn on the view the user just inspected.
+  YBounds(m_yLo, m_yHi);
+  m_scatter[reac]->GetXaxis()->SetRangeUser(
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMIN,
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMAX);
+  m_scatter[reac]->GetYaxis()->SetRangeUser(m_yLo[ReacIndex(reac)],
+                                            m_yHi[ReacIndex(reac)]);
   m_scatter[reac]->Draw("COLZ");
   cutCanvas->Update();
   TCutG *cutAn = PromptCut(cutCanvas, "region_an", "(a,n)");

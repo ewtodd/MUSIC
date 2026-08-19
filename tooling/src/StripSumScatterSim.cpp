@@ -427,6 +427,8 @@ void StripSumScatter::SimOverlay() {
   }
 
   std::map<Int_t, std::vector<TGraph *>>::iterator it;
+  const Double_t kXMin = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMIN;
+  const Double_t kXMax = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMAX;
   for (it = by_strip.begin(); it != by_strip.end(); ++it) {
     Int_t r = it->first;
     std::map<Int_t, TH2F *>::const_iterator sit = m_scatter.find(r);
@@ -434,10 +436,15 @@ void StripSumScatter::SimOverlay() {
       continue;
     std::lock_guard<std::mutex> lock(g_plot_mutex);
     TH2F *ref = sit->second;
-    TH2F *frame =
-        new TH2F(Form("sim_frame_r%d", r), "", 10, ref->GetXaxis()->GetXmin(),
-                 ref->GetXaxis()->GetXmax(), 10, ref->GetYaxis()->GetXmin(),
-                 ref->GetYaxis()->GetXmax());
+    // Frame the sim overlay with the same display window as the data
+    // scatter: x from XMIN/XMAX, y from the per-strip Y_RANGE/YMIN/YMAX
+    // bounds. The data histograms are built over the wide ScatterBuildRange,
+    // so their axis extents no longer match the plotted window.
+    Double_t y_lo[64], y_hi[64];
+    YBounds(y_lo, y_hi);
+    Int_t ri = ReacIndex(r);
+    TH2F *frame = new TH2F(Form("sim_frame_r%d", r), "", 10, kXMin, kXMax, 10,
+                           y_lo[ri], y_hi[ri]);
     frame->SetStats(0);
     frame->GetXaxis()->SetTitle(ref->GetXaxis()->GetTitle());
     frame->GetYaxis()->SetTitle(ref->GetYaxis()->GetTitle());
