@@ -13,9 +13,8 @@
 
 class RemixSim {
 public:
-  // `tag` becomes both the on-disk
-  // basename(sim_root_files/traces_<iso>_<tag>.root) and the plot subdirectory
-  // leaf.
+  // `tag` becomes both the on-disk basename
+  // (sim_root_files/traces_<iso>_<tag>.root) and the plot subdirectory leaf.
   struct SimFileSpec {
     TString tag;
   };
@@ -23,9 +22,8 @@ public:
   // Absolute path to the control directory: <dataset>/control.
   static TString ControlDir();
 
-  // Pull the traces tag out of a control file's
-  // `output = ".../traces_<iso>_<tag>.root"` line. Returns "" for control files
-  // that write something other than a traces_<iso>_ file.
+  // Pull the traces tag from a control file's
+  // `output = ".../traces_<iso>_<tag>.root"` line; "" for non-traces outputs.
   static TString TagFromControlFile(const TString &filepath);
 
   // Enumerate one SimFileSpec per control file in <dataset>/control that writes

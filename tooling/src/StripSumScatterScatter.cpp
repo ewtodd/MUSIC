@@ -17,11 +17,10 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TRACES_PER_CLASS * 10;
   const Int_t nReac = kReacMax - kReacMin + 1;
 
-  // Allocate scatter histograms. They are ALWAYS built over the fixed wide
-  // ScatterBuildRange window; the configured display windows (XMIN/XMAX,
-  // YMIN/YMAX, Y_RANGE) are applied only at draw time, so retuning them
-  // never forces this (expensive) rebuild.
+  // Built over the fixed wide ScatterBuildRange window; display windows are
+  // applied at draw time only, so retuning them never forces this rebuild.
   for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
+    delete m_scatter[reac]; // stale clones from a failed cache load, if any
     TH2F *h = new TH2F(
         Form("scatter_r%d", reac),
         Form(";norm. #DeltaE strips %d#rightarrow%d [a.u.];norm. #DeltaE "
@@ -69,10 +68,8 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
       << Constants::cfg.STRIP_SUM_SCATTER_CONFIG.HIGH_STRIP_THRESHOLD << ")"
       << std::endl;
 
-  // --- Phase 1: beam classification ellipses + scatter filter gates ---
-  // One worker task per run; within a run the series gates stay sequential
-  // (each gate only sees events passing all prior gates). The per-gate
-  // plots are serialized inside FindBeamGate by g_plot_mutex.
+  // Phase 1: beam ellipses + filter gates. One worker task per run; the
+  // series gates within a run stay sequential (each sees only prior-passers).
   std::vector<RunGateFit> fits(nRuns);
   {
     std::queue<Int_t> work;
@@ -112,10 +109,8 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
     ok[run] = fits[i].ok;
   }
 
-  // --- Phase 2: per-run event filling (parallel across runs) ---
-  // Each worker fills private scatter histograms + a private reservoir
-  // slice; both are merged below in run order so the combined result is
-  // identical to a single-threaded fill.
+  // Phase 2: per-run event filling (parallel across runs); each worker fills
+  // private scatters + reservoir slice, merged in run order (== single-thread).
   std::vector<FillRunResult> fills(nRuns);
   {
     std::queue<Int_t> work;
@@ -147,9 +142,8 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
       workers[w].join();
   }
 
-  // Merge per-run scatter histograms into m_scatter. Runs that were skipped
-  // (no chain / no valid gates) never produced scatters -- their result was
-  // left default-constructed with an empty vector, so skip them here.
+  // Merge per-run scatters into m_scatter; failed runs (no chain / no valid
+  // gates) hold default-constructed empty vectors, so skip them.
   for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
     Int_t ri = ReacIndex(reac);
     for (Int_t i = 0; i < nRuns; i++) {
@@ -164,9 +158,8 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
     }
   }
 
-  // Merge reservoirs in run order. Every reaction event is kept; pure-beam
-  // events are kept only while the global cap is not yet reached (the same
-  // selection a single-threaded fill would make).
+  // Merge reservoirs in run order: every reaction event kept, pure-beam only
+  // while the global cap is unmet (same selection single-thread would make).
   Long64_t totalGated = 0, totalSeen = 0;
   Long64_t nRejGate = 0, nRejPileup = 0, nRejNoise = 0, nRejHighStrip = 0,
            nRejOffbeam = 0;
@@ -262,14 +255,13 @@ StripSumScatter::RunGateFit StripSumScatter::FitRunGates(Int_t run,
   }
   out.beam.ok = kTRUE;
 
-  // --- Scatter filter gates (series gating) ---
-  // Each gate only sees events passing all prior gates; a failed gate is
-  // still recorded so later gates keep their prior list consistent.
+  // Scatter filter gates (series gating): each gate only sees events passing
+  // all prior gates; a failed gate is still recorded for list consistency.
   std::vector<GateSpec> activeGates = ActiveGates();
   std::vector<BeamFit2D> runGates;
   std::vector<GateSpec> priorSpecs;
   Bool_t allOk = kTRUE;
-  for (Int_t gi = 0; gi < activeGates.size(); gi++) {
+  for (Int_t gi = 0; gi < Int_t(activeGates.size()); gi++) {
     BeamFit2D g = FindBeamGate(chain, activeGates[gi].sx, activeGates[gi].sy,
                                priorSpecs, runGates, tag, subdir);
     if (g.ok)
@@ -340,7 +332,7 @@ StripSumScatter::FillRunResult StripSumScatter::FillRunScatters(
     out.seen++;
 
     Bool_t passesAll = kTRUE;
-    for (Int_t gi = 0; gi < active_gates.size(); gi++)
+    for (Int_t gi = 0; gi < Int_t(active_gates.size()); gi++)
       if (!PassesGate(run_gates[gi], ev, active_gates[gi].sx,
                       active_gates[gi].sy)) {
         passesAll = kFALSE;
@@ -368,12 +360,8 @@ StripSumScatter::FillRunResult StripSumScatter::FillRunScatters(
       continue;
     }
 
-    // Scatter coordinates: raw normed totals, or SG-smoothed per-strip
-    // totals when SCATTER_SAVGOL (the SG kernel removes the
-    // L_odd/R_even sawtooth, which may let (a,a')/(a,n) clusters
-    // separate more cleanly). The event filters above keep running on
-    // the raw totals, and the trace reservoir / region-trace plots are
-    // unaffected.
+    // Scatter coords: raw normed totals, or SG-smoothed when SCATTER_SAVGOL
+    // (removes the L_odd/R_even sawtooth); event filters still use raw.
     const Double_t *scatter_src = ev.total;
     if (kScatterSavgol) {
       for (Int_t s = 0; s < 18; s++)
@@ -392,8 +380,7 @@ StripSumScatter::FillRunResult StripSumScatter::FillRunScatters(
     }
 
     // Keep every reaction-passing event for traces; cap pure-beam events
-    // (only ~TRACES_PER_CLASS are ever drawn). The two are mutually
-    // exclusive -- a pure-beam event has no reaction jump.
+    // (only ~TRACES_PER_CLASS drawn; the sets are mutually exclusive).
     Bool_t beam = (mask == 0) && IsPureBeam(ev, run_beam);
     if (mask == 0 && !(beam && beam_kept < kBeamReservoirCap))
       continue;
@@ -407,17 +394,15 @@ StripSumScatter::FillRunResult StripSumScatter::FillRunScatters(
           Float_t(ev.left_0_17_adc[s]) + Float_t(ev.rightdE_adc[s]);
     }
     // Mirror IGNORE_SHORT_STRIPS: the normed total keeps only the long side
-    // of a split strip, so the raw trace must drop the same side to stay
+    // of each split strip, so the raw trace drops the same side to stay
     // comparable.
     if (Constants::cfg.IGNORE_SHORT_STRIPS)
       for (Int_t s = 1; s <= 16; s++)
         e.total_adc[s] = ((s % 2) != 0) ? Float_t(ev.left_0_17_adc[s])
                                         : Float_t(ev.rightdE_adc[s]);
-    // Both-channel multiplicity: split strips (1-16) where both ends
-    // FIRED. Read off the RAW ADC, not the calibrated ends -- the
-    // short-end gains are 0 (uncalibrated, no sim anchor), so the
-    // calibrated short ends are always zero; the raw ADC still carries
-    // whether the channel fired.
+    // Both-channel multiplicity over split strips (1-16), read from RAW ADC:
+    // short-end gains are 0 (no sim anchor), so calibrated short ends are
+    // always 0.
     Int_t both = 0;
     for (Int_t s = 1; s <= 16; s++)
       if (ev.left_0_17_adc[s] > 0.0 && ev.rightdE_adc[s] > 0.0)
@@ -442,9 +427,8 @@ void StripSumScatter::PlotScatters() {
   const Double_t kXMin = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMIN;
   const Double_t kXMax = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMAX;
 
-  // The display windows (XMIN/XMAX and the Y_RANGE/YMIN/YMAX per-strip
-  // bounds) only zoom the fixed-range histograms; the underlying binned
-  // contents stay untouched, so these values can be retuned without a
+  // Display windows (XMIN/XMAX, Y_RANGE/YMIN/YMAX) only zoom the fixed-range
+  // histograms; the binned content is untouched, so they retune without
   // rebuild.
   YBounds(m_yLo, m_yHi);
 
@@ -497,10 +481,9 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
   TApplication app("strip-sum-scatter", &app_argc, app_argv);
   gROOT->SetBatch(kFALSE);
 
-  // Swallow recoverable X protocol errors for the interactive cut session so
-  // the cut-canvas teardown's BadWindow/BadDrawable doesn't trip ROOT's
-  // crashing default handler at the next canvas paint (same guard the fit
-  // editors use).
+  // Swallow recoverable X protocol errors during the cut session: the cut-
+  // canvas teardown's BadWindow would otherwise trip ROOT's crash handler (same
+  // as the fit editor).
   const AUXErrorHandlerSave xerr_save = AUInstallTolerantXErrorHandler();
 
   TCanvas *cutCanvas = new TCanvas("c_strip_sum_regions",
@@ -524,13 +507,8 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
   gROOT->SetEditorMode();
   delete cutCanvas;
   gSystem->ProcessEvents();
-  // SetBatch only flips the flag; the real X11 backend (TGX11) stays active,
-  // and batch-mode canvas creation against it hits a null window context in
-  // TGX11::DrawBoxW (fWindows[-1] is a null map entry). Re-point gVirtualX at
-  // the no-op batch backend, the same switch TApplication::MakeBatch() makes
-  // (MakeBatch itself is protected). The interactive TGX11 is deliberately
-  // leaked rather than deleted to avoid tearing down the X display while the
-  // TApplication still lives.
+  // SetBatch only flips the flag, so TGX11 stays active and batch-mode canvas
+  // creation against it segfaults: re-point gVirtualX at the no-op gGXBatch.
   gROOT->SetBatch(kTRUE);
   gVirtualX = gGXBatch;
 
@@ -545,15 +523,14 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
   // Same selected events, raw (un-normalized) ADC -- one entry per normed
   // trace, kept in lock-step so the two overlays show the identical events.
   std::vector<TGraph *> tr_an_adc, tr_aa_adc, tr_beam_adc;
-  // Same selected events again, Savitzky-Golay smoothed (normed a.u. space),
-  // for the with-smoothing overlay -- also in lock-step with the raw normed
-  // traces, so the two a.u. overlays show the identical events.
+  // Same events again, SG-smoothed (normed a.u.) for the with-smoothing
+  // overlay; also in lock-step with the raw normed traces above.
   const Bool_t kSkipSg =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS;
   std::vector<TGraph *> tr_an_sg, tr_aa_sg, tr_beam_sg;
   UInt_t bit = (1u << ReacIndex(reac));
 
-  for (Int_t k = 0; k < m_reservoir.size(); k++) {
+  for (Int_t k = 0; k < Int_t(m_reservoir.size()); k++) {
     if (Int_t(tr_an.size()) >= kTracesPerRegion &&
         Int_t(tr_aa.size()) >= kTracesPerRegion &&
         Int_t(tr_beam.size()) >= kTracesPerRegion)
@@ -571,9 +548,9 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
     Double_t td[18];
     for (Int_t s = 0; s < 18; s++)
       td[s] = Double_t(e.total[s]);
-    // The (cached) scatter -- and the cuts drawn over it -- use SG-smoothed
-    // sums when SCATTER_SAVGOL, so the region-membership test must run in
-    // that same coordinate space. The plotted traces stay raw.
+    // The (cached) scatter and its cuts use SG-smoothed sums when
+    // SCATTER_SAVGOL, so the region-membership test must run in that same
+    // space; traces stay raw.
     Double_t td_sg[18];
     const Double_t *coords = td;
     if (kScatterSavgol) {
@@ -601,19 +578,18 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
             << " (a,a')=" << tr_aa.size() << " (a,n)=" << tr_an.size()
             << std::endl;
 
-  // Dump the exact sampled trace values (plus per-trace count of strips
-  // over the pileup threshold) next to the plot, so filter behavior can be
-  // checked against the raw numbers instead of eyeballing the PNG. The
-  // graph point k holds strip (s_lo + k), where s_lo follows the
-  // IGNORE_STRIP_0/17 config like the plots themselves.
+  // Exact sampled values next to the plot, plus per-trace count of strips
+  // over the pileup threshold; graph point k holds strip (s_lo + k).
   {
+    const Double_t kPileupThresh =
+        Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PILEUP_THRESHOLD;
     TString dump_path = Paths::ResultsDir() + "/plots/strip_sum_scatter/" +
                         Form("region_traces_reac%d.txt", reac);
     const Int_t s_lo = Constants::cfg.IGNORE_STRIP_0 ? 1 : 0;
     const Int_t s_hi = Constants::cfg.IGNORE_STRIP_17 ? 16 : 17;
     std::ofstream os(dump_path.Data());
-    os << "class trace strips_ge_1.3 total[" << s_lo << ".." << s_hi << "]"
-       << std::endl;
+    os << "class trace " << Form("strips_ge_%.2f", kPileupThresh) << " total["
+       << s_lo << ".." << s_hi << "]" << std::endl;
     const Char_t *klass[3] = {"an", "aa", "beam"};
     const std::vector<TGraph *> *sets[3] = {&tr_an, &tr_aa, &tr_beam};
     for (Int_t ic = 0; ic < 3; ic++) {
@@ -624,7 +600,7 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
           Double_t v = (*sets[ic])[i]->GetY()[k];
           Int_t strip = s_lo + k;
           os << " " << v;
-          if (strip >= 1 && strip <= 16 && v >= 1.3)
+          if (strip >= 1 && strip <= 16 && v >= kPileupThresh)
             n_hi++;
         }
         os << " " << n_hi << std::endl;
@@ -654,23 +630,23 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
                          0.7, 1.3, "#DeltaE [a.u.]");
   }
 
-  for (Int_t i = 0; i < tr_an.size(); i++)
+  for (Int_t i = 0; i < Int_t(tr_an.size()); i++)
     delete tr_an[i];
-  for (Int_t i = 0; i < tr_aa.size(); i++)
+  for (Int_t i = 0; i < Int_t(tr_aa.size()); i++)
     delete tr_aa[i];
-  for (Int_t i = 0; i < tr_beam.size(); i++)
+  for (Int_t i = 0; i < Int_t(tr_beam.size()); i++)
     delete tr_beam[i];
-  for (Int_t i = 0; i < tr_an_adc.size(); i++)
+  for (Int_t i = 0; i < Int_t(tr_an_adc.size()); i++)
     delete tr_an_adc[i];
-  for (Int_t i = 0; i < tr_aa_adc.size(); i++)
+  for (Int_t i = 0; i < Int_t(tr_aa_adc.size()); i++)
     delete tr_aa_adc[i];
-  for (Int_t i = 0; i < tr_beam_adc.size(); i++)
+  for (Int_t i = 0; i < Int_t(tr_beam_adc.size()); i++)
     delete tr_beam_adc[i];
-  for (Int_t i = 0; i < tr_an_sg.size(); i++)
+  for (Int_t i = 0; i < Int_t(tr_an_sg.size()); i++)
     delete tr_an_sg[i];
-  for (Int_t i = 0; i < tr_aa_sg.size(); i++)
+  for (Int_t i = 0; i < Int_t(tr_aa_sg.size()); i++)
     delete tr_aa_sg[i];
-  for (Int_t i = 0; i < tr_beam_sg.size(); i++)
+  for (Int_t i = 0; i < Int_t(tr_beam_sg.size()); i++)
     delete tr_beam_sg[i];
 
   delete cutAn;

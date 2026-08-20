@@ -8,10 +8,8 @@ TString FileSet::CompassBinPath(const FileSpec &s) {
 }
 
 TString FileSet::SolBinPath(const FileSpec &s) {
-  // SOLARIS naming: music_exp1915_<RUN3DIGITS>_00_66222_<SEQ3DIGITS>.sol
-  // suffix is empty for _000, or "_1" -> _001, etc.
-  // Chunk suffix "_cNNN" (seq 0) or "_<seq>_cNNN" resolves to _chunkNNN.sol
-  // in split dir.
+  // SOLARIS naming: music_exp1915_<run3>_00_66222_<seq3>.sol; a chunk suffix
+  // "_cNNN" / "_<seq>_cNNN" resolves to _chunkNNN.sol in the split dir.
   Int_t cPos = s.suffix.Index("_c");
   if (cPos >= 0) {
     TString chunkIdx = s.suffix(cPos + 2, s.suffix.Length() - cPos - 2);
@@ -32,6 +30,32 @@ TString FileSet::SolBinPath(const FileSpec &s) {
   }
   return Constants::cfg.SOL_BASE_DIR +
          Form("music_exp1915_%03d_00_66222_%03d.sol", s.run, seq);
+}
+
+namespace {
+// Leading sequence number of a run suffix: "_2_c001" -> 2, "_1" -> 1,
+// "_c001" -> 0 (a seq-0 chunk file).
+Int_t SuffixLeadInt(const TString &s) {
+  if (s.Length() < 2 || s[0] != '_')
+    return 0;
+  TString num = s(1, s.Length() - 1);
+  Int_t dash = num.Index('_');
+  if (dash > 0)
+    num = num(0, dash);
+  return num.IsDigit() ? num.Atoi() : 0;
+}
+} // namespace
+
+Bool_t FileSet::SuffixOrder(const TString &a, const TString &b) {
+  if (a == "")
+    return b != "";
+  if (b == "")
+    return false;
+  Int_t na = SuffixLeadInt(a);
+  Int_t nb = SuffixLeadInt(b);
+  if (na != nb)
+    return na < nb;
+  return a < b;
 }
 
 namespace {
@@ -65,15 +89,7 @@ std::vector<TString> DiscoverSuffixesIn(const TString &dir,
     suffixes.push_back(rest);
   }
   gSystem->FreeDirectory(dirp);
-  std::sort(suffixes.begin(), suffixes.end(),
-            [](const TString &a, const TString &b) {
-              if (a == "")
-                return true;
-              if (b == "")
-                return false;
-              return TString(a(1, a.Length() - 1)).Atoi() <
-                     TString(b(1, b.Length() - 1)).Atoi();
-            });
+  std::sort(suffixes.begin(), suffixes.end(), FileSet::SuffixOrder);
   return suffixes;
 }
 
@@ -185,14 +201,7 @@ std::vector<TString> FileSet::DiscoverSolRunSuffixes(Int_t run) {
   gSystem->FreeDirectory(dirp);
 
   // Sort by sequence number
-  std::sort(suffixes.begin(), suffixes.end(),
-            [](const TString &a, const TString &b) {
-              if (a == "")
-                return true;
-              if (b == "")
-                return false;
-              return a.Atoi() < b.Atoi();
-            });
+  std::sort(suffixes.begin(), suffixes.end(), FileSet::SuffixOrder);
 
   return suffixes;
 }
@@ -215,35 +224,7 @@ std::vector<TString> FileSet::DiscoverProcessedRunSuffixes(Int_t run) {
     suffixes.push_back(rest);
   }
   gSystem->FreeDirectory(dirp);
-  std::sort(suffixes.begin(), suffixes.end(),
-            [](const TString &a, const TString &b) {
-              if (a == "")
-                return true;
-              if (b == "")
-                return false;
-              // Extract leading numeric part for sorting: _1_c000 -> 1, _c000
-              // -> 0
-              Int_t na = 0, nb = 0;
-              if (a.Length() > 1 && a[0] == '_') {
-                TString numA = a(1, a.Length() - 1);
-                Int_t dash = numA.Index('_');
-                if (dash > 0)
-                  numA = numA(0, dash);
-                if (numA.IsDigit())
-                  na = numA.Atoi();
-              }
-              if (b.Length() > 1 && b[0] == '_') {
-                TString numB = b(1, b.Length() - 1);
-                Int_t dash = numB.Index('_');
-                if (dash > 0)
-                  numB = numB(0, dash);
-                if (numB.IsDigit())
-                  nb = numB.Atoi();
-              }
-              if (na != nb)
-                return na < nb;
-              return a < b;
-            });
+  std::sort(suffixes.begin(), suffixes.end(), FileSet::SuffixOrder);
   return suffixes;
 }
 

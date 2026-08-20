@@ -23,10 +23,8 @@ BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
   tree->SetBranchAddress("Left_0_17_dE", left_0_17_adc);
   tree->SetBranchAddress("RightdE", rightdE_adc);
 
-  // Use 1024 bins (previously 256) so each bin is narrower (16 ADC for 37Cl).
-  // The sigma floor in ComputeMoments is 2 * bin_width; at the old 64 ADC/bin
-  // it clamped sigma to 128 ADC, hiding the true beam width and washing out
-  // correlation (rho ≈ 0.09 even though strip1/strip2 track the same beam).
+  // 1024 bins (16 ADC/bin for 37Cl); old 256 bins clamped sigma to 128 ADC,
+  // hiding true beam width and washing out correlation (rho ≈ 0.09).
   const Int_t kBeamGateNBins = 1024;
   TH2F *h = new TH2F(Form("h2_stp2_vs_stp1_%s", run_label.Data()),
                      ";Strip1 #DeltaE [ADC];Strip2 #DeltaE [ADC]",
@@ -52,9 +50,7 @@ BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
   }
 
   const Double_t kSeedFrac = 0.30;
-  // With 1024 bins instead of 256, scale from 10→40 to keep the ADC seed
-  // window roughly 640 ADC (10 bins × 16384/256 = 640; 40 bins × 16384/1024 =
-  // 640).
+  // Scale seed half-bins from 10→40 to keep ~640 ADC window with 1024 bins.
   const Int_t kSeedHalfBins = 40;
   const Int_t kMomentRefineIters = 4;
   const Double_t kMomentRefineNSigma = 2.5;
@@ -75,12 +71,8 @@ BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
     delete h;
     return out;
   }
-  // Iteratively re-center: recompute the moments inside a ±2.5σ window
-  // around the current centroid. At high rate (run84: 45 kHz) the pileup
-  // blob at ~2x the beam and the correlated diagonal band both pass the
-  // seed threshold; a single wide-window pass then reports a huge, highly
-  // correlated pseudo-blob (sigma ~650, rho 0.95) instead of the beam. The
-  // shrinking window converges onto the dominant (beam) blob.
+  // At high rate (45 kHz) pileup blob + diagonal band pass seed threshold;
+  // shrinking ±2.5σ window converges onto the dominant beam blob.
   for (Int_t iter = 0; iter < kMomentRefineIters; iter++) {
     Int_t wlo_bx = std::max(
         1, h->GetXaxis()->FindBin(m.mu_x - kMomentRefineNSigma * m.sigma_x));
@@ -112,9 +104,8 @@ BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
   if (save_plot) {
     TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
     PlottingUtils::ConfigureAndDraw2DHistogram(h, cv);
-    // Draw the correlated 2D Gaussian ellipse: the TEllipse rotates
-    // according to the covariance eigen-decomposition so the drawn contour
-    // matches the actual InEllipseXY gate (χ² < n²).
+    // TEllipse rotates per covariance eigen-decomposition so drawn contour
+    // matches InEllipseXY gate (χ² < n²).
     Double_t sxx = out.sigma_x * out.sigma_x;
     Double_t syy = out.sigma_y * out.sigma_y;
     Double_t sxy = out.rho * out.sigma_x * out.sigma_y;

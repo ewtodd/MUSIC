@@ -1,21 +1,15 @@
 #include "CalibrateBeamInternal.hpp"
 
 const Long64_t kSampleCap = 20000;
-// (L, R) pair cap for the L/R gain-matching passes. Larger than kSampleCap
-// because the short-side "shoulder" anchor is found in a narrow slice of the
-// pairs (long side reads low) that only a small fraction of events populate.
+// (L, R) pair cap — larger than kSampleCap because the shoulder slice hits
+// only events where the long side reads low.
 const Long64_t kPairCap = 100000;
 
-// Shoulder slice constants for the short-side full-charge anchor. The slice
-// collects (short, long) pairs where the LONG side reads below an absolute
-// cap (a superset of the relative cut applied later: long < 0.35 x long beam
-// peak, which never exceeds ~700 ADC for these beam peaks). Defined before
-// CollectAnchorSamplesOneSubfile because the slice is selected during sample
-// collection.
+// Shoulder slice collects (short, long) pairs where LONG side reads below
+// absolute cap (superset of relative cut: long < 0.35 × long beam peak).
 const Double_t kGmSliceLongCap = 1000.0; // ADC, absolute long-side cap
-// Relative cut and search band (fractions of the long side's beam peak) used
-// in ComputeLRGainMatch. The band's upper edge sits below the short side's
-// pileup reading (2x full charge) so pileup never wins the mode.
+// Relative cut and band bounds (fractions of long beam peak); upper edge
+// below short-side pileup (2× full charge) so pileup never wins the mode.
 const Double_t kGmShoulderLongFrac = 0.35;
 const Double_t kGmShoulderBandLoFrac = 0.40;
 const Double_t kGmShoulderBandHiFrac = 1.25;
@@ -44,9 +38,7 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
     delete sf;
     return;
   }
-  // Raw ADC, pre-calibration. Guard strips (S) and left ends (L) live in
-  // Left_0_17_dE; right ends in RightdE. Strip totals are L+R; the gate uses
-  // the strip1 total (L1+R1) and the strip2 total (L2+R2).
+  // Guard strips (S) and left ends (L) → Left_0_17_dE; right ends → RightdE.
   UShort_t left_0_17_adc[18], rightdE_adc[18];
   Short_t cathode_adc = 0, grid_adc = 0;
   tree->SetBranchAddress("Left_0_17_dE", left_0_17_adc);
@@ -57,12 +49,8 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
   Long64_t n = tree->GetEntries();
   for (Long64_t j = 0; j < n; j++) {
     tree->GetEntry(j);
-    // (L, R) pairs for strips 1–16 where both ends fired — UNGATED, matching
-    // the check_LR notebook which runs on all events. The short-side anchor
-    // ("shoulder") is found in a slice where the LONG side reads low
-    // (~300-350 ADC), i.e. events where the charge went mostly to the short
-    // end. Those are reaction/off-position events that a beam gate would
-    // remove, so the pairs must not be beam-gated.
+    // UNGATED L/R pairs for check_LR notebook; shoulder slice needs reaction
+    // events that a beam gate would remove (charge mostly on short end).
     if (pairs) {
       for (Int_t s = 1; s <= 16; s++) {
         Int_t lv = Int_t(left_0_17_adc[s]);
@@ -71,12 +59,8 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
           pairs[s].l.push_back(Float_t(lv));
           pairs[s].r.push_back(Float_t(rv));
         }
-        // Shoulder slice: (short, long) pairs where the LONG side reads low,
-        // i.e. events where the charge went mostly to the short end. Collected
-        // independently of the capped pairs above so rare slice events are
-        // never crowded out by beam statistics. The relative cut (long < 0.35
-        // x beam peak) is applied in ComputeLRGainMatch once the beam peak is
-        // known; kGmSliceLongCap is an absolute superset of that cut.
+        // (short, long) pairs where LONG reads low; collected independently so
+        // rare slice events aren't crowded out.
         Bool_t l_is_long = (LongSide(s) == 'L');
         Int_t long_v = l_is_long ? lv : rv;
         Int_t short_v = l_is_long ? rv : lv;
@@ -122,56 +106,16 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
   delete sf;
 }
 
-// L/R gain matching, following the check_LR notebook's two-pass recipe
-// (37Cl_an_check_LR.ipynb, "Save 2-pass calibration" cell) in spirit, but
-// with the short-side anchor fixed to the FULL-CHARGE response:
-//
-// Pass 1 — per-side anchors:
-//   * LONG side anchor  = beam peak of the long side (histogram mode). The
-//     per-channel anchor from ReduceToAnchors is exactly this (the beam
-//     dominates the spectrum), so it is reused: gain_long = 1/long_peak.
-//     Anchoring the long side at its beam peak keeps long-only events at
-//     1.0 a.u., matching every downstream threshold that assumes a flat beam.
-//   * SHORT side anchor = the short side's full-charge response: the mode of
-//     the short side among events where the LONG side reads low
-//     (< 0.35 x long beam peak). Those events carry most of the charge on
-//     the short end, so the short side reads the same charge the long side
-//     reads at its own full-charge scale. Anchoring there makes the strip
-//     total gL*L + gR*R partition-independent: an event that routes a
-//     different fraction of its charge to the short end reads the same
-//     total, instead of being scaled by the anchor error. (The notebook's
-//     2D-correlation ridge was tried first; on this data it locks onto the
-//     beam blob's top edge / pileup instead of the full-charge point, so the
-//     shoulder slice is the primary method for both parities.)
-//   * gain = 1/anchor per side (TARGET = 1.0 a.u.).
-//
-// Pass 2 — per-strip eSum alignment via the SHORT side only:
-//   * eSum = gain_L·L + gain_R·R over the pairs; per-strip beam peak found
-//     in (0.8, 2.5) a.u.
-//   * reference = median of the per-strip peaks.
-//   * strips with |peak − ref| > 0.05 get gain_short *= (ref−1)/(peak−1),
-//     which moves the strip's eSum peak onto the reference without touching
-//     the long side. With full-charge short anchors this correction is small
-//     (the anchors already share one electronics scale); it only fine-tunes
-//     residual per-strip differences.
-//
-// Pairs are collected UNGATED (all events with both ends firing) because the
-// shoulder slice needs reaction/off-position events that the beam gate
-// removes. Strips whose slice is still too small (upstream strips see few
-// reaction products, so slice statistics grow with strip number) fall back to
-// the MEDIAN anchor of the same parity (short side = R on odd strips, L on
-// even strips — each parity's preamps share one electronics scale), and pass
-// 2 then fine-tunes each strip individually using its own eSum peak (full
-// beam statistics).
+// L/R gain match: PASS 1 — LONG = beam peak, SHORT = full-charge shoulder mode.
+// Gains = 1/anchor/target; PASS 2 — eSum fine-tunes short-side gain to median.
 const Int_t kGmBins = 512;
 const Long64_t kGmMinSlice = 100; // min entries in the shoulder slice
 const Double_t kGmEsumLo = 0.8;   // a.u. eSum peak search window (pass 2)
 const Double_t kGmEsumHi = 2.5;
 const Double_t kGmCorrThresh = 0.05; // a.u. (notebook: 30/1000 = 3% of TARGET)
 
-// Histogram-mode peak finder, mirroring the notebook's find_peak(): histogram
-// `v` over [lo, hi] with kGmBins bins, skip the first skip_frac of bins (to
-// avoid the threshold pile), return the max-bin centre. Returns 0 when empty.
+// Histogram-mode peak finder: bin v over [lo, hi] with kGmBins bins, skip first
+// skip_frac bins (avoid threshold pile), return max-bin centre; 0 if empty.
 Double_t GmFindPeak(const std::vector<Float_t> &v, Double_t lo, Double_t hi,
                     Double_t skip_frac) {
   if (v.empty() || hi <= lo)
@@ -216,15 +160,8 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
     }
   }
 
-  // ── Pass 1: per-side peak anchors ──
-  // LONG side anchor = the beam peak of the long side (from ReduceToAnchors).
-  // SHORT side anchor = the short side's FULL-CHARGE response from the
-  // shoulder slice: the mode of the short side among events where the LONG
-  // side reads low (< 0.35 x long beam peak). Those events carry most of the
-  // charge on the short end, so the short side reads the same charge the
-  // long side reads at its full-charge scale. The mode is searched in
-  // [0.40, 1.25] x long_peak: the lower edge sits above the short side's
-  // beam-mode pile, the upper edge below its pileup reading (2x full charge).
+  // Pass 1: LONG anchor = beam peak; SHORT = full-charge shoulder mode (LONG
+  // reads low), searched in [0.40, 1.25] × long_peak.
   Bool_t matched[18] = {kFALSE};
   Double_t short_anchor_adc[18] = {0};
   std::vector<Double_t> anchors_odd, anchors_even;
@@ -254,10 +191,8 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
       Double_t lo = kGmShoulderBandLoFrac * long_peak;
       Double_t hi = kGmShoulderBandHiFrac * long_peak;
       peak_short = GmFindPeak(rel, lo, hi, 0.0);
-      // Reject anchors hugging the band edge: a trustworthy full-charge mode
-      // sits comfortably inside the band, so an edge-hugging mode means the
-      // slice was dominated by partial-charge events (or the band is wrong
-      // for this strip) — treat it as unmeasured and fall back to the median.
+      // Reject anchors hugging band edge: edge-hugging mode indicates
+      // partial-charge events — treat as unmeasured and fall back to median.
       if (peak_short < 1.05 * lo || peak_short > 0.95 * hi)
         peak_short = 0.0;
     }
@@ -380,11 +315,9 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
   }
 }
 
-// Cathode uses median + IQR/1.349 (asymmetric tail not as clean and the user
-// prefers to keep cathode on the existing approach). All other channels
-// (S guard strips + L/R long anodes) use a robust mode-seeded Gaussian fit
-// over the peak core (mode ± 2σ), anchored to the fitted centroid. Fall back
-// to the robust mode itself on fit failure.
+// Cathode: median + IQR (asymmetric tail). All other channels: robust
+// mode-seeded Gaussian fit over peak core; fall back to robust mode on fit
+// failure.
 void ReduceToAnchors(std::vector<ChannelCal> &chans,
                      std::vector<std::vector<Float_t>> &samples,
                      std::vector<TF1 *> &fits_out, const TString &run_label,
@@ -407,9 +340,7 @@ void ReduceToAnchors(std::vector<ChannelCal> &chans,
       c.fit_adc = Median(v);
       c.fit_sigma_adc = InterquartileRange(v) / 1.349;
     } else {
-      // Primary: robust mode-seeded Gaussian fit of the peak core. Last
-      // resort: the robust mode itself (peak-like), never the tail-biased
-      // sample mean.
+      // Mode-fallback: robust mode, never tail-biased sample mean.
       Double_t peak = 0, sig = 0;
       TF1 *fit = nullptr;
       TString fname =
@@ -419,15 +350,14 @@ void ReduceToAnchors(std::vector<ChannelCal> &chans,
         c.fit_sigma_adc = sig;
         fits_out[i] = fit;
       } else {
-        // Fit failed; anchor on the robust mode. Still "calibrated", but
-        // no fit curve is drawn -- flag it, tagged long/short, since a
-        // long-side fallback is a real miscalibration risk.
+        // Fit failed; anchor on robust mode (still "calibrated"),
+        // flagged with long/short tag — long-side fallback is a miscalibration
+        // risk.
         Double_t mode = 0.0, rsigma = 0.0;
         RobustPeakSeed(v, mode, rsigma);
         if (rsigma > 0.5 * mode) {
-          // Same peak-like sanity gate as the fitter: no discernible peak,
-          // leave the channel uncalibrated (gain 0 -> reads 0 a.u.) instead
-          // of anchoring on a smear's mode.
+          // Sanity gate: no discernible peak (rsigma > 0.5*mode) → gain 0,
+          // don't anchor on a smeared noise feature.
           c.fit_adc = 0;
           c.fit_sigma_adc = 0;
           std::cerr << "  [uncalibrated no-peak] " << c.name
@@ -452,11 +382,8 @@ void ReduceToAnchors(std::vector<ChannelCal> &chans,
               << std::endl;
   }
 
-  // After all per-channel peaks are fitted, run the check_LR-style two-pass
-  // L/R gain matching for strips 1–16: long-side beam peak + short-side
-  // shoulder anchors, then a per-strip eSum median alignment applied to the
-  // short side only. Sets the ChannelCal::gain overrides; strips where the
-  // shoulder cannot be found keep the independent 1/fit_adc gains.
+  // After all channels are fitted, run LR gain matching: long-beam peak +
+  // short-shoulder anchors, then eSum median alignment on the short side.
   if (pairs)
     ComputeLRGainMatch(chans, pairs);
 }

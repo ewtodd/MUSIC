@@ -119,18 +119,16 @@ void EventBuilder::AssignHit(EventState &e, PerChannelData *pc,
 }
 
 Bool_t EventBuilder::CheckEventComplete(const EventState &e) {
-  // Guard strips count toward completeness only when the analysis actually
-  // uses them (IGNORE_STRIP_0/17 mirror the downstream strip-sum-scatter
-  // AllStripsFired predicate). 37Cl sets IGNORE_STRIP_0=kTRUE because its
-  // Strip0 rarely fires — requiring it discarded ~2/3 of otherwise complete
-  // events.
+  // 37Cl's Strip0 fires in only ~1/3 of events, so it is required only when
+  // not ignored. The highest split strip required is a config knob.
   if (!Constants::cfg.IGNORE_STRIP_0 && e.totaldE[0] == 0)
     return kFALSE;
-  for (Int_t strip = 1; strip <= 14; strip += 2) {
+  const Int_t kEnd = Constants::cfg.COMPLETE_CHECK_END_STRIP;
+  for (Int_t strip = 1; strip <= kEnd; strip += 2) {
     if (e.leftdE[strip] == 0)
       return kFALSE;
   }
-  for (Int_t strip = 2; strip <= 15; strip += 2) {
+  for (Int_t strip = 2; strip <= kEnd; strip += 2) {
     if (e.rightdE[strip] == 0)
       return kFALSE;
   }
@@ -162,9 +160,8 @@ struct EventCounters {
   Long64_t events_with_multi_anode_hit;
   Long64_t dropped_anode_hits_total;
   Long64_t dropped_cathode_hits_total;
-  // Per-required-channel miss counts over all events: how often each
-  // completeness-required long strip / guard strip was zero. miss_long is
-  // indexed by strip 1..16 (counts L==0 for odd strips, R==0 for even).
+  // Per-channel miss counts over all events: how often each completeness
+  // strip was zero; miss_long indexed by strip 1..16 (L odd, R even).
   Long64_t miss_long[17];
   Long64_t miss_strip0;
   Long64_t miss_strip17;
@@ -230,15 +227,9 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
 
   if (is_complete) {
     Bool_t reject = Constants::cfg.REJECT_FLAGGED_EVENTS && has_any_flag;
-    // Multi-hit on any anode channel is the unambiguous signature of pileup
-    // (two ions in the coincidence window): the per-channel dedup already
-    // collapsed the hits to one energy value, so without this check such
-    // events pass through with one inflated strip. No energy thresholds are
-    // involved — it is the definition of pileup. Note it only catches
-    // ELECTRONICS-RESOLVED double hits: when the shaper merges two pulses
-    // into one hit (summed amplitude, count 1) there is no hit-count
-    // signature and the event slips through here — those are handled by the
-    // energy-based filters (IsPileup/IsHighStrip) downstream.
+    // Multi-hit on an anode = unambiguous pileup; catches only
+    // electronics-resolved doubles. Shaper-merged pulses have no hit-count
+    // signature (energy filters do).
     if (Constants::cfg.REJECT_MULTI_HIT_EVENTS && any_anode_multi) {
       reject = kTRUE;
       c.complete_rejected_multi++;
@@ -248,9 +239,8 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
         left_0_17_branch[k] = UShort_t(e.leftdE[k]);
         rightdE_branch[k] = UShort_t(e.rightdE[k]);
       }
-      // Guard strips are single-ended: their energy lives in totaldE[0]/[17]
-      // (leftdE/rightdE are 0 there). Park them in the left array at 0/17 so
-      // the recompute total[s] = left_0_17[s] + rightdE[s] reproduces them too.
+      // Guards are single-ended: park them in left_0_17_dE[0]/[17] (rightdE
+      // is 0 there) so the read-side left+right recompute reproduces them.
       left_0_17_branch[0] = UShort_t(e.totaldE[0]);
       left_0_17_branch[17] = UShort_t(e.totaldE[17]);
       for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++)
@@ -317,19 +307,12 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     return kFALSE;
   }
 
-  // ADC energies are 14-bit unsigned at the source; store them as UShort_t, not
-  // Int_t. Index 0/17 of left_0_17_dE hold the single-ended guard strips
-  // (Strip0/Strip17), indices 1..16 the left ends of the split anodes; the
-  // right ends live in rightdE (which is 0 at 0/17). The full per-strip deposit
-  // is recomputed as left_0_17_dE[s] + rightdE[s] on read -- it holds for all
-  // 18 indices since rightdE is 0 at the guards -- so no TotaldE branch is
-  // stored.
+  // 14-bit ADC as UShort_t. left_0_17_dE[0/17] hold the single-ended guards,
+  // [1..16] the L ends; rightdE the R ends (0 at guards). Total = left+right.
   UShort_t left_0_17_dE[18], rightdE[18];
   UShort_t hits_arr[36];
-  // 14-bit ADC (<=16383), so Short_t holds every value with room to spare while
-  // preserving Cathode's -1 "no cathode hit" sentinel (Grid is non-negative but
-  // shares the type for symmetry). Unsplit anode/guard values are non-negative,
-  // hence the UShort_t arrays above.
+  // 14-bit ADC fits Short_t with room, preserving Cathode's -1 "no hit"
+  // sentinel (Grid shares the type); unsplit values are non-negative.
   Short_t cathode, grid;
   UInt_t flags_or;
 
@@ -416,7 +399,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       delete hSum.h2_strip0_vs_grid;
       delete hSum.h1_strip0;
       delete hSum.h1_grid;
-      for (Int_t i = 0; i < sample_traces.size(); i++)
+      for (Int_t i = 0; i < Int_t(sample_traces.size()); i++)
         delete sample_traces[i];
       return kFALSE;
     }
@@ -512,9 +495,8 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       cathode_hits_total++;
 
     if (ref_mode) {
-      // --- Reference-channel mode ---
-      // Reference hit seeds a new event; non-reference hits queue until
-      // next reference hit (or end of stream).
+      // Reference-channel mode: a reference hit seeds a new event; the other
+      // hits queue until the next reference hit (or end of stream).
       if (slot == ref_slot) {
         // Grid ADC window filter: skip reference hits outside the accepted
         // range so they don't seed an event.
@@ -569,9 +551,8 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
         }
       }
     } else {
-      // --- Time-window mode (REFERENCE_CHANNEL == "NONE") ---
-      // First unassigned hit opens a window; all hits within window_ps
-      // belong to that event. Dedup still applies, ref_ts = window anchor.
+      // Time-window mode (REFERENCE_CHANNEL == "NONE"): the first unassigned
+      // hit opens a window; hits within window_ps join it (ref_ts = anchor).
       if (!have_cur) {
         ResetEventState(cur_event);
         ResetPerChannelData(cur_per_channel);

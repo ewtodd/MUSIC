@@ -14,9 +14,8 @@ Bool_t GpuAccel::Init() {
   if (!Constants::cfg.USE_GPU_ACCELERATION)
     return kFALSE;
 
-  // Absolute path to the tooling GPU lib, injected at build by the Makefile
-  // (it lives with the tooling, not the dataset). Falls back to a bare name
-  // resolved via LD_LIBRARY_PATH if the macro is somehow undefined.
+  // Absolute path to the GPU lib, injected at build time (it lives with the
+  // tooling, not the dataset); falls back to LD_LIBRARY_PATH if undefined.
 #ifndef MUSIC_GPU_LIB
 #define MUSIC_GPU_LIB "libgpuaccel.so"
 #endif

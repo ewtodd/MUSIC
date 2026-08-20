@@ -233,7 +233,7 @@ StripSumScatter::FindBeamGate(TChain *chain, Int_t sx, Int_t sy,
     ev.Decode();
     // Series gating: only events passing every prior gate feed this fit.
     Bool_t prior_ok = kTRUE;
-    for (Int_t gi = 0; gi < prior_specs.size(); gi++)
+    for (Int_t gi = 0; gi < Int_t(prior_specs.size()); gi++)
       if (!PassesGate(prior_gates[gi], ev, prior_specs[gi].sx,
                       prior_specs[gi].sy)) {
         prior_ok = kFALSE;
@@ -334,6 +334,12 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
   const Int_t kGateBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_BINS;
   const Double_t kGateMin = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_MIN;
   const Double_t kGateMax = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_MAX;
+  // Steer FindBeamGate's seed window and event sampling, so they must
+  // invalidate the cached scatters/gates.
+  const Int_t kSeedHalfBins =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SEED_HALF_BINS;
+  const Long64_t kSampleMaxPoints =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SAMPLE_MAX_POINTS;
 
   const Int_t kXBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XBINS;
   const Int_t kYBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.YBINS;
@@ -363,15 +369,11 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.HIGH_STRIP_THRESHOLD;
 
   // Remaining knobs that change the cached scatter/reservoir contents:
-  // x-axis strip span (X_LO..X_HI), beam-classification settings (entrance
-  // gate choice, exit strip17 handling), the reservoir cap, and the
-  // reaction/beam event predicates' top-level toggles.
+  // x span, beam classification, reservoir cap, predicate toggles.
   const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
   const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
-  // Y-axis strip span: scatter y = sum over YLoOf(reac)..YHiOf(reac), where
-  // YHiOf = min(reac + POST_TRIGGER_SUM_STRIPS, 17). Widening or narrowing
-  // the window changes every cached scatter's y values, so the knob itself
-  // must be stamped.
+  // y span YLoOf..YHiOf (YHiOf uses POST_TRIGGER_SUM_STRIPS): moving it
+  // changes every scatter's y value, so the knob itself is stamped.
   const Int_t kPostTrig =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS;
   const Int_t kPureBeamGate =
@@ -383,20 +385,18 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
   const Bool_t kIgnStrip0 = Constants::cfg.IGNORE_STRIP_0;
   const Bool_t kIgnStrip17 = Constants::cfg.IGNORE_STRIP_17;
   const Bool_t kIgnShort = Constants::cfg.IGNORE_SHORT_STRIPS;
-  // When set, the scatter x/y sums are taken from SG-smoothed totals
-  // (FillRunScatters), changing the cached scatter contents even with
-  // every other knob identical.
+  // When set, scatter x/y come from SG-smoothed totals (FillRunScatters),
+  // changing the cache even with every other knob identical.
   const Bool_t kScatterSavgol =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SCATTER_SAVGOL;
 
-  // The scatter histograms are always built over the fixed ScatterBuildRange
-  // window, so the display-only windows (XMIN/XMAX, YMIN/YMAX, Y_RANGE) are
-  // deliberately NOT stamped here: changing them must not invalidate the
-  // cache. The build range itself and the bin counts are stamped, since they
-  // define the histogram structure.
+  // Display-only windows (XMIN/XMAX, YMIN/YMAX, Y_RANGE) are NOT stamped:
+  // scatters are built over the fixed ScatterBuildRange (stamped with bin
+  // counts).
   TString s = Form(
-      "v16 reac[%d,%d] jump[%.3f,%.3f] smooth=%d,%d "
-      "step=%.3f s17=%.3f gate[s%d,s%d,%.2f,%.2f,%d,%.3f,%.3f] "
+      "v17 reac[%d,%d] jump[%.3f,%.3f] smooth=%d,%d "
+      "step=%.3f s17=%.3f gate[s%d,s%d,%.2f,%.2f,%d,%.3f,%.3f,seed=%d,"
+      "sample=%lld] "
       "xbuild[%.3f,%.3f,%d] "
       "ybins=%d post=%d savgol=%d filt[noise:%d,%.3f,%d pileup:%d,%.3f,%d "
       "offbeam:%d,%.3f,%d high:%d,%.3f] "
@@ -404,26 +404,24 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
       kReacMin, kReacMax, kReacJumpMin, kReacJumpMax,
       Int_t(Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS),
       kSmoothHiStrip, kSmoothMaxStep, kEndStripMax, kGateStripX, kGateStripY,
-      kGateNSigmaX, kGateNSigmaY, kGateBins, kGateMin, kGateMax,
-      ScatterBuildRange::kMin, ScatterBuildRange::kMax, kXBins, kYBins,
-      kPostTrig, kScatterSavgol, kRejNoise, kNoiseThresh, kNoiseMinStrips,
-      kRejPileup, kPileupThresh, kPileupMinStrips, kRejOffbeam, kOffbeamDist,
-      kOffbeamMinStrips, kRejHighStrip, kHighStripCap, kXLo, kXHi,
-      kPureBeamGate, kTracesPerClass, kReqS16BelowBeam, kIgnStrip0, kIgnStrip17,
-      kIgnShort);
+      kGateNSigmaX, kGateNSigmaY, kGateBins, kGateMin, kGateMax, kSeedHalfBins,
+      (long long)kSampleMaxPoints, ScatterBuildRange::kMin,
+      ScatterBuildRange::kMax, kXBins, kYBins, kPostTrig, kScatterSavgol,
+      kRejNoise, kNoiseThresh, kNoiseMinStrips, kRejPileup, kPileupThresh,
+      kPileupMinStrips, kRejOffbeam, kOffbeamDist, kOffbeamMinStrips,
+      kRejHighStrip, kHighStripCap, kXLo, kXHi, kPureBeamGate, kTracesPerClass,
+      kReqS16BelowBeam, kIgnStrip0, kIgnStrip17, kIgnShort);
   // Active beam gates (also keyed by cache filename, but folded in here too so
   // a mismatch never silently reuses a stale same-named cache).
   std::vector<GateSpec> gates = ActiveGates();
-  for (Int_t i = 0; i < gates.size(); i++)
+  for (Int_t i = 0; i < Int_t(gates.size()); i++)
     s += Form(" g[s%d,s%d]", gates[i].sx, gates[i].sy);
 
-  for (Int_t i = 0; i < run_order.size(); i++) {
+  for (Int_t i = 0; i < Int_t(run_order.size()); i++) {
     Int_t run = run_order[i];
     TChain *ch = chains[run];
-    // The scatters/reservoir are filled from CALIBRATED totals, so a changed
-    // calibration must invalidate the cache even when every filter knob above
-    // is identical. Fold per-run calibration content (sums of GainLeft,
-    // GainRight, StripSlope, StripIntercept) into the fingerprint.
+    // Scatters are filled from CALIBRATED totals: changed calibration must
+    // invalidate the cache, so fold its per-run content into the fingerprint.
     ch->LoadTree(0);
     TFile *f = ch->GetFile();
     Double_t sum_l = 0.0, sum_r = 0.0, sum_sl = 18.0, sum_ic = 0.0;
@@ -450,18 +448,14 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
         }
       }
     }
-    s += Form(" r%d:%lld cal=%.6f,%.6f,%.6f,%.6f", run, ch->GetEntries(), sum_l,
-              sum_r, sum_sl, sum_ic);
+    s += Form(" r%d:%lld cal=%.6f,%.6f,%.6f,%.6f", run,
+              (long long)ch->GetEntries(), sum_l, sum_r, sum_sl, sum_ic);
   }
   return s;
 }
 
-// Per-reaction-strip y-axis DISPLAY bounds straight from
-// Constants::cfg.STRIP_SUM_SCATTER_CONFIG.Y_RANGE (tunable per dataset,
-// per strip); strips absent from the map fall back to YMIN/YMAX. x stays
-// fixed (strip-independent). These are applied at draw time via
-// SetRangeUser -- the histograms themselves are always built over the fixed
-// ScatterBuildRange window, so changing them never rebuilds the scatters.
+// Per-strip y DISPLAY bounds from Y_RANGE (fallback YMIN/YMAX); x is
+// strip-independent. Applied at draw time via SetRangeUser; never rebuilds.
 void StripSumScatter::YBounds(Double_t *y_lo, Double_t *y_hi) {
   const Int_t kReacMin =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
@@ -593,7 +587,7 @@ void StripSumScatter::WriteCache(const TString &cacheName,
   tt->Branch("reac_mask", &e.reac_mask, "reac_mask/i");
   tt->Branch("beam_flat", &e.beam_flat, "beam_flat/O");
   tt->Branch("both_mult", &e.both_mult, "both_mult/I");
-  for (Int_t k = 0; k < m_reservoir.size(); k++) {
+  for (Int_t k = 0; k < Int_t(m_reservoir.size()); k++) {
     e = m_reservoir[k];
     tt->Fill();
   }
@@ -641,6 +635,6 @@ void StripSumScatter::Run() {
   InteractiveOverlay(reac);
 
   // Cleanup chains.
-  for (Int_t i = 0; i < run_order.size(); i++)
+  for (Int_t i = 0; i < Int_t(run_order.size()); i++)
     delete chain_by_run[run_order[i]];
 }

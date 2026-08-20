@@ -45,22 +45,17 @@ struct GateSpec {
   Int_t sy;
 };
 
-// Fixed fill range (in a.u.) for the scatter histograms. The scatters are
-// always built over this wide window so no event that passes the filters can
-// fall outside it; the configured display windows (XMIN/XMAX, YMIN/YMAX,
-// Y_RANGE) are applied only at draw time via SetRangeUser. Retuning the plot
-// windows therefore never rebuilds the scatters -- only the display range
-// changes. 40 a.u. covers every case the filters admit: with pileup
-// rejection on no strip exceeds the pileup threshold (~1.75), so the x sum
-// over 16 strips stays below ~30.
+// Fixed fill range (in a.u.) for the scatters: wide enough that no
+// filter-passing event falls outside (with pileup rejection on, the x sum over
+// 16 strips stays below ~30); display windows apply at draw via SetRangeUser,
+// so retuning them never rebuilds.
 namespace ScatterBuildRange {
 const Double_t kMin = 0.0;
 const Double_t kMax = 40.0;
 } // namespace ScatterBuildRange
 
-// Beam classification ellipses: entrance (s0,s1 or s1,s2, per config's
-// PURE_BEAM_GATE) AND exit (s16,s17 or s15,s16). An event is "pure beam"
-// only if it passes both ellipses.
+// Beam classification ellipses: entrance (s0,s1 or s1,s2, per PURE_BEAM_GATE)
+// AND exit (s16,s17 or s15,s16); "pure beam" requires passing both.
 struct BeamEllipses {
   BeamFit2D s0_s1;
   BeamFit2D s1_s2;
@@ -115,9 +110,8 @@ private:
     Bool_t ok = kFALSE;
   };
 
-  // Per-run result of the event fill (FillScatters phase 2, one entry per
-  // run): the run's private scatter histograms (merged afterwards) and its
-  // trace reservoir slice.
+  // Per-run result of the event fill (FillScatters phase 2): the run's
+  // private scatter histograms (merged afterwards) and trace reservoir slice.
   struct FillRunResult {
     std::vector<TH2F *> scatters;
     std::vector<TraceEvt> reservoir;
@@ -183,14 +177,12 @@ private:
 
   static void SmoothTrace(const Double_t *in, Double_t *out, Int_t width);
 
-  // Savitzky-Golay smoothing: 3rd-degree polynomial, half-window of 2
-  // (5-point convolution). Uses standard SG coefficients [-3,12,17,12,-3]/35.
-  // At edges, the window shrinks and coefficients are renormalised.
+  // Savitzky-Golay smoothing: 3rd-degree, 5-point window, coefficients
+  // [-3,12,17,12,-3]/35; at edges the window shrinks and renormalises.
   static void SavitzkyGolay(const Double_t *in, Double_t *out);
 
-  // CFD-style trigger finder: locate the first strip whose beam-subtracted
-  // signal (td[s]-1) exceeds both a fraction of the trace peak and a multiple
-  // of the beam sigma. Returns the strip index, or -1 if no trigger fires.
+  // CFD-style trigger finder: first strip whose beam-subtracted signal exceeds
+  // a peak fraction and an N-sigma gate; returns the strip index or -1.
   static Int_t FindTrigger(const Double_t *td, const Double_t *base,
                            Double_t beam_sigma);
 

@@ -66,11 +66,8 @@ BLIND_REJECT_PREBEAM = False
 BLIND_PREBEAM_FEATURE = True
 BLIND_PREBEAM_MIN_STRIP = 2  # floor: pre-trigger pair = strips 1 and 0 (guard)
 
-# Savitzky-Golay smoothing: 5-point, cubic, with edge renormalization
-# (matches StripSumScatter::SavitzkyGolay in C++). When enabled, clustering
-# features for clustering are computed from the
-# SG-filtered trace rather than the raw trace. The beam reference remains
-# raw (computed from raw beam-flat events).
+# Savitzky-Golay smoothing: 5-point, cubic, edge-renormalized (matches
+# StripSumScatter::SavitzkyGolay); clustering uses the SG trace, beam ref stays raw.
 BLIND_SAVITZKY_GOLAY = True
 
 # Shape/topology clustering features.
@@ -79,22 +76,16 @@ BLIND_MULT_THRESH = 0.0  # `mult`: count strips 1-16 where both ends fire
 BLIND_NEAR_MULT_FEATURE = True  # `near_mult`: both-fire within +-1 of trigger
 BLIND_BEAMDEV_FEATURE = False  # `beamdev`: RMS(dE-beam) over strips 8-17
 
-# Step 1 (global real-vs-background split). Keep a cluster if ANY KEEP_ALWAYS
-# mean > 0.5 (exempt from veto), OR ANY KEEP_IF mean > 0.5 AND EVERY DROP_IF
-# mean < 0.5 (conditional keep + junk veto).
+# Step 1 (real-vs-background split): keep a cluster if ANY KEEP_ALWAYS mean
+# > 0.5, OR ANY KEEP_IF mean > 0.5 AND EVERY DROP_IF mean < 0.5.
 BLIND_STEP1_FEATURES = ("beamgate", "offbeam", "pileup", "beamdev", "mult")
 BLIND_STEP1_K = 3  # None = auto-k (GMM only)
 BLIND_STEP1_KEEP_ALWAYS = ()
 BLIND_STEP1_KEEP_IF = ("beamgate", )
 BLIND_STEP1_DROP_IF = ("offbeam", "pileup")
 
-# Step 2 (per-strip shape clustering): curated feature whitelist. AUTHORITATIVE
-# -- listed features are used regardless of their BLIND_*_FEATURE toggle (those
-# toggles only gate the default blacklist path). None = fall back to that
-# blacklist (everything minus drop_flags). The (a,n) signature is plateau-up +
-# end-strip collapse, so the default is the shape axes only -- no amplitude
-# (energy/peak3) or junk flags to dilute the split. blind_combined ignores this
-# (keeps its all-features blacklist by design).
+# Step 2 (per-strip shape clustering): curated feature whitelist, AUTHORITATIVE
+# (used regardless of BLIND_*_FEATURE toggles; None = fallback blacklist). The (a,n) signature is plateau-up + end-strip collapse, so the default is shape axes only; blind_combined ignores this.
 BLIND_STEP2_FEATURES = ("plateau", "tail", "beamdev", "near_mult")
 
 # Cluster count per stage: None = auto-k (k minimizing GMM BIC), int = force.
@@ -103,9 +94,8 @@ BLIND_MAX_K = -1
 BLIND_STEP2_K = 4
 BLIND_COMBINED_K = 4
 
-# Clustering backend (cluster_auto):
-#   "gmm"/"none"    -- sklearn GaussianMixture, BIC model selection, native
-#                      predict; optional noise tail via BLIND_GMM_NOISE_PCTL.
+# Clustering backend (cluster_auto): "gmm"/"none" -- sklearn GaussianMixture,
+# BIC model selection, native predict; optional noise tail (BLIND_GMM_NOISE_PCTL).
 BLIND_NOISE_CLUSTERING = "gmm"
 BLIND_STEP1_BACKEND = None  # override BLIND_NOISE_CLUSTERING for step 1
 BLIND_STEP2_BACKEND = None  # override BLIND_NOISE_CLUSTERING for step 2
@@ -119,8 +109,7 @@ BLIND_REAC_ONSET_FRAC = 0.30  # onset = first strip reaching this frac of peak
 BLIND_COMBINED_STRIPS = tuple(range(2, 14))  # candidate reaction strips
 
 # Step-2 shape cleanup: co-assign reassigns events to the nearest cluster
-# mean-trace (max-norm shape residual), pruning shape outliers to -1; the
-# per-cluster template_prune loop is the fallback when CO_ASSIGN is off.
+# mean-trace (shape residual), pruning outliers to -1; template_prune is the fallback.
 BLIND_TEMPLATE_PRUNE = True
 BLIND_TEMPLATE_CUT = "mad"  # "valley" (first valley) | "mad" (median+N*MAD)
 BLIND_TEMPLATE_NMAD = 1.5  # "mad" only

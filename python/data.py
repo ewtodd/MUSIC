@@ -40,9 +40,8 @@ def _assemble_totals(left, right, strip_factor=None):
     if config.IGNORE_SHORT_STRIPS:
         for s in range(1, 17):
             total[:, s] = left[:, s] if s % 2 == 1 else right[:, s]
-    # Apply per-strip multiplicative alignment factors (notebook approach).
-    # Matches EnergyView::Decode: total[s] *= strip_factor[s] after
-    # IGNORE_SHORT_STRIPS.
+    # Per-strip multiplicative alignment factors (matches EnergyView::Decode:
+    # total[s] *= strip_factor[s] after IGNORE_SHORT_STRIPS).
     if strip_factor is not None:
         total *= strip_factor[np.newaxis, :]
     if not config.INCLUDE_GUARD_STRIPS:
@@ -64,10 +63,8 @@ def list_event_files():
 
 
 def _load_calibrated_lr(path, max_events_per_file=None):
-    """Calibrated (left, right) arrays and StripFactor for one events file,
-    per channel like EnergyView::Decode (the per-file one-row calibration
-    tree). Returns (left, right, both, strip_factor) where strip_factor is
-    a (18,) float32 array (identity 1.0 if the branch is absent)."""
+    """Calibrated (left, right) arrays + StripFactor for one events file, per
+    channel like EnergyView::Decode; strip_factor is (18,) float32 (identity 1.0 if the branch is absent)."""
     from analysis_utilities.io import load_leaf_array_data
     cache = str(config.CACHE_DIR)
     # Silence load_leaf_array_data's per-file "Loading cached leaf arrays"
@@ -87,16 +84,13 @@ def _load_calibrated_lr(path, max_events_per_file=None):
     right = ev["RightdE"].astype(np.float32) * \
         cal["GainRight"][0].astype(np.float32)
     # StripFactor: per-strip multiplicative alignment from the pol3 reference
-    # trend (replaced slope/intercept in the C++ rewrite). May be absent in
-    # old files; default to identity (1.0) like EnergyView::Decode.
+    # trend (replaced slope/intercept in the C++ rewrite); absent in old files -> identity (1.0).
     if "StripFactor" in cal:
         strip_factor = cal["StripFactor"][0].astype(np.float32)
     else:
         strip_factor = np.ones(18, dtype=np.float32)
-    # Both-channel firing from the RAW ADC, not the calibrated ends: the
-    # short-end gains are 0 (uncalibrated -- no sim anchor), so calibrated
-    # short ends are always zero. We only care whether a channel fired, and
-    # the raw ADC carries that regardless of gain.
+    # Both-channel firing from the RAW ADC, not the calibrated ends (short-end
+    # gains are 0 -- no sim anchor -- so the calibrated short ends are always zero).
     both = _both_fired(ev["Left_0_17_dE"], ev["RightdE"],
                        config.BLIND_MULT_THRESH)
     return left, right, both, strip_factor

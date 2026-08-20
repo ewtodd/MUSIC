@@ -185,7 +185,7 @@ void EventsSummary::SaveSampleTraces(const std::vector<TGraph *> &traces,
   c->cd();
   frame->Draw();
 
-  for (Int_t i = 0; i < traces.size(); i++) {
+  for (Int_t i = 0; i < Int_t(traces.size()); i++) {
     traces[i]->SetLineColor(kBlack);
     traces[i]->SetLineWidth(1);
     traces[i]->Draw("L SAME");
@@ -313,7 +313,7 @@ void EventsSummary::BuildNormedSummaryHistograms(const TString &input_filename,
     }
   }
 
-  for (Int_t i = 0; i < sample_traces.size(); i++)
+  for (Int_t i = 0; i < Int_t(sample_traces.size()); i++)
     delete sample_traces[i];
 
   input_file->Close();

@@ -34,9 +34,8 @@ struct StripSumScatterConfig {
   Bool_t REJECT_PILEUP;
   Int_t PILEUP_MIN_STRIPS;
 
-  // Reject events where ANY strip's total exceeds the cap (a.u.) -- catches
-  // single-strip blowups (e.g. double-beam pileup on one strip) that the
-  // count-based pileup filter (>=5 strips) misses.
+  // Reject events where ANY strip's total exceeds the cap (a.u.): catches
+  // single-strip blowups that the count-based pileup filter misses.
   Bool_t REJECT_HIGH_STRIP;
   Double_t HIGH_STRIP_THRESHOLD;
 
@@ -69,11 +68,9 @@ struct StripSumScatterConfig {
   Double_t GATE_MAX;
   Int_t GATE_BINS;
 
-  // Display-only windows for the strip-sum scatters (a.u.). The histograms
-  // are always built over the fixed wide ScatterBuildRange window, and these
-  // values only zoom the drawn plot via SetRangeUser -- so retuning them
-  // never triggers the (expensive) scatter rebuild. XBINS/YBINS set the bin
-  // counts of the built histograms and DO require a rebuild.
+  // Display-only windows for the strip-sum scatters (a.u.): the histograms
+  // are built over the fixed ScatterBuildRange, so these only zoom the drawn
+  // plot via SetRangeUser (no rebuild); XBINS/YBINS do require a rebuild.
   Double_t XMIN;
   Double_t XMAX;
   Int_t XBINS;
@@ -95,16 +92,14 @@ struct StripSumScatterConfig {
   Bool_t REQUIRE_GATE_S5_S6;
   Bool_t SKIP_SAVGOL_PLOTS;
   // Fill the per-reaction 2D scatters from per-strip sums of the
-  // Savitzky-Golay-smoothed normed totals (same kernel as the smoothed
-  // trace plots), which can separate the (a,a')/(a,n) clusters more
-  // cleanly. Event filters, the trace reservoir, and the region-trace
-  // plots always stay on the raw totals.
+  // Savitzky-Golay-smoothed normed totals (same kernel as the smoothed trace
+  // plots); filters, reservoir and region traces stay raw.
   Bool_t SCATTER_SAVGOL;
   Bool_t REQUIRE_STRIP_16_BELOW_BEAM;
 
-  // Skip the per-class cluster-variable histograms (ClusterVarHists) that the
-  // interactive region-trace overlay draws after the cuts are made. The
-  // region trace overlays themselves are still produced.
+  // Skip the per-class cluster-variable histograms (ClusterVarHists) drawn by
+  // the interactive overlay after the cuts; the region trace overlays are still
+  // produced.
   Bool_t SKIP_CLUSTER_HISTS;
 
   void SetDefaults();
@@ -147,11 +142,14 @@ public:
 
   Bool_t REJECT_FLAGGED_EVENTS;
 
-  // Reject complete events where any anode channel fired more than once
-  // inside the coincidence window (unambiguous pileup: two ions in one
-  // event). The per-channel hit counts are kept in the events tree's Hits
-  // branch regardless, so this is a pure read-side selection.
+  // Reject complete events where any anode channel fired more than once in the
+  // coincidence window (unambiguous pileup); hit counts stay in the Hits
+  // branch, so this is a read-side selection.
   Bool_t REJECT_MULTI_HIT_EVENTS;
+
+  // Highest split strip that must fire for event completeness (14 = the
+  // historical L1..13/R2..14; 16 mirrors AllStripsFired). 0/17: IGNORE_*.
+  Int_t COMPLETE_CHECK_END_STRIP;
 
   Bool_t IGNORE_SHORT_STRIPS;
   Bool_t IGNORE_STRIP_0;
@@ -167,9 +165,8 @@ public:
 
   Bool_t SKIP_CALIBRATION;
 
-  // Number of sample traces to save during event build and normed summary
-  // passes (0 = disabled). Saved as overlays in events_summary and
-  // events_summary_normed alongside the histograms.
+  // Sample traces to save during event build and normed summary passes
+  // (0 = disabled); overlays in events_summary and events_summary_normed.
   Int_t SAVE_SAMPLE_TRACES;
 
   Int_t MAX_FUSED_WORKERS;

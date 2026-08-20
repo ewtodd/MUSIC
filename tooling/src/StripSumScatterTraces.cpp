@@ -2,7 +2,7 @@
 
 void StripSumScatter::DrawTraceSet(const std::vector<TGraph *> &traces,
                                    Int_t color) {
-  for (Int_t i = 0; i < traces.size(); i++) {
+  for (Int_t i = 0; i < Int_t(traces.size()); i++) {
     traces[i]->SetLineColor(color);
     traces[i]->SetLineWidth(1);
     traces[i]->Draw("L SAME");
@@ -88,7 +88,7 @@ void StripSumScatter::DrawRegionMeanTraces(const TString &save_name,
       continue;
     Int_t npts = tr[0]->GetN();
     std::vector<Double_t> mean(npts, 0.0), m2(npts, 0.0);
-    for (Int_t t = 0; t < tr.size(); t++) {
+    for (Int_t t = 0; t < Int_t(tr.size()); t++) {
       Double_t *yv = tr[t]->GetY();
       for (Int_t p = 0; p < npts; p++) {
         mean[p] += yv[p];
@@ -112,12 +112,12 @@ void StripSumScatter::DrawRegionMeanTraces(const TString &save_name,
     leg->AddEntry(ge, labels[r], "l");
   }
   // Mean lines on top of every band.
-  for (Int_t i = 0; i < means.size(); i++)
+  for (Int_t i = 0; i < Int_t(means.size()); i++)
     means[i]->Draw("LX SAME"); // mean line, no end caps
   leg->Draw();
 
   PlottingUtils::SaveFigure(c, save_name, subdir, PlotSaveOptions::kLINEAR);
-  for (Int_t i = 0; i < means.size(); i++)
+  for (Int_t i = 0; i < Int_t(means.size()); i++)
     delete means[i];
   delete leg;
   delete c;
@@ -133,7 +133,7 @@ void StripSumScatter::TraceYRange(const std::vector<TGraph *> &beam,
   const std::vector<TGraph *> *sets[3] = {&beam, &aa, &an};
   for (Int_t si = 0; si < 3; si++) {
     const std::vector<TGraph *> &v = *sets[si];
-    for (Int_t i = 0; i < v.size(); i++) {
+    for (Int_t i = 0; i < Int_t(v.size()); i++) {
       Double_t x = 0.0, y = 0.0;
       for (Int_t k = 0; k < v[i]->GetN(); k++) {
         v[i]->GetPoint(k, x, y);
@@ -187,11 +187,8 @@ void StripSumScatter::SmoothTrace(const Double_t *in, Double_t *out,
   }
 }
 
-// Savitzky-Golay smoothing: 3rd-degree polynomial, half-window of 2
-// (5-point convolution). Uses standard SG coefficients that sum to 1.
-// For a 5-point window with 3rd-degree polynomial, the smoothed value at
-// the center uses coefficients: [-3, 12, 17, 12, -3] / 35.
-// At edges, the window shrinks and coefficients are renormalised.
+// Savitzky-Golay: 3rd-degree, 5-point window, coeff [-3,12,17,12,-3]/35.
+// At edges the window shrinks and the coefficients are renormalised.
 void StripSumScatter::SavitzkyGolay(const Double_t *in, Double_t *out) {
   static const Int_t K = 2; // half-width (5-point window)
 
@@ -223,9 +220,8 @@ void StripSumScatter::SavitzkyGolay(const Double_t *in, Double_t *out) {
   }
 }
 
-// CFD-style trigger finder: scan left-to-right for the first strip whose
-// beam-subtracted signal exceeds both a fraction of the trace peak and a
-// multiple of the beam sigma. Returns the strip index, or -1 if none fires.
+// CFD-style trigger: first strip (left-to-right) whose beam-subtracted
+// signal exceeds a peak fraction and an N-sigma gate; -1 if none fires.
 
 Int_t StripSumScatter::FindTrigger(const Double_t *td, const Double_t *base,
                                    Double_t beam_sigma) {
@@ -298,21 +294,19 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
 
   // Per (class, variable) value lists for raw traces.
   std::vector<Double_t> vals_raw[NC][NV];
-  // Same structure, but cluster variables computed on Savitzky-Golay-smoothed
-  // traces (SG kernel removes the L_odd/R_even sawtooth so peak/onset features
-  // land on the real physical peak rather than an odd strip).
+  // Same, but cluster variables on SG-smoothed traces (the kernel removes the
+  // L_odd/R_even sawtooth so features land on the real physical peak).
   std::vector<Double_t> vals_sg[NC][NV];
   UInt_t bit = (1u << ReacIndex(reac));
 
-  // Per-strip beam baseline = mean over the beam-flat reservoir events. It
-  // carries the L_odd/R_even sawtooth, so subtracting it removes that
-  // systematic exactly before the reaction-onset jump search (better than
-  // blurring it with smoothing).
+  // Per-strip beam baseline = mean of the beam-flat reservoir events. It
+  // carries the L_odd/R_even sawtooth, so subtraction removes it exactly before
+  // the onset search (better than blurring).
   Double_t base[18];
   for (Int_t s = 0; s < 18; s++)
     base[s] = 0.0;
   Long64_t nbeam = 0;
-  for (Int_t k = 0; k < m_reservoir.size(); k++)
+  for (Int_t k = 0; k < Int_t(m_reservoir.size()); k++)
     if (m_reservoir[k].beam_flat) {
       for (Int_t s = 0; s < 18; s++)
         base[s] += Double_t(m_reservoir[k].total[s]);
@@ -321,13 +315,12 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
   for (Int_t s = 0; s < 18; s++)
     base[s] = (nbeam > 0) ? base[s] / Double_t(nbeam) : 1.0;
 
-  // Pooled beam-noise RMS = sqrt(mean over beam-flat events and all strips of
-  // (total - base)^2). The reaction-onset threshold is this many sigma (an
-  // N-sigma discriminator), matching the Python pipeline -- so on flat beam
-  // the excess does NOT cross on average and the event gets NO trigger.
+  // Pooled beam-noise RMS = sqrt(mean (total-base)^2 over beam-flat events and
+  // all strips); the onset gate is N sigma of this, so flat beam does not
+  // trigger on average (matches Python).
   Double_t beam_sumsq = 0.0;
   Long64_t beam_npt = 0;
-  for (Int_t k = 0; k < m_reservoir.size(); k++)
+  for (Int_t k = 0; k < Int_t(m_reservoir.size()); k++)
     if (m_reservoir[k].beam_flat)
       for (Int_t s = 0; s < 18; s++) {
         Double_t d = Double_t(m_reservoir[k].total[s]) - base[s];
@@ -341,7 +334,7 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
   // the numbers are directly comparable to the Python pipeline.
   Long64_t triggered = 0, no_trigger = 0;
   Double_t td_all[18];
-  for (Int_t k = 0; k < m_reservoir.size(); k++) {
+  for (Int_t k = 0; k < Int_t(m_reservoir.size()); k++) {
     for (Int_t s = 0; s < 18; s++)
       td_all[s] = Double_t(m_reservoir[k].total[s]);
     if (FindTrigger(td_all, base, beam_sigma) >= 0)
@@ -363,7 +356,7 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
                     (long long)m_reservoir.size(), (long long)no_trigger)
             << std::endl;
 
-  for (Int_t k = 0; k < m_reservoir.size(); k++) {
+  for (Int_t k = 0; k < Int_t(m_reservoir.size()); k++) {
     const TraceEvt &e = m_reservoir[k];
     Double_t td[18];
     for (Int_t s = 0; s < 18; s++)
@@ -372,10 +365,9 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
     if (e.beam_flat)
       cls = 0;
     else if (e.reac_mask & bit) {
-      // The scatter (and the cuts drawn over it) is filled from
-      // SG-smoothed sums when SCATTER_SAVGOL, so classification into the
-      // user-drawn regions must use that same coordinate space; the
-      // cluster variables below still come from the raw trace.
+      // Cuts are drawn on the scatter, which uses SG-smoothed sums when
+      // SCATTER_SAVGOL; region classification must use that same space (cluster
+      // vars below still use raw).
       Double_t td_sg[18];
       const Double_t *coords = td;
       if (kScatterSavgol) {
@@ -400,9 +392,8 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
 
     Int_t trigger_strip = FindTrigger(td, base, beam_sigma);
     Bool_t has_trig = (trigger_strip >= 0);
-    // Post-trigger excess: beam-subtracted sum over a sliding window that
-    // tracks the trigger (trigger+1 .. trigger+POST_TRIGGER_SUM_STRIPS).
-    // 0 when no trigger. Out-of-range strips are dropped from the sum.
+    // Post-trigger excess: beam-subtracted sum over trigger+1 .. trigger+
+    // POST_TRIGGER_SUM_STRIPS; 0 when no trigger, out-of-range strips dropped.
     const Int_t kPostTrig =
         Constants::cfg.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS;
     Double_t plateau = 0.0;
@@ -425,21 +416,18 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
         has_trig ? TMath::Abs(td[trigger_strip] - base[trigger_strip]) +
                        TMath::Abs(td[17] - base[17])
                  : 0.0;
-    // Slopes ACROSS the trigger: dE(reac+n) - dE(reac-n). reac+-n share parity
-    // so the L_odd/R_even sawtooth cancels. Only valid (and filled) when there
-    // is a trigger AND both endpoints are in range (symmetric, no clamping).
+    // Slope across the trigger: dE(reac+3) - dE(reac-3); the endpoints share
+    // parity so the sawtooth cancels. Filled only with an in-range trigger (no
+    // clamping).
     Bool_t ok3 =
         has_trig && (trigger_strip - 3 >= 0) && (trigger_strip + 3 <= 17);
     Double_t reacslope3 =
         ok3 ? td[trigger_strip + 3] - td[trigger_strip - 3] : 0.0;
 
-    // How beam-like the BACK HALF (strips 8-17) is: RMS deviation of the trace
-    // from the beam baseline over those strips. Subtracting base[] removes the
-    // L/R sawtooth, so this is clean; LOW = beam-like (flat at beam level),
-    // high for a reaction's plateau/collapse or the elevation of pileup.
-    // Amplitude-aware (NOT max-normalized like the template-prune residual):
-    // the beam has a fixed level, so a flat-but-elevated trace must not read as
-    // beam. No trigger needed (fixed window), so always filled.
+    // Beam-likeness of the back half (strips 8-17): RMS of (trace-base) there
+    // (base subtraction kills the sawtooth). LOW = beam-flat, high = reaction
+    // or pileup. Amplitude-aware: a flat-but-elevated trace must not read as
+    // beam; fixed window, so always filled.
     Double_t beamdev = 0.0;
     Int_t n_bl = 0;
     for (Int_t s = 8; s <= 17; s++) {
@@ -457,19 +445,17 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
                       trigtaildev,
                       reacslope3,
                       beamdev};
-    // peak3 is filled even with no trigger (it scores 0 -- the discriminator).
-    // The other trigger-centered vars are skipped when there is no trigger
-    // (reacstrip) or the symmetric window runs off an edge (slopes /
-    // jaggedness).
+    // peak3 fills even without a trigger (it scores 0 -- the discriminator);
+    // other trigger-centered vars skip without a trigger or window off-edge.
     Bool_t vok[NV] = {kTRUE, kTRUE,    kTRUE, kTRUE, kTRUE,
                       kTRUE, has_trig, ok3,   kTRUE};
     for (Int_t iv = 0; iv < NV; iv++)
       if (vok[iv])
         vals_raw[cls][iv].push_back(v[iv]);
 
-    // Savitzky-Golay-smoothed trace: recompute trigger and cluster variables on
-    // the SG-filtered copy. This removes the L_odd/R_even sawtooth so onset /
-    // peak / slope features land on the real physical structure.
+    // SG-smoothed pass: recompute trigger + cluster variables on the smoothed
+    // copy (the kernel removes the sawtooth so features land on real
+    // structure).
     Double_t sgd[18];
     SavitzkyGolay(td, sgd);
     Double_t energy_sg = 0.0;
@@ -481,9 +467,8 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
     SmoothTrace(ex_sg, sm_ex_sg, kClusterSmoothWindow);
     Int_t reacstrip_sg = FindTrigger(sgd, base, beam_sigma);
     Bool_t has_trig_sg = (reacstrip_sg >= 0);
-    // Post-trigger excess on SG trace: sliding window over reacstrip_sg+1 ..
-    // reacstrip_sg+POST_TRIGGER_SUM_STRIPS. 0 when no trigger; out-of-range
-    // strips dropped.
+    // Post-trigger excess on SG trace (same sliding window as above); 0 when
+    // no trigger, out-of-range strips dropped.
     Double_t plateau_sg = 0.0;
     if (has_trig_sg)
       for (Int_t d = 1; d <= kPostTrig; d++) {
@@ -546,13 +531,24 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
       Double_t lo = 1.0e30, hi = -1.0e30;
       Double_t mean[NC] = {0.0, 0.0, 0.0};
       for (Int_t ic = 0; ic < NC; ic++) {
-        for (Int_t m = 0; m < (*vals)[ic][iv].size(); m++) {
+        for (Int_t m = 0; m < Int_t((*vals)[ic][iv].size()); m++) {
           lo = TMath::Min(lo, (*vals)[ic][iv][m]);
           hi = TMath::Max(hi, (*vals)[ic][iv][m]);
           mean[ic] += (*vals)[ic][iv][m];
         }
         if (!(*vals)[ic][iv].empty())
           mean[ic] /= Double_t((*vals)[ic][iv].size());
+      }
+      // No class has values for this variable (e.g. no triggers anywhere): skip
+      // it instead of building a TH1F over the un-pulled [1e30, -1e30] range.
+      Bool_t all_empty = kTRUE;
+      for (Int_t ic = 0; ic < NC; ic++)
+        if (!(*vals)[ic][iv].empty())
+          all_empty = kFALSE;
+      if (all_empty) {
+        std::cout << "  [" << pass_label[ip] << "] " << vkey[iv]
+                  << ": no events in any class; skipping" << std::endl;
+        continue;
       }
       if (ip == 0) {
         std::cout << "  [" << pass_label[ip] << "] " << vkey[iv]
@@ -588,7 +584,7 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
             Form("h_cv_%s_%s_c%d_r%d", vkey[iv], pass_label[ip], ic, reac),
             axis, nbins, lo, hi);
         h->SetDirectory(nullptr);
-        for (Int_t m = 0; m < (*vals)[ic][iv].size(); m++)
+        for (Int_t m = 0; m < Int_t((*vals)[ic][iv].size()); m++)
           h->Fill((*vals)[ic][iv][m]);
 
         PlottingUtils::ConfigureHistogram(h, colors[ic % Int_t(colors.size())],
@@ -618,7 +614,7 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
       PlottingUtils::SaveFigure(
           c, Form("cluster_var_%s_%s_reac%d", vkey[iv], pass_label[ip], reac),
           sub_subdir, PlotSaveOptions::kLOG);
-      for (Int_t m = 0; m < hs.size(); m++)
+      for (Int_t m = 0; m < Int_t(hs.size()); m++)
         delete hs[m];
       delete c;
     }

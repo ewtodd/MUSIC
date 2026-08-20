@@ -83,9 +83,8 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
   std::chrono::steady_clock::time_point t0;
   Double_t t_parse = 0, t_timing = 0, t_apply = 0, t_events = 0, t_cal = 0;
 
-  // SKIP_EXISTING skips the expensive data processing (binary read, timing,
-  // event build, calibration) when the events file already exists -- but the
-  // plots below are still (re)made from that existing file.
+  // SKIP_EXISTING skips the expensive processing when the events file already
+  // exists -- but the plots below are still (re)made from that file.
   const Bool_t skip_processing =
       Constants::cfg.SKIP_EXISTING &&
       FusedExists(FileSet::EventsName(spec) + ".root");
@@ -205,9 +204,8 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
     }
   }
 
-  // Calibration reads the events file (freshly built or pre-existing) and
-  // fits beam peaks to derive gains, so it runs in plot-only mode too,
-  // regenerating the calibration diagnostic histograms.
+  // Calibration fits beam peaks from the (fresh or pre-existing) events file,
+  // so it runs in plot-only mode too, regenerating its diagnostic hists.
   if (!chans.empty()) {
     t0 = std::chrono::steady_clock::now();
     CalibrateBeam::CalibrateBeamOneSubfile(spec, chans);
@@ -258,9 +256,8 @@ void Pipeline::Run() {
   for (Int_t k = 0; k < n_specs; k++)
     unique_runs.insert(specs[k].run);
 
-  // The global header is only consumed when a subfile is (re)built from its
-  // BIN; a run whose subfiles are all already processed runs plot-only and
-  // never touches the raw dir, so skip its header gather entirely.
+  // The global header is consumed only when a subfile is (re)built from its
+  // BIN; a fully-processed run never touches the raw dir, so skip it.
   std::set<Int_t> runs_needing_header;
   for (Int_t k = 0; k < n_specs; k++) {
     Bool_t will_build = !(Constants::cfg.SKIP_EXISTING &&

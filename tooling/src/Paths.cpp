@@ -6,9 +6,8 @@
 #ifndef MUSIC_GIT_HASH
 #define MUSIC_GIT_HASH "unknown"
 #endif
-// Absolute dataset dir, baked in at build by the Makefile (-DMUSIC_DATASET_DIR)
-// from the DATASET the binary was built for. The binary is self-locating; there
-// is no runtime env-var dependency.
+// Absolute dataset dir, baked in at build time (-DMUSIC_DATASET_DIR); the
+// binary is self-locating with no runtime env-var dependency.
 #ifndef MUSIC_DATASET_DIR
 #define MUSIC_DATASET_DIR ""
 #endif
@@ -49,11 +48,8 @@ TString Paths::DatasetDir() {
   TString d;
   if (env && env[0] != '\0') {
     d = TString(env);
-    // Guard against running a binary built for one dataset inside another
-    // dataset's dev shell: the env override would silently mix configs
-    // (e.g. an 87Rb binary reading 87Rb raw data but writing into the 37Cl
-    // analysis tree). The env path must contain the baked-in dataset name
-    // as a path component.
+    // Reject a MUSIC_DATASET_DIR from a different dataset: it would silently
+    // mix one dataset's config/data into another's output tree.
     TString name = TString(MUSIC_DATASET_NAME);
     if (name.Length() > 0 && name != "unknown" && !d.Contains("/" + name)) {
       std::cerr << "FATAL: this binary was built for dataset '" << name

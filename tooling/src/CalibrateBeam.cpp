@@ -79,11 +79,8 @@ void SaveBeamPeakChannelHistograms(
   }
 }
 
-// Writes a one-row `calibration` tree into the open file `dst` (typically a
-// per-subfile .cal.root). Layout matches AggregateEresTomlForRun's reader.
-// `align` carries the beam-energy window and per-strip alignment factors;
-// pass nullptr when neither has been computed yet (branches are written as
-// zero).
+// Writes a one-row calibration tree; layout matches AggregateEresTomlForRun's
+// reader, pass align=nullptr when none was computed.
 void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
                           const StripAlignmentResult *align) {
   dst->cd();
@@ -94,11 +91,8 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
   Float_t fit_adc[kMaxChannels] = {0}, fit_sigma[kMaxChannels] = {0};
   Long64_t fit_n[kMaxChannels] = {0};
   Bool_t ok[kMaxChannels] = {0};
-  // Per-strip gains laid out to match the events tree exactly: GainLeft[s]
-  // multiplies Left_0_17_dE[s] (s=0/17 are the single-ended guards, s=1..16 the
-  // left ends), GainRight[s] multiplies RightdE[s] (0 at the guards). This is
-  // what EnergyView reads to calibrate on the fly -- no per-event a.u. is
-  // stored.
+  // GainLeft[s], GainRight[s] layout matches the events tree: EnergyView
+  // uses them for live per-channel gain calibration, no per-event a.u. stored.
   Float_t gain_left[18] = {0}, gain_right[18] = {0};
   Float_t gain_cathode = 0.0f;
   Int_t n_actual = TMath::Min(Int_t(chans.size()), kMaxChannels);
@@ -128,11 +122,8 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
   cal->Branch("GainRight", gain_right, "GainRight[18]/F");
   cal->Branch("GainCathode", &gain_cathode, "GainCathode/F");
 
-  // Beam-energy window and per-strip two-point linear correction
-  // (total_corrected = slope * total + intercept, line through the beam
-  // centroid at 1.0 and the pileup centroid at 2.0 — corrects the ADC
-  // sublinearity). EnergyView applies it after the per-channel gain.
-  // Default slope = 1.0, intercept = 0.0 (identity).
+  // Two-point linear correction: (B, 1.0)-(P, 2.0) fixes ADC sublinearity.
+  // Default slope=1, intercept=0 when align is nullptr (identity).
   Float_t beam_e_min = 0.0f, beam_e_max = 0.0f;
   Float_t strip_slope[18];
   Float_t strip_intercept[18];
@@ -158,10 +149,8 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
   cal->Write("calibration", TObject::kOverwrite);
 }
 
-// Writes the per-channel gain table (tree "calibration") into the subfile's own
-// events file. No per-event calibrated tree is produced: downstream readers
-// recover a.u. on the fly via gain x raw ADC (EnergyView), so the raw events
-// tree plus this one-row gain table fully determine every calibrated value.
+// Writes the per-channel gain tree into the events file; downstream readers
+// recover a.u. on the fly via gain × raw ADC (EnergyView).
 void WriteCalibrationToEvents(const FileSpec &spec,
                               const std::vector<ChannelCal> &chans,
                               const StripAlignmentResult *align) {
@@ -180,12 +169,8 @@ void WriteCalibrationToEvents(const FileSpec &spec,
   delete f;
 }
 
-// Derives the beam-energy window from the Strip0 (entrance guard) beam-peak
-// fit. The notebook (37Cl_an.ipynb cell 10) fits a Gaussian to raw stp0 ADC
-// and takes mu ± 3*sigma. Here, Strip0's beam peak is already fitted in
-// ReduceToAnchors (fit_adc / fit_sigma_adc), so we convert to a.u. via the
-// channel's own gain. In a.u. the peak sits at 1.0 by construction, so the
-// window is 1.0 ± 3*sigma/fit_adc.
+// Derives beam-energy window from Strip0's Gaussian fit width in a.u.
+// Peak is at 1.0 by construction, window = 1.0 ± 3*sigma/fit_adc.
 void DeriveBeamEnergyWindow(const std::vector<ChannelCal> &chans,
                             StripAlignmentResult &align) {
   const Double_t kBeamNSigma = 3.0;
@@ -204,25 +189,9 @@ void DeriveBeamEnergyWindow(const std::vector<ChannelCal> &chans,
             << std::endl;
 }
 
-// Per-strip two-point linear normalization. Decodes events with the
-// per-channel gains already on disk, finds each strip's beam-peak centroid
-// (B) from the eSum 2D histogram and its pileup-peak centroid (P) from a
-// second 2D histogram gated on the double-beam population (per-event total
-// energy in the ~2x band — reactions only add a fraction, so the gate
-// isolates true two-ion pileup), then derives a line through (B, 1.0) and
-// (P, 2.0):  total_corrected = slope * total + intercept.
-//
-// The two-point line corrects the ADC sublinearity that a single
-// multiplicative factor cannot: with beam mapped to 1.0 the pileup reads
-// ~1.88 instead of 2.0, so reaction-scale energies are ~2-6% low. The line
-// passes through the measured centroids (no polynomial override of raw
-// measurements); strips whose pileup peak is unmeasurable (few double-beam
-// events with both ends firing, e.g. upstream) fall back to the MEDIAN slope
-// of the measured strips — sublinearity is a shared electronics property —
-// anchored on their own beam centroid.
-//
-// Uses ALL events (not beam-gated): the beam dominates every strip's
-// histogram by a wide margin.
+// Two-point line (beam→1.0, pileup→2.0) fixes ADC sublinearity: pileup reads at
+// ~1.88 instead of 2.0, so reactions run 2–6% low; no-pileup strips fall back
+// to median slope.
 StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
                                                 const TString &plot_subdir,
                                                 const TString &file_label) {
@@ -235,9 +204,8 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
   const Int_t kMaxIter = 4;
   const Int_t kPolyDeg = 3;
   const Double_t kGausFitHalfWidth = 0.15;
-  // Pileup-peak search window (a.u.): above the beam band (~1.2), below the
-  // triple-pileup region (~3). The double-beam total-energy gate keeps the
-  // mode clean (no reaction contamination).
+  // Search above beam band (~1.2), below triple-pileup (~3); double-beam gate
+  // keeps the mode clean (no reaction contamination).
   const Double_t kPileupLo = 1.4;
   const Double_t kPileupHi = 3.2;
   const Long64_t kMinPileupEntries = 100;
@@ -334,11 +302,8 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
         Double_t v = ev.total[s];
         if (v <= 0.0)
           continue;
-        // Split strips: only BOTH-ENDS events feed the pileup mode. The
-        // long-only pileup population is missing the short side's charge
-        // entirely (its "2x" total is ~1.98 vs ~2.05-2.15 with both ends),
-        // so including it would bias the 2x-charge anchor low. The single-
-        // ended guard strips 0/17 have no other side by construction.
+        // Only BOTH-ENDS splits feed the pileup mode; long-only "2x" totals
+        // miss short-side charge and would bias the anchor low.
         if (s >= 1 && s <= 16 && (ev.left[s] <= 0.0 || ev.right[s] <= 0.0))
           continue;
         h2_pu->Fill(Double_t(s), v);
@@ -376,10 +341,8 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
     }
     proj->Smooth(kSmoothTimes);
 
-    // Strip 0/17: single-ended anode, beam at ~1.0, pileup at ~2.0.
-    // Strips 1-16: total is bimodal when the short side doesn't fire
-    // (long-only ≈ 0.5) — pick the peak nearest 1.0, which is the
-    // full-strip beam peak (both sides contributing, eSum ≈ 1.0).
+    // Beam peak near 1.0: strips 0/17 look whole-range; 1-16 pick nearest-1.0
+    // peak (avoids the ~0.5 long-only bimodal shoulder).
     Double_t peak_target = 1.0;
     Double_t search_lo, search_hi;
     if (s == 0 || s == 17) {
@@ -454,10 +417,8 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
     delete proj;
   }
 
-  // Pileup-peak centroids from the double-beam-gated histogram: per-strip
-  // projection, smoothed, mode in [kPileupLo, kPileupHi]. The total-energy
-  // gate keeps reaction events out, so the mode is the true 2x-charge
-  // response of the strip.
+  // Pileup mode via double-beam-gated per-strip projection: total-energy gate
+  // excludes reactions, so the mode is the true 2x-charge response.
   for (Int_t s = 0; s < kNStrips; s++) {
     if (!beam_ok[s] || !h2_pu)
       continue;
@@ -472,14 +433,8 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
       delete proj;
       continue;
     }
-    // Smoothed max-bin seed, then Gaussian refinement for sub-bin precision.
-    // The Gaussian centroid is deliberately the anchor rather than the raw
-    // mode: it is STABLE across subfiles (a raw max-bin mode jumps by a bin
-    // with statistics and made per-subfile calibrations inconsistent). Its
-    // systematic offset above the skewed peak's mode (partial-pileup tail on
-    // the high side) leaves the corrected peak consistently ~1-2% below 2.0 —
-    // the SAME small offset in every subfile, which is what the downstream
-    // analysis sees.
+    // Gaussian centroid used (not raw mode): stable across subfiles;
+    // small consistent sub-2.0 offset propagates uniformly.
     proj->Smooth(kSmoothTimes);
     Int_t b_lo = proj->FindBin(kPileupLo);
     Int_t b_hi = proj->FindBin(kPileupHi);
@@ -521,10 +476,9 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
     delete proj;
   }
 
-  // Robust pol3 reference trend through strips 1-16 centroids.
-  // Iteratively drop the strip with the worst residual > kMisalignPct.
-  // Kept as a DIAGNOSTIC overlay: the linear correction itself uses the raw
-  // measured centroids, never the polynomial predictions.
+  // Robust pol3 trend: iteratively drops strips with worst residual >
+  // kMisalignPct. Diagnostic overlay only — corrections use raw centroids, not
+  // predictions.
   TGraph *g_cent = new TGraph(kNStrips);
   Int_t np = 0;
   for (Int_t s = 1; s <= 16; s++) {
@@ -580,14 +534,8 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
               << g_cent->GetN() << " strips" << std::endl;
   }
 
-  // Two-point linear correction: the line through (beam centroid, 1.0) and
-  // (pileup centroid, 2.0). slope = 1/(P - B), intercept = 1 - slope*B.
-  // The beam anchor uses the RAW measured centroid (no polynomial override);
-  // the pol3 fit above is only a diagnostic overlay. Strips without a
-  // measurable pileup peak fall back to the MEDIAN slope of the measured
-  // strips (sublinearity is a shared electronics property) anchored on their
-  // own beam centroid. With no pileup measurements at all, slope = 1 and the
-  // intercept alone pushes the beam to 1.0 (graceful degradation).
+  // Two-point correction (B→1.0, P→2.0): beam anchor raw centroid,
+  // pol3 diagnostic only; no-pileup → median slope.
   Double_t slope_med = 1.0;
   std::vector<Double_t> slopes_measured;
   for (Int_t s = 0; s < kNStrips; s++) {
@@ -737,10 +685,8 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
     delete peak_fits[i];
   peak_fits.clear();
 
-  // Every channel that failed to calibrate is silently forced to gain 0 (reads
-  // 0 a.u. and drops out of the strip total), so spell out which ones and why.
-  // The long/short tag makes a long-side failure -- the dominant signal, which
-  // should never starve -- easy to spot: grep "[uncalibrated long]".
+  // Print uncalibrated channels with reason; long tag (dominant signal) makes
+  // that failure easy to spot: grep "[uncalibrated long]".
   for (Int_t i = 0; i < Int_t(chans.size()); i++) {
     const ChannelCal &c = chans[i];
     if (IsCalibrated(c))
@@ -754,8 +700,8 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
       kind = (c.side == LongSide(c.strip)) ? "long" : "short";
     TString why;
     if (c.n_samples < kMinSamples)
-      why =
-          Form("too few beam samples (%lld < %lld)", c.n_samples, kMinSamples);
+      why = Form("too few beam samples (%lld < %lld)", (long long)c.n_samples,
+                 (long long)kMinSamples);
     else
       why = Form("bad exp anchor (fit_adc=%.1f)", c.fit_adc);
     std::cerr << "  [uncalibrated " << kind << "] " << c.name << " -> gain 0; "
@@ -773,19 +719,13 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
   StripAlignmentResult align;
   DeriveBeamEnergyWindow(chans, align);
 
-  // Write initial calibration tree: per-channel gains + beam window. The
-  // alignment step needs this on disk so EnergyView can decode events in a.u.
+  // Write initial cal tree (gains + beam window) so EnergyView can read it
+  // for the alignment step.
   WriteCalibrationToEvents(spec, chans, &align);
 
-  // Per-strip multiplicative alignment: decode events with the per-channel
-  // gains just written, find each strip's beam-peak centroid, fit a pol3
-  // reference trend, and derive factors = reference / centroid. Stored in
-  // the calibration tree and applied by EnergyView as total *= factor.
-  // gains just written, find each strip's beam-peak AND pileup-peak centroids,
-  // and derive a linear correction (slope + intercept) that maps beam→1.0 and
-  // pileup→2.0, flattening the Bragg curve. The polynomial trend is used only
-  // Preserve beam energy window from DeriveBeamEnergyWindow across the
-  // alignment call (which returns a fresh StripAlignmentResult).
+  // Two-point per-strip alignment: find beam+pileup centroids, derive linear
+  // correction (beam→1.0, pileup→2.0). Preserve beam window from
+  // DeriveBeamEnergyWindow.
   Double_t beam_e_min = align.beam_e_min;
   Double_t beam_e_max = align.beam_e_max;
   {
@@ -829,9 +769,8 @@ void WriteEresTomlRaw(const TString &out_subpath,
   toml::table root_tbl;
   root_tbl.insert("detector", detector_tbl);
 
-  // The eres calibration TOML is a small, version-controlled input (a control
-  // file), not bulk output: write it into the repo's control/ dir alongside the
-  // other Calibration_Run*_eres.toml, regardless of where root_files point.
+  // eres TOML: version-controlled control file, not bulk output; written into
+  // sim_control/ regardless of where root_files point.
   TString out_dir = Paths::DatasetDir() + "/sim_control";
   gSystem->mkdir(out_dir, kTRUE);
   TString out_full = out_dir + "/" + out_subpath;
@@ -853,7 +792,7 @@ void CalibrateBeam::AggregateEresTomlForRun(
   Int_t n_chans = Int_t(tmpl.size());
 
   for (Int_t s = 0; s < Int_t(specs.size()); s++) {
-    // The calibration tree now lives inside each subfile's events file.
+    // Calibration tree now lives in each subfile's events tree.
     TString cal_sub = FileSet::EventsName(specs[s]) + ".root";
     TFile *cf = IO::OpenForReading(cal_sub);
     if (!cf || cf->IsZombie()) {

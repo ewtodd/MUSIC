@@ -7,9 +7,8 @@ Bool_t BeamFitUtils::InEllipseXY(const BeamFit2D &b, Double_t x, Double_t y,
   Double_t sx = b.sigma_x, sy = b.sigma_y, rho = b.rho;
   if (sx <= 0 || sy <= 0)
     return kFALSE;
-  // Correlated 2D Gaussian ellipse (Mahalanobis distance):
-  //   χ² = [(dx/σx)² + (dy/σy)² - 2ρ·dx·dy/(σx·σy)] / (1-ρ²)
-  // Inside n-sigma: χ² < n²  (nx serves as the n-sigma level).
+  // Correlated 2D Gaussian ellipse (Mahalanobis distance); inside n-sigma: χ² <
+  // n².
   Double_t dx_s = dx / sx, dy_s = dy / sy;
   Double_t r2 = rho * rho;
   Double_t chi2 =

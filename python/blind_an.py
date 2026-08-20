@@ -86,8 +86,7 @@ def cluster_auto(feats,
             best = (bic, k, gmm)
     if best is None:  # every fit failed -> one cluster
         return np.zeros(F.shape[0], dtype=np.int64), mu[None, :], 1, bics
-    _, k, best_gmm = best
-    best_gmm = best_gmm.fit(Zfit)
+    _, k, best_gmm = best  # already fitted in the candidate loop
     labels = best_gmm.predict(Zall).astype(np.int64)
     if pctl is not None:
         # Tag the lowest-density tail as noise: per-point log-likelihood below
@@ -182,11 +181,8 @@ def _plateau_excess(X, reac):
     return out
 
 
-# Pipeline steps.
-# Beam-gate fit (StripSumScatter FindBeamGate): histogram a strip pair,
-# locate the beam peak, take threshold-weighted moments over the bins around
-# it, accept within N-sigma. Beam is fit, not assumed at 1 (so the L_odd /
-# R_even per-strip offset is handled).
+# Beam-gate fit (StripSumScatter FindBeamGate): histograms the strip pair,
+# fits the beam peak via N-sigma moments; beam is fit, not assumed 1.
 _BEAM_BINS = 240
 _BEAM_LO, _BEAM_HI = 0.0, 3.0
 _BEAM_SEED_HALF = 40  # half-window (bins) for the moment sum around the peak
@@ -440,10 +436,8 @@ def step0_reservoir():
               f"{config.BLIND_BEAM_NSIGMA}-sigma): kept {int(keep.sum())} "
               f"of {X.shape[0]}")
         X, both = X[keep], both[keep]
-    # Per-cut hard cuts, each honored independently of whether the same
-    # condition is also used as a clustering feature (a cut set to both just
-    # leaves survivors reading the flag as 0). beam_ref is not built yet here,
-    # so offbeam compares against the flat normed beam level (1.0).
+    # Hard cuts, each honored independently of use as a clustering feature;
+    # beam_ref is not built yet here, so offbeam compares against 1.0.
     if config.BLIND_REJECT_NOISE:
         keep = ~_is_noise(X)
         print(f"  noise cut (>= {config.BLIND_NOISE_MIN_STRIPS} strips "
@@ -680,9 +674,8 @@ _AXIS_TITLE = {
     "beamdev": "back-half beam dev  RMS(#DeltaE#minusbeam)_{8-17} [a.u.]",
 }
 
-# Curated continuous feature pairs for the 2-D density hists (drawn for each
-# pair whose BOTH names are present in the slice's feature matrix). Ordered so
-# the (a,n) signature pair (plateau up, end-strip collapse) comes first.
+# Curated feature pairs for the 2-D density hists (drawn when BOTH names are
+# in the slice's matrix); ordered so the (a,n) signature pair comes first.
 _HIST2D_PAIRS = (
     ("plateau", "tail"),
     ("energy", "plateau"),
@@ -854,10 +847,8 @@ def cluster_per_reaction_strip(
             X_sg=X_sg[at] if X_sg is not None else None,
         )
         strip_subdir = f"{subdir}/reac{strip}"
-        # Step 2 isolates the RARE (a,n); GMM noise tagging would clip the
-        # lowest-density tail -- which can BE the (a,n) -- so it is forced off
-        # (noise_pctl=None). The template prune / co-assign + an_select do the
-        # (a,n) isolation instead.
+        # Step 2 isolates the RARE (a,n) via template prune / co-assign +
+        # an_select; GMM noise tagging would clip its low-density tail, so noise_pctl=None.
         labels, means, k, bics = cluster_auto(feats,
                                               k=force_k,
                                               tag=tag,
@@ -870,11 +861,8 @@ def cluster_per_reaction_strip(
         _print_cluster_means(means, labels, names)
         _print_importance(feats, labels, names)
         X_at = X[at]
-        # Per-strip working plots (initial means + every template-prune round)
-        # go into a per-strip subdir; only the `_final` overlay lands in the
-        # main dir alongside step 1.
-        # Combined goes many-cluster (auto-k); drop the sigma shading at k>=4
-        # so the overlapping bands do not wash the canvas out.
+        # Per-strip working plots (means + every prune round) go into a
+        # per-strip subdir (only `_final` lands in the main dir); combined auto-k drops sigma shading at k>=4.
         bands = not (tag == "combined" and k >= 4)
         _draw_means_only(X_at,
                          labels,
@@ -888,8 +876,7 @@ def cluster_per_reaction_strip(
         if not config.BLIND_TEMPLATE_PRUNE:
             continue
         # Co-assign by nearest cluster mean (shape residual), or fall back to
-        # the old per-cluster template_prune loop.  Pruned members get label -1
-        # and drop from the _final view.
+        # the per-cluster template_prune loop; pruned members get label -1.
         final = labels.copy()
         if config.BLIND_TEMPLATE_CO_ASSIGN:
             final = _co_assign(X_at, final, k, tag, beam_ref, strip_subdir,
@@ -1135,9 +1122,8 @@ def _co_assign(X_all, labels, k, tag, beam_ref, strip_subdir, strip):
         resid_all = _shape_residual(X_all, tstack)  # (n_events, k)
         best_j = resid_all.argmin(axis=1)  # (n_events,)
         min_resid = resid_all.min(axis=1)  # (n_events,)
-        # Apply the cut globally on the *minimum* residual.  If all assigned
-        # events were pruned in the previous round, just reassign them to
-        # nearest mean and move on.
+        # Cut globally on the *minimum* residual; if all assigned events were
+        # pruned last round, reassign them to nearest mean and move on.
         assign_prev = min_resid[labels >= 0]
         if len(assign_prev) == 0:
             thresh = float(min_resid.max())

@@ -1,8 +1,11 @@
 #include "CalibrateBeamInternal.hpp"
 
-Double_t Median(std::vector<Float_t> &v) {
-  if (v.empty())
+// nth_element permutes its input, so both helpers work on a copy and leave
+// the caller's sample vector untouched.
+Double_t Median(const std::vector<Float_t> &v_in) {
+  if (v_in.empty())
     return 0.0;
+  std::vector<Float_t> v(v_in);
   Int_t n = Int_t(v.size());
   std::nth_element(v.begin(), v.begin() + n / 2, v.end());
   Double_t med = Double_t(v[n / 2]);
@@ -13,9 +16,8 @@ Double_t Median(std::vector<Float_t> &v) {
   return med;
 }
 
-// IQR = Q3 - Q1; divide by 1.349 outside this helper for the Gaussian-sigma
-// approximation when needed.
-Double_t InterquartileRange(std::vector<Float_t> &v) {
+Double_t InterquartileRange(const std::vector<Float_t> &v_in) {
+  std::vector<Float_t> v(v_in);
   if (v.size() < 4)
     return 0.0;
   Int_t n = Int_t(v.size());
@@ -28,12 +30,8 @@ Double_t InterquartileRange(std::vector<Float_t> &v) {
   return q3 - q1;
 }
 
-// Robust peak/width estimate used to seed the beam-peak Gaussian fit, and as
-// the fallback anchor when the fit fails. Histograms only the
-// 5th-95th-percentile core so outlier ADC values can't stretch the binning,
-// takes the modal bin centre as the peak and IQR/1.349 as the width. Peak-like:
-// unlike the raw sample mean it is not pulled up by the straggling beam-dE
-// tail.
+// Robust peak/width: mode centre of the 5th–95th-percentile core, IQR/1.349
+// width — not pulled by the straggling beam-dE tail.
 void RobustPeakSeed(const std::vector<Float_t> &v, Double_t &mode,
                     Double_t &sigma) {
   mode = 0.0;
@@ -70,12 +68,8 @@ void RobustPeakSeed(const std::vector<Float_t> &v, Double_t &mode,
     mode = med;
 }
 
-// Per-channel beam-peak ADC histogram, shared by the fitters and the beam_peak
-// diagnostic plot so a fitted Gaussian's amplitude (counts per bin) always
-// matches the histogram it is drawn over. Range and bin count come from the
-// robust mode/width (mode +/- 4 sigma, ~6 bins/sigma, never finer than 1 ADC),
-// so the binning is chosen consistently per channel instead of from a fixed
-// count over the outlier-stretched min..max range. Caller owns the histogram.
+// Per-channel beam-peak histogram shared by fitters and diagnostic plots:
+// range = mode ± 4σ (~6 bins/sigma), never finer than 1 ADC.
 TH1F *MakeBeamPeakHist(const TString &name, const TString &title,
                        const std::vector<Float_t> &v, Double_t mode,
                        Double_t sigma) {
@@ -96,14 +90,8 @@ TH1F *MakeBeamPeakHist(const TString &name, const TString &title,
   return h;
 }
 
-// Beam-peak Gaussian fit, robustly seeded: estimate the peak/width from the
-// percentile-clipped mode (RobustPeakSeed), then fit "gaus" over only the peak
-// core (mode +/- 2 sigma). A second pass refits inside a NARROW window around
-// the first centroid: when the spectrum is bimodal (e.g. Strip0 with a
-// secondary bump below the beam peak), the IQR-based seed sigma is inflated
-// by the contamination and the wide first-pass window lets the fit average
-// both components — the narrow refit locks onto the dominant peak. This is
-// the primary (and only) fit in ReduceToAnchors.
+// Mode-seeded ±2σ Gaussian fit; a narrow refit follows so bimodal spectra
+// (e.g. Strip0 bump) lock onto the dominant peak, not its average.
 Bool_t FitBeamPeakGaussian(const std::vector<Float_t> &v, const TString &fname,
                            Double_t &peak_adc, Double_t &sigma_adc,
                            TF1 *&fit_out) {
@@ -141,10 +129,8 @@ Bool_t FitBeamPeakGaussian(const std::vector<Float_t> &v, const TString &fname,
   peak_adc = f->GetParameter(1);
   sigma_adc = std::fabs(f->GetParameter(2));
 
-  // Second pass: refit inside mu ± min(1.5*sigma_fit, 12% of mu). For a
-  // clean single Gaussian this window still spans the core and reproduces
-  // the first-pass result; for a contaminated spectrum it excludes the
-  // secondary component and re-centres onto the dominant peak.
+  // Refit inside μ ± min(1.5σ_fit, 12% of μ): clean Gaussian reproduces the
+  // first pass; contaminated spectrum excludes the secondary component.
   Double_t half = 1.5 * sigma_adc;
   Double_t half_cap = 0.12 * peak_adc;
   if (half_cap < half)
@@ -177,14 +163,8 @@ Bool_t FitBeamPeakGaussian(const std::vector<Float_t> &v, const TString &fname,
     delete f;
     return kFALSE;
   }
-  // Peak-like sanity gate: a "beam peak" whose fitted width is more than
-  // half its centroid is not a peak. Such spectra (e.g. a noisy guard strip
-  // smeared over the whole ADC range) let the narrow refit lock onto an
-  // arbitrary sub-peak, and the resulting gain then maps every reading onto
-  // nonsense a.u. (37Cl run 84: Strip17 anchored at 81 ADC with sigma 932,
-  // making its totals read 0-38 a.u. and killing the reaction-onset trigger
-  // discriminator). Treat the channel as uncalibrated so it reads 0 a.u. —
-  // the same net effect as an ignored/no-fire guard.
+  // Peak-like sanity gate: sigma > 50% of centroid means no real peak
+  // (e.g. 37Cl Run84 Strip17 smeared spectrum).
   if (sigma_adc > 0.5 * peak_adc) {
     delete f;
     return kFALSE;

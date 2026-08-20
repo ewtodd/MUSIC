@@ -9,14 +9,10 @@ const Double_t kEllipseNSigmaX = 3;
 const Double_t kEllipseNSigmaY = 3;
 const Long64_t kMinSamples = 200;
 
-// Paired (L, R) raw-ADC samples for one strip, collected UNGATED from events
-// where both ends fire, plus the "shoulder" slice: (short, long) pairs from
-// events where the LONG side reads below kGmSliceLongCap ADC. Those events
-// carry most of the charge on the short end, so the short side reads its
-// full-charge scale there; the relative cut (long < fraction x beam peak) is
-// applied later in ComputeLRGainMatch once the beam peak is known. The slice
-// is collected separately because those events are rare — the capped pair
-// vectors fill up with beam events long before enough slice events arrive.
+// Paired (L, R) raw-ADC samples per strip (ungated, both ends fired), plus the
+// rare "shoulder" slice: (short, long) pairs where the long side is below
+// kGmSliceLongCap (the short side sits at full charge there); kept separate
+// since beam events fill the main vectors first.
 struct StripPairSamples {
   std::vector<Float_t> l;
   std::vector<Float_t> r;
@@ -54,8 +50,8 @@ inline Double_t ApplyCal(const ChannelCal &c, Double_t adc) {
 }
 
 // Beam-peak histogram + fit helpers (CalibrateBeamFits.cpp).
-Double_t Median(std::vector<Float_t> &v);
-Double_t InterquartileRange(std::vector<Float_t> &v);
+Double_t Median(const std::vector<Float_t> &v);
+Double_t InterquartileRange(const std::vector<Float_t> &v);
 void RobustPeakSeed(const std::vector<Float_t> &v, Double_t &mode,
                     Double_t &sigma);
 TH1F *MakeBeamPeakHist(const TString &name, const TString &title,

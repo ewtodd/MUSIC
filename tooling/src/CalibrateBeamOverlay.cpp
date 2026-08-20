@@ -85,10 +85,8 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
     delete h[s];
 }
 
-// Overlay (one color per channel, log-y) of ONLY the events used for
-// calibration: the beam anchor samples, converted to a.u. via each channel's
-// gain. Same axes/style as SaveDynamicRangeOverlay but restricted to
-// calibration events rather than the full spectrum.
+// Log-y overlay (one color per channel) of only the calibration samples
+// (beam anchors in a.u. via channel gain); same axes as the dynamic-range one.
 void CalibrateBeam::SaveCalibSampleOverlay(
     const std::vector<ChannelCal> &chans,
     const std::vector<std::vector<Float_t>> &samples,

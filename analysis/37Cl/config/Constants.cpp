@@ -15,12 +15,10 @@ void InitDatasetConfig() {
   gInstance.SOL_SPLIT_CHUNK_SECONDS = 15;
   gInstance.COMPASS_BASE_DIR = "/labdata/MUSIC/37Cl/";
   std::vector<Int_t> RUNS;
-  for (Int_t i = 30; i < 53; i++) {
+  for (Int_t i = 30; i < 53; i++)
     RUNS.push_back(i);
-  };
-  for (Int_t i = 84; i < 138; i++) {
+  for (Int_t i = 84; i < 138; i++)
     RUNS.push_back(i);
-  };
   gInstance.RUN_NUMBERS = RUNS;
   gInstance.N_CHUNKS = -1;
   gInstance.SIM_BEAM_FILE = "traces_37Cl_beam.root";

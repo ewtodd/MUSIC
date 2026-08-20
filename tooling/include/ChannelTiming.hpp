@@ -6,9 +6,9 @@
 #include <map>
 #include <utility>
 
-// Per-channel TTF (trapezoidal trigger filter) timing offset lookup.
-// The offsets live in Constants::cfg.ttfOffsetPs (empty = no correction).
-// Returns 0 for channels not listed.
+// Per-channel TTF (trapezoidal trigger filter) timing offset lookup:
+// Constants::cfg.ttfOffsetPs (empty = no correction); 0 for channels not
+// listed.
 namespace Constants {
 
 inline Long64_t LookupTTFOffsetPs(Int_t board, Int_t channel) {

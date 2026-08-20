@@ -8,9 +8,8 @@ Bool_t EnergyView::Attach(TTree *t) {
   t->SetBranchAddress("Hits", hits_adc);
   t->SetBranchAddress("Cathode", &cathode_adc);
   t->SetBranchAddress("Grid", &grid_adc);
-  // Materialize the first tree so GetCurrentFile() resolves for a TChain (it is
-  // null until a tree is loaded); this makes is_normed correct right after
-  // Attach.
+  // Materialize the first tree so GetCurrentFile() resolves for a TChain —
+  // makes is_normed correct right after Attach.
   t->LoadTree(0);
   LoadGains();
   loaded_tree_ = t->GetTreeNumber();
@@ -39,9 +38,8 @@ void EnergyView::LoadGains() {
   cal->SetBranchAddress("GainLeft", gl);
   cal->SetBranchAddress("GainRight", gr);
   cal->SetBranchAddress("GainCathode", &gc);
-  // StripSlope/StripIntercept are optional (written by the second
-  // calibration write; older files carry StripFactor instead). When absent
-  // the default slope = 1 / intercept = 0 (identity) is used.
+  // StripSlope/StripIntercept are optional (older files carry StripFactor);
+  // absent → slope = 1 / intercept = 0 (identity).
   Bool_t has_linear = cal->GetBranch("StripSlope") != nullptr;
   if (has_linear) {
     cal->SetBranchAddress("StripSlope", sl);
@@ -67,9 +65,8 @@ void EnergyView::LoadGains() {
 }
 
 void EnergyView::Decode() {
-  // A TChain advances fTreeNumber when GetEntry crosses into a new subfile;
-  // reload that file's gains when it does. Plain TTrees report -1 forever, so
-  // this never re-fires for them (gains already loaded in Attach).
+  // A TChain advances fTreeNumber when GetEntry crosses into a new subfile
+  // → reload that file's gains; plain TTrees report -1 forever and don't.
   if (tree_) {
     Int_t tn = tree_->GetTreeNumber();
     if (tn != loaded_tree_) {
@@ -108,11 +105,8 @@ void EnergyView::Decode() {
       }
     }
   }
-  // Apply the per-strip two-point linear correction (beam centroid -> 1.0,
-  // pileup centroid -> 2.0). Applied after per-channel gain and
-  // IGNORE_SHORT_STRIPS. This corrects the ADC sublinearity that a single
-  // multiplicative factor cannot (with beam at 1.0 the pileup would read
-  // ~1.88 instead of 2.0).
+  // Per-strip two-point linear correction (beam→1.0, pileup→2.0) applied
+  // after gain and IGNORE_SHORT_STRIPS: fixes ADC sublinearity a gain cannot.
   if (is_normed) {
     for (Int_t s = 0; s <= 17; s++) {
       total[s] = Double_t(slope[s]) * total[s] + Double_t(intercept[s]);

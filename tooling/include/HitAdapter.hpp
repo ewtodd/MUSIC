@@ -57,9 +57,8 @@ inline UInt_t MapSOLFlagsToCoMPASS(UShort_t sol_flags_high,
   return mapped;
 }
 
-// Convert a SOLHit to a RawHit for compatibility with the existing pipeline.
-// Board is set to 0 (flat-channel SOLARIS digitizer). With the updated
-// SOLHit (all unsigned fields), no casts are needed.
+// Convert a SOLHit to a RawHit for the pipeline: board = 0 (flat-channel
+// SOLARIS digitizer); the all-unsigned SOLHit needs no casts.
 inline RawHit SOLHitToRawHit(const SOLHit &sol) {
   RawHit raw;
   raw.board = 0;

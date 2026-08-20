@@ -17,8 +17,8 @@
 #include <vector>
 
 // Shared summary histogram set used by both EventBuilder (raw ADC) and
-// EventsSummary (calibrated a.u.).  The create/save/delete helpers eliminate
-// duplicated histogram construction and plotting logic.
+// EventsSummary (calibrated a.u.); the helpers eliminate duplicated build/plot
+// logic.
 struct SummaryHistograms {
   TH2F *h_music;
   TH1F *h_mult;
@@ -68,9 +68,9 @@ public:
   // Caller owns the returned graph.
   static TGraph *BuildTraceFromTotals(const Double_t *total);
 
-  // Draw and save a set of sample traces as an overlay plot. Traces are drawn
-  // in a single color on a TH2F frame; the file is written and the canvas is
-  // saved to plots if SAVE_PLOTS is set. The traces vector is NOT deleted.
+  // Draw and save a set of sample traces as an overlay plot (single color on a
+  // TH2F frame); written to plots if SAVE_PLOTS. The traces vector is NOT
+  // deleted.
   static void SaveSampleTraces(const std::vector<TGraph *> &traces,
                                const TString &save_name, const TString &subdir,
                                Double_t y_min, Double_t y_max,

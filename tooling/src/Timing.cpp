@@ -480,9 +480,8 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
   TimeShiftResult result;
   result.board_shifts.assign(Constants::cfg.N_BOARDS, 0);
 
-  // Board sync disabled for this dataset (e.g. 87Rb): nothing to compute, so
-  // skip the whole extract/scan/extreme-events pipeline and leave every board
-  // at zero shift. Per-channel TTF correction still happens in ApplyShifts.
+  // Board sync disabled for this dataset: skip the extract/scan/extreme-event
+  // pipeline, all shifts 0 (per-channel TTF correction still applies).
   if (!Constants::cfg.TIMING_DO_BOARD_SYNC) {
     std::cout << "Board sync disabled for this dataset; skipping timeshift "
                  "calculation (all board shifts = 0)."
@@ -709,6 +708,9 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
 
 void Timing::ApplyShiftsInPlace(std::vector<RawHit> &hits,
                                 const std::vector<Long64_t> &board_shifts) {
+  // Shifts are signed, timestamps unsigned: do the math in the unsigned
+  // domain with an underflow clamp — a negative shift must never wrap.
+  Long64_t n_clamped = 0;
   for (Int_t i = 0; i < Int_t(hits.size()); i++) {
     Long64_t board_shift = (hits[i].board < UShort_t(board_shifts.size()))
                                ? board_shifts[hits[i].board]
@@ -717,8 +719,24 @@ void Timing::ApplyShiftsInPlace(std::vector<RawHit> &hits,
     // e.g. 87Rb). Independent of the second-scale board-pattern shift.
     Long64_t ttf_offset =
         Constants::LookupTTFOffsetPs(hits[i].board, hits[i].channel);
-    hits[i].timestamp = hits[i].timestamp + board_shift - ttf_offset;
+    Long64_t shift = board_shift - ttf_offset;
+    ULong64_t ts = hits[i].timestamp;
+    if (shift < 0) {
+      ULong64_t mag = (ULong64_t)(-shift);
+      if (ts < mag) {
+        ts = 0;
+        n_clamped++;
+      } else {
+        ts = ts - mag;
+      }
+    } else {
+      ts = ts + (ULong64_t)shift;
+    }
+    hits[i].timestamp = ts;
   }
+  if (n_clamped > 0)
+    std::cerr << "Timing: " << n_clamped
+              << " hit timestamps clamped to 0 after shift" << std::endl;
 }
 
 void Timing::SortHitsByTimestamp(std::vector<RawHit> &hits) {

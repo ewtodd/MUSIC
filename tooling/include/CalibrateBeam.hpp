@@ -53,36 +53,16 @@ struct ChannelCal {
   Double_t fit_adc = 0.0;
   Double_t fit_sigma_adc = 0.0;
   Long64_t n_samples = 0.0;
-  // L/R gain-match override. When >= 0, Gain() returns this instead of
-  // 1/fit_adc. Set by ComputeLRGainMatch (the check_LR notebook's two-pass
-  // recipe): long side anchored on its beam peak, short side anchored on
-  // the correlation-ridge peak, then a per-strip eSum median alignment
-  // applied to the short side only. Puts L and R in the same charge scale
-  // so reaction events (different L/R sharing than beam) don't sawtooth
-  // between even/odd strips. When < 0, falls back to 1/fit_adc.
+  // L/R gain-match override: when >= 0, Gain() uses this instead of 1/fit_adc.
+  // Set by ComputeLRGainMatch (the check_LR two-pass recipe), putting L and R
+  // in the same charge scale.
   Double_t gain = -1.0;
 };
 
-// Result of the two post-gain calibration steps:
-//   1. DeriveBeamEnergyWindow — Gaussian-fit Strip0 (or Strip17) and report
-//      mu ± 3*sigma in a.u. so downstream beam-selection code has a single,
-//      data-driven beam-energy window.
-//   2. FindStripCentroidAlignment — decode events with the per-channel gains
-//      already applied, find each strip's beam-peak centroid (B) and pileup-
-//      peak centroid (P) from the eSum histogram (the pileup population is
-//      isolated by gating on the double-beam total energy), and derive a
-//      two-point LINEAR normalization per strip: total_corrected =
-//      slope * total + intercept, with the line passing through (B, 1.0) and
-//      (P, 2.0). The two-point line corrects the ADC sublinearity — the
-//      pileup reads ~1.88x instead of 2x — that a single multiplicative
-//      factor cannot (a factor maps beam onto 1.0 and leaves the pileup at
-//      1.88). This matches the notebook's approach (37Cl_an.ipynb cell 5)
-//      extended with the second point.
-//
-// Both steps run AFTER ReduceToAnchors and AFTER the initial
-// WriteCalibrationToEvents (the alignment step needs the calibration tree on
-// disk so EnergyView can decode). The slopes/intercepts are stored in the
-// calibration tree and applied by EnergyView after the per-channel gain.
+// Post-gain results: the beam energy window (mu ± 3*sigma of the Gaussian fit
+// to Strip0/17, a.u.) and the per-strip two-point line (B,1.0)-(P,2.0) that
+// fixes the ADC sublinearity no single factor can; runs after ReduceToAnchors +
+// the initial calibration write, and is consumed by EnergyView.
 struct StripAlignmentResult {
   Bool_t ok = kFALSE;
   Double_t beam_e_min = 0.0;

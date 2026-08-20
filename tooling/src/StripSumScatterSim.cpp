@@ -1,40 +1,33 @@
 #include "StripSumScatter.hpp"
 
-// Per-strip sim normalization gains: read the sim beam file and, for each
-// strip, average the (unit-gain) per-strip beam total, then set gain[s] = 1 /
-// mean[s] so every strip's sim beam lands on 1 a.u. This flattens the sim beam
-// the SAME way the per-channel data normalization flattens the experimental
-// beam
-// -- a single global factor would not, since it preserves the sim's per-strip
-// structure. Strips with no beam signal keep gain 0 (drop out like an
-// uncalibrated channel).
+// Per-strip gains = 1/mean beam total so sim beam lands at 1 a.u. like the
+// per-channel data normalization. No-beam strips keep gain 0 (drop out).
 Bool_t StripSumScatter::SimBeamGains(Double_t *gain) {
   const Long64_t kSampleMaxPoints =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SAMPLE_MAX_POINTS;
 
   for (Int_t s = 0; s < 18; s++)
     gain[s] = 0.0;
-  // Reference the ERES beam file -- the same file type as the eres populations
-  // plotted in SimOverlay/SimTraceOverlay -- so the normalized eres beam lands
-  // exactly on 1. Falls back to the non-eres SIM_BEAM_FILE if no eres beam
-  // control file is present.
+  // Prefer the ERES beam file so the normalized eres beam lands at 1 a.u.
+  // like the plotted eres populations; fall back to the standard file.
   TString file;
+  Bool_t file_eres = kFALSE;
   std::vector<RemixSim::SimFileSpec> specs = RemixSim::BuildFileSpecs();
-  for (Int_t i = 0; i < specs.size(); i++) {
-    if (!RemixSim::IsEresTag(specs[i].tag))
-      std::cout << "No eres sim file for " << specs[i].tag << ", using standard"
-                << std::endl;
-
+  for (Int_t i = 0; i < Int_t(specs.size()); i++) {
     TString base = RemixSim::TagWithoutStrip(specs[i].tag);
     base.ReplaceAll("_eres", "");
     if (base == "beam") {
       file = RemixSim::SimRootPath(specs[i]);
+      file_eres = RemixSim::IsEresTag(specs[i].tag);
       break;
     }
   }
   if (file.Length() == 0)
     file =
         Paths::DatasetDir() + "/sim_root_files/" + Constants::cfg.SIM_BEAM_FILE;
+  if (!file_eres)
+    std::cout << "strip-sum-scatter: beam gains from non-eres file " << file
+              << std::endl;
   TFile *f = IO::OpenForReading(file);
   if (!f || f->IsZombie()) {
     std::cerr << "strip-sum-scatter: cannot open sim beam file " << file
@@ -118,8 +111,10 @@ TGraph *StripSumScatter::SimPopScatter(const TString &file, Int_t reac,
     delete f;
     return nullptr;
   }
-  Int_t y_lo = reac + 1;
-  Int_t y_hi = TMath::Min(reac + 6, 17);
+  // Same y window as the data scatter (YLoOf/YHiOf), so sim points land in
+  // the data's coordinate space instead of a hardcoded, stale one.
+  Int_t y_lo = YLoOf(reac);
+  Int_t y_hi = YHiOf(reac);
   Float_t left[18] = {0}, right[18] = {0};
   t->SetBranchAddress("Left_0_17_dE", left);
   t->SetBranchAddress("RightdE", right);
@@ -142,10 +137,6 @@ TGraph *StripSumScatter::SimPopScatter(const TString &file, Int_t reac,
   return g;
 }
 
-// Up to max_traces per-strip dE-profile traces, stride-sampled across one sim
-// file. Sim energies are arbitrary-unit floats; total[s] is the per-strip
-// normalized gain[s]*(left[s] + right[s]) so the traces share the data's axis
-// (and the sim beam is flat at NORM, like the data).
 std::vector<TGraph *> StripSumScatter::SimPopTraces(const TString &file,
                                                     const Double_t *gain,
                                                     Long64_t max_traces) {
@@ -179,10 +170,9 @@ std::vector<TGraph *> StripSumScatter::SimPopTraces(const TString &file,
   return traces;
 }
 
-// Per reaction strip, overlay TRACES_PER_CLASS sampled per-strip traces of each
-// sim population in the experimental DrawRegionTraces style (beam grey, (a,a')
-// azure, (a,n) red). The beam reference is the same for every strip. Sampled
-// fresh each run (40 traces/file is trivial).
+// Per-strip overlay of sampled sim traces in experimental style (beam grey,
+// (a,a') azure, (a,n) red). Beam reference same for every strip; sampled each
+// run.
 void StripSumScatter::SimTraceOverlay() {
   const Int_t kReacMin =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
@@ -196,10 +186,7 @@ void StripSumScatter::SimTraceOverlay() {
     return;
   std::map<Int_t, TString> aa_file, an_file; // reaction strip -> sim file
   std::vector<TString> beam_files;
-  for (Int_t i = 0; i < specs.size(); i++) {
-    if (!RemixSim::IsEresTag(specs[i].tag))
-      std::cout << "No eres sim file for " << specs[i].tag << ", using standard"
-                << std::endl;
+  for (Int_t i = 0; i < Int_t(specs.size()); i++) {
     TString base = RemixSim::TagWithoutStrip(specs[i].tag);
     base.ReplaceAll("_eres", "");
     TString file = RemixSim::SimRootPath(specs[i]);
@@ -220,12 +207,12 @@ void StripSumScatter::SimTraceOverlay() {
       gain[s] = 1.0;
 
   std::vector<TGraph *> beam_traces;
-  for (Int_t i = 0;
-       i < beam_files.size() && Int_t(beam_traces.size()) < kTracesPerRegion;
+  for (Int_t i = 0; i < Int_t(beam_files.size()) &&
+                    Int_t(beam_traces.size()) < kTracesPerRegion;
        i++) {
     std::vector<TGraph *> t = SimPopTraces(
         beam_files[i], gain, kTracesPerRegion - Int_t(beam_traces.size()));
-    for (Int_t k = 0; k < t.size(); k++)
+    for (Int_t k = 0; k < Int_t(t.size()); k++)
       beam_traces.push_back(t[k]);
   }
 
@@ -240,25 +227,20 @@ void StripSumScatter::SimTraceOverlay() {
     DrawRegionTraces(Form("sim_region_traces_reac%d", r), "sim_scatter",
                      beam_traces, aa_traces, an_traces, 0.6, 1.6,
                      "#DeltaE [a.u.]");
-    for (Int_t i = 0; i < aa_traces.size(); i++)
+    for (Int_t i = 0; i < Int_t(aa_traces.size()); i++)
       delete aa_traces[i];
-    for (Int_t i = 0; i < an_traces.size(); i++)
+    for (Int_t i = 0; i < Int_t(an_traces.size()); i++)
       delete an_traces[i];
   }
-  for (Int_t i = 0; i < beam_traces.size(); i++)
+  for (Int_t i = 0; i < Int_t(beam_traces.size()); i++)
     delete beam_traces[i];
 }
 
-// Fingerprint of the sim inputs + window geometry: each eres file's size+mtime
-// (cheap, no open) plus the reaction-strip range and x window. Regenerating the
-// sim (new mtimes) or changing the windows invalidates the cached overlay.
+// Fingerprint: per-eres file size+mtime (cheap, no open) + reaction-strip range
+// + x window. Regenerating the sim (new mtimes) or changing windows invalidates
+// the cache.
 TString StripSumScatter::SimFingerprint(
     const std::vector<RemixSim::SimFileSpec> &specs) {
-  // v2: sim is per-strip normalized via SimBeamGains(); the gain source (the
-  // eres beam file) is stamped by the per-spec loop below (it covers every
-  // eres file, including beam_eres).
-  // v3: normalization hardcoded to 1 a.u. (NORM_MUSIC_MEV removed); bump so
-  // overlays cached at other norms rebuild.
   const Int_t kReacMin =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
   const Int_t kReacMax =
@@ -267,11 +249,7 @@ TString StripSumScatter::SimFingerprint(
   const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
 
   TString s = Form("v3 reac[%d,%d] x[%d,%d]", kReacMin, kReacMax, kXLo, kXHi);
-  for (Int_t i = 0; i < specs.size(); i++) {
-    if (!RemixSim::IsEresTag(specs[i].tag))
-      std::cout << "No eres sim file for " << specs[i].tag << ", using standard"
-                << std::endl;
-
+  for (Int_t i = 0; i < Int_t(specs.size()); i++) {
     TString f = RemixSim::SimRootPath(specs[i]);
     Long_t id = 0, flags = 0, mtime = 0;
     Long64_t size = -1;
@@ -279,14 +257,11 @@ TString StripSumScatter::SimFingerprint(
       size = -1;
       mtime = 0;
     }
-    s += Form(" %s:%lld:%ld", specs[i].tag.Data(), size, mtime);
+    s += Form(" %s:%lld:%ld", specs[i].tag.Data(), (long long)size, mtime);
   }
   return s;
 }
 
-// Reload cached sim scatter graphs (grouped by reaction strip; each graph's
-// title holds its population label) if the fingerprint matches. Caller owns the
-// returned graphs.
 Bool_t StripSumScatter::LoadSimCache(
     const TString &fp, std::map<Int_t, std::vector<TGraph *>> &by_strip) {
   TString full = IO::GetRootFilesBaseDir() + TString("/") +
@@ -339,18 +314,15 @@ void StripSumScatter::WriteSimCache(
   cfp.Write();
   std::map<Int_t, std::vector<TGraph *>>::const_iterator it;
   for (it = by_strip.begin(); it != by_strip.end(); ++it)
-    for (Int_t i = 0; i < it->second.size(); i++)
+    for (Int_t i = 0; i < Int_t(it->second.size()); i++)
       it->second[i]->Write(Form("simg_r%d_p%d", it->first, Int_t(i)));
   out->Close();
   delete out;
 }
 
-// Sim-only comparison plots: one per reaction strip, each sim population a
-// coloured+labelled point cloud on the same axes as that strip's data scatter,
-// for side-by-side comparison with the data PID scatters. Beam (no reaction
-// strip) overlays on every strip. The scatter graphs are fingerprint-cached
-// (sim file sizes/mtimes + window geometry), so re-runs reload them instead of
-// rescanning the sim files.
+// Sim overlay: each sim population as a labelled cloud on its reaction
+// strip's data-scatter axes (beam overlays every strip); fingerprint-cached, so
+// re-runs reload instead of rescanning sim files.
 void StripSumScatter::SimOverlay() {
   const Int_t kReacMin =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
@@ -374,10 +346,7 @@ void StripSumScatter::SimOverlay() {
   if (!loaded) {
     std::map<Int_t, std::vector<SimPop>> reacted;
     std::vector<SimPop> refs;
-    for (Int_t i = 0; i < specs.size(); i++) {
-      if (!RemixSim::IsEresTag(specs[i].tag))
-        std::cout << "No eres sim file for " << specs[i].tag
-                  << ", using standard" << std::endl;
+    for (Int_t i = 0; i < Int_t(specs.size()); i++) {
       SimPop p;
       p.file = RemixSim::SimRootPath(specs[i]);
       p.label = PrettyLabel(specs[i].tag);
@@ -394,9 +363,9 @@ void StripSumScatter::SimOverlay() {
     const Long64_t kSimMaxPoints = 25000;
     for (Int_t r = kReacMin; r <= kReacMax; r++) {
       std::vector<SimPop> group = reacted[r];
-      for (Int_t i = 0; i < refs.size(); i++)
+      for (Int_t i = 0; i < Int_t(refs.size()); i++)
         group.push_back(refs[i]);
-      for (Int_t i = 0; i < group.size(); i++) {
+      for (Int_t i = 0; i < Int_t(group.size()); i++) {
         TGraph *g = SimPopScatter(group[i].file, r, gain, kSimMaxPoints);
         if (!g || g->GetN() == 0) {
           if (g)
@@ -436,10 +405,9 @@ void StripSumScatter::SimOverlay() {
       continue;
     std::lock_guard<std::mutex> lock(g_plot_mutex);
     TH2F *ref = sit->second;
-    // Frame the sim overlay with the same display window as the data
-    // scatter: x from XMIN/XMAX, y from the per-strip Y_RANGE/YMIN/YMAX
-    // bounds. The data histograms are built over the wide ScatterBuildRange,
-    // so their axis extents no longer match the plotted window.
+    // Frame the sim overlay with the same display window as the data scatter
+    // (x XMIN/XMAX, y Y_RANGE/YMIN/YMAX): the data hists use the wide
+    // ScatterBuildRange, so their axis extents don't match the plotted window.
     Double_t y_lo[64], y_hi[64];
     YBounds(y_lo, y_hi);
     Int_t ri = ReacIndex(r);
@@ -453,7 +421,7 @@ void StripSumScatter::SimOverlay() {
     frame->Draw();
     // Match the experimental region-traces legend placement (top-right).
     TLegend *leg = PlottingUtils::AddLegend(0.725, 0.875, 0.70, 0.86);
-    for (Int_t i = 0; i < it->second.size(); i++) {
+    for (Int_t i = 0; i < Int_t(it->second.size()); i++) {
       TGraph *g = it->second[i];
       // Match the experimental region-trace colours (DrawRegionTraces): beam
       // grey, (a,a') azure, (a,n) red -- keyed off the population label.
@@ -484,6 +452,6 @@ void StripSumScatter::SimOverlay() {
 
   std::map<Int_t, std::vector<TGraph *>>::iterator dit;
   for (dit = by_strip.begin(); dit != by_strip.end(); ++dit)
-    for (Int_t i = 0; i < dit->second.size(); i++)
+    for (Int_t i = 0; i < Int_t(dit->second.size()); i++)
       delete dit->second[i];
 }

@@ -66,14 +66,7 @@ std::vector<TString> DiscoverSolRunSuffixesFromBase(Int_t run) {
   }
   gSystem->FreeDirectory(dirp);
 
-  std::sort(suffixes.begin(), suffixes.end(),
-            [](const TString &a, const TString &b) {
-              if (a == "")
-                return true;
-              if (b == "")
-                return false;
-              return a.Atoi() < b.Atoi();
-            });
+  std::sort(suffixes.begin(), suffixes.end(), FileSet::SuffixOrder);
 
   return suffixes;
 }

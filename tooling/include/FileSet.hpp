@@ -47,6 +47,10 @@ public:
   GroupEventsByRun(std::vector<Int_t> &run_order);
 
   static Long64_t SampleStride(Long64_t n_total, Long64_t max_points);
+
+  // Comparator for run-suffix strings ("", "_1", "_2_c003", ...): "" first,
+  // then leading sequence number, lexicographic tie-break (strict weak order).
+  static Bool_t SuffixOrder(const TString &a, const TString &b);
 };
 
 #endif
