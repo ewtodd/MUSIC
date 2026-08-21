@@ -9,17 +9,6 @@ const Double_t kEllipseNSigmaX = 3;
 const Double_t kEllipseNSigmaY = 3;
 const Long64_t kMinSamples = 200;
 
-// Paired (L, R) raw-ADC samples per strip (ungated, both ends fired), plus the
-// rare "shoulder" slice: (short, long) pairs where the long side is below
-// kGmSliceLongCap (the short side sits at full charge there); kept separate
-// since beam events fill the main vectors first.
-struct StripPairSamples {
-  std::vector<Float_t> l;
-  std::vector<Float_t> r;
-  std::vector<Float_t> slice_short;
-  std::vector<Float_t> slice_long;
-};
-
 inline Char_t LongSide(Int_t strip) { return (strip % 2 == 0) ? 'R' : 'L'; }
 
 inline Bool_t IsBeamdEChannel(const ChannelCal &c) {
@@ -75,12 +64,10 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
                                     const std::vector<ChannelCal> &chans,
                                     const BeamFit2D &beam,
                                     const BeamFit2D &beam0vGrid,
-                                    std::vector<std::vector<Float_t>> &samples,
-                                    StripPairSamples pairs[18]);
+                                    std::vector<std::vector<Float_t>> &samples);
 void ReduceToAnchors(std::vector<ChannelCal> &chans,
                      std::vector<std::vector<Float_t>> &samples,
-                     std::vector<TF1 *> &fits_out, const TString &run_label,
-                     const StripPairSamples pairs[18]);
+                     std::vector<TF1 *> &fits_out, const TString &run_label);
 
 // Calibrated-spectrum overlays (CalibrateBeamOverlay.cpp).
 void SaveDynamicRangeOverlay(const FileSpec &spec,

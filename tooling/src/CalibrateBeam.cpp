@@ -609,13 +609,12 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
 
   std::vector<ChannelCal> chans = chans_template;
   std::vector<std::vector<Float_t>> samples;
-  StripPairSamples pairs[18];
-  CollectAnchorSamplesOneSubfile(spec, chans, beam, beam0vGrid, samples, pairs);
+  CollectAnchorSamplesOneSubfile(spec, chans, beam, beam0vGrid, samples);
   std::vector<TF1 *> peak_fits;
 
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
-    ReduceToAnchors(chans, samples, peak_fits, file_label, pairs);
+    ReduceToAnchors(chans, samples, peak_fits, file_label);
   }
 
   for (Int_t i = 0; i < Int_t(peak_fits.size()); i++)

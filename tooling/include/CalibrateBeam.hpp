@@ -54,8 +54,9 @@ struct ChannelCal {
   Double_t fit_sigma_adc = 0.0;
   Long64_t n_samples = 0.0;
   // L/R gain-match override: when >= 0, Gain() uses this instead of 1/fit_adc.
-  // Set by ComputeLRGainMatch (the check_LR two-pass recipe), putting L and R
-  // in the same charge scale.
+  // Set by ComputeLRGainMatch, which anchors each end at its own beam peak
+  // (short side interpolated from the opposite parity) to put L and R in the
+  // same charge scale.
   Double_t gain = -1.0;
 };
 
