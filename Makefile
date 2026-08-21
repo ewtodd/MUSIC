@@ -1,19 +1,14 @@
 # MUSIC monorepo build.
 #
-# One copy of the tooling (tooling/), built against one dataset's config
-# (analysis/<DATASET>/config/Constants.cpp). The dataset is chosen by the
-# MUSIC_DATASET env var (set by the per-dataset nix dev shell), or on the
-# command line: `make DATASET=87Rb`.
-#
-#   nix develop .#87Rb && make      # build everything for 87Rb
-#   make DATASET=37Cl pipeline      # build one binary for 37Cl
-#   make clean                      # remove this dataset's build artifacts
+# The flake invokes the Makefile with correct args; just use nix build with the 
+# chosen dataset
 #
 # Per-dataset outputs are self-contained: binaries in analysis/<DATASET>/bin,
 # objects + libmusic.a in analysis/<DATASET>/build. tooling/src compiles once
 # into a static libmusic.a; each main links it with --gc-sections. The GPU lib
-# (tooling/gpu/libgpuaccel.so) is built once and dlopen'd at runtime via an
-# absolute path injected as -DMUSIC_GPU_LIB.
+# (tooling/gpu/libgpuaccel.so) is optional: when built, it is dlopen'd at
+# runtime via an absolute path injected as -DMUSIC_GPU_LIB, and GpuAccel falls
+# back to the CPU sort if the lib (or a GPU) is missing.
 #
 # Dataset config: tooling/include/Constants.hpp defines the DatasetConfig class.
 # Each analysis provides analysis/<DATASET>/config/Constants.cpp which creates
@@ -90,9 +85,21 @@ BINS := pipeline calibrate-beam strip-sum-scatter split-sol preprocess-sol
 BIN_PATHS := $(addprefix $(BIN_DIR)/,$(BINS))
 
 .PHONY: all gpu clean
+# The GPU lib needs the CUDA toolchain (nvcc), which only the CUDA shell/build
+# provides; without it, skip the GPU lib and rely on the CPU fallback. Override
+# with `make WITH_GPU=1` (or =0) to force either way.
+WITH_GPU ?= $(shell command -v nvcc >/dev/null 2>&1 && echo 1 || echo 0)
+ifeq ($(WITH_GPU),1)
 all: gpu $(BIN_PATHS)
+else
+all: $(BIN_PATHS)
+endif
 
 gpu:
+	@if ! command -v nvcc >/dev/null 2>&1; then \
+	  echo "nvcc not found; GPU lib cannot be built (use WITH_GPU=0 or a CUDA shell)"; \
+	  exit 1; \
+	fi
 	$(MAKE) -C $(GPU_DIR)
 
 # Every object explicitly depends on the dataset config source. Editing

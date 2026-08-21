@@ -6,7 +6,6 @@
 #include "FileSet.hpp"
 #include "IOUtils.hpp"
 #include "PlottingUtils.hpp"
-#include "SlotLayout.hpp"
 #include <Rtypes.h>
 #include <TBranch.h>
 #include <TCanvas.h>
@@ -24,21 +23,44 @@
 #include <utility>
 #include <vector>
 
+// Slot layout of the per-event arrays, fixed by the MUSIC detector geometry:
+// 0 = Strip0, 1..16 = L1..L16, 17..32 = R1..R16, 33 = Strip17, 34 = Cathode,
+// 35 = Grid.
 struct EventState {
   Int_t leftdE[18];
   Int_t rightdE[18];
   Int_t totaldE[18];
-  Int_t hits[Constants::N_ARR_SLOTS];
+  Int_t hits[36];
   Int_t cathode;
   Int_t grid;
   UInt_t flags_or;
   Bool_t had_cathode;
 };
 
+struct EventCounters {
+  Int_t total_events;
+  Int_t complete_events;
+  Int_t complete_with_fake;
+  Int_t complete_with_saturation;
+  Int_t complete_with_pileup;
+  Int_t complete_rejected;
+  Int_t complete_rejected_multi;
+  Int_t incomplete_events;
+  Int_t incomplete_with_fake;
+  Int_t incomplete_with_saturation;
+  Int_t incomplete_with_pileup;
+  Int_t events_with_cathode;
+  Int_t events_with_multi_cathode;
+  Int_t events_with_multi_anode_hit;
+  Int_t dropped_anode_hits_total;
+  Int_t dropped_cathode_hits_total;
+  Int_t missing_long_0_17[18];
+};
+
 struct PerChannelData {
-  ULong64_t timestamps[Constants::N_ARR_SLOTS];
-  UShort_t energies[Constants::N_ARR_SLOTS];
-  UInt_t flags[Constants::N_ARR_SLOTS];
+  ULong64_t timestamps[36];
+  UShort_t energies[36];
+  UInt_t flags[36];
 };
 
 class EventBuilder {

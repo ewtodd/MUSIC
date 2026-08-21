@@ -40,7 +40,7 @@ struct SummaryHistograms {
 
 // Bin range and label configuration for creating summary histograms.
 struct SummaryHistConfig {
-  TString unit_label; // e.g. "ADC" or "a.u."
+  TString unit_label;
   Double_t strip_e_min;
   Double_t strip_e_max;
   Bool_t odd_even_split; // if true, per-strip max from config
@@ -64,8 +64,6 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
 
 class EventsSummary {
 public:
-  // Same trace from a raw per-strip total[18] array (e.g. a cached event).
-  // Caller owns the returned graph.
   static TGraph *BuildTraceFromTotals(const Double_t *total);
 
   // Draw and save a set of sample traces as an overlay plot (single color on a

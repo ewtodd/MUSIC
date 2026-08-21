@@ -59,16 +59,8 @@ struct ChannelCal {
   Double_t gain = -1.0;
 };
 
-// Post-gain results: the beam energy window (mu ± 3*sigma of the Gaussian fit
-// to Strip0/17, a.u.) and the per-strip two-point line (B,1.0)-(P,2.0) that
-// fixes the ADC sublinearity no single factor can; runs after ReduceToAnchors +
-// the initial calibration write, and is consumed by EnergyView.
 struct StripAlignmentResult {
   Bool_t ok = kFALSE;
-  Double_t beam_e_min = 0.0;
-  Double_t beam_e_max = 0.0;
-  // Default slope = 1.0, intercept = 0.0 (identity — no correction). Set by
-  // FindStripCentroidAlignment when centroid measurements are available.
   Double_t slopes[18] = {};
   Double_t intercepts[18] = {};
   Double_t centroids[18] = {};        // measured beam-peak centroid per strip

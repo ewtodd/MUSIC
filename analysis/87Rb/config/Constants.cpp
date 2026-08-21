@@ -10,7 +10,7 @@ void InitDatasetConfig() {
   gInstance.USE_SOLARIS_DATA = kFALSE;
   gInstance.COMPASS_BASE_DIR = "/labdata/MUSIC/87Rb/";
   gInstance.RUN_NUMBERS = {16, 20};
-  gInstance.N_CHUNKS = -1;
+  gInstance.N_CHUNKS = 20;
   gInstance.SIM_BEAM_FILE = "traces_87Rb_beam.root";
 
   gInstance.N_BOARDS = 4;
@@ -22,6 +22,8 @@ void InitDatasetConfig() {
   gInstance.EVENT_TIME_WINDOW_US = 8.0;
   gInstance.DEDUP_STRATEGY = kLARGEST_ENERGY;
 
+  gInstance.SAVE_PLOTS = kTRUE;
+
   gInstance.TIMING_MIN_ENERGY = 300;
   gInstance.TIMING_MAX_ENERGY = 1500;
   gInstance.TIMING_OVERLAP_MARGIN_S = 1.0;
@@ -30,29 +32,43 @@ void InitDatasetConfig() {
   gInstance.TIMING_SHIFT_FINE_STEP_US = 1.0;
   gInstance.TIMING_SHIFT_FINE_HALF_WIDTH_US = 5000.0;
   gInstance.TIMING_DO_SORT = kTRUE;
+  gInstance.USE_GPU_ACCELERATION = kTRUE;
+
+  gInstance.IGNORE_SHORT_STRIPS = kTRUE;
 
   gInstance.REJECT_FLAGGED_EVENTS = kFALSE;
   gInstance.MAX_FUSED_WORKERS = 16;
   gInstance.MAX_GPU_CONCURRENT_SORTS = 20;
 
+  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS = 6;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN = 3;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX = 15;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 7;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 4;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X = 3.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y = 3.0;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.XMIN = 14;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.XMAX = 18;
-  // Bins over the fixed 40-a.u. build range: XBINS=3000 restores ~300 visible
-  // x bins (x 14-18); YBINS=3000 gives ~150 visible y bins (6000 would double
-  // them but 4x the memory).
-  gInstance.STRIP_SUM_SCATTER_CONFIG.XBINS = 3000;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.YBINS = 3000;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_RANGE = {
-      {3, {5.5, 7.5}}, {4, {5, 7}},    {5, {5.5, 7.5}}, {6, {5, 7}},
-      {7, {5, 7}},     {8, {5, 7}},    {9, {5, 7}},     {10, {5, 7}},
-      {11, {5, 7}},    {12, {3.5, 6}}, {13, {2, 5}},    {14, {2, 5}},
-      {15, {1, 4}}};
+  gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MIN = 13;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MAX = 21;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MIN = 0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MAX = 10;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_STRIP_16_BELOW_BEAM = kTRUE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REJECT_HIGH_STRIP = kFALSE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REJECT_NOISE = kTRUE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REJECT_OFFBEAM = kTRUE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REJECT_PILEUP = kTRUE;
 
+  gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS = kTRUE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.SCATTER_CALC_FROM_SAVGOL = kTRUE;
+
+  gInstance.STRIP_SUM_SCATTER_CONFIG.XBINS = 1500;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.YBINS = 2000;
+  //  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_RANGE = {
+  //      {3, {5.5, 7.5}}, {4, {5, 7}},    {5, {5.5, 7.5}}, {6, {5, 7}},
+  //      {7, {5, 7}},     {8, {5, 7}},    {9, {5, 7}},     {10, {5, 7}},
+  //      {11, {5, 7}},    {12, {3.5, 6}}, {13, {2, 5}},    {14, {2, 5}},
+  //      {15, {1, 4}}};
+
+  gInstance.STRIP_DE_MIN_NORMED = 0;
+  gInstance.STRIP_DE_MAX_NORMED = 4;
   gInstance.STRIP_E_MAX_ADC = 12000;
   gInstance.TOTAL_E_MAX_ADC = 15 * gInstance.STRIP_E_MAX_ADC;
 

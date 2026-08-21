@@ -76,7 +76,7 @@ ShiftScanResult ScanShiftRange(const std::vector<Double_t> &ref_x,
       }
     }
 
-    if (i % 50000 == 0 && i > 0) {
+    if (i % 100000 == 0 && i > 0) {
       std::cout << "    Progress: " << i << "/" << candidate_count << std::endl;
     }
   }

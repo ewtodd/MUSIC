@@ -290,7 +290,7 @@ void EventsSummary::BuildNormedSummaryHistograms(const TString &input_filename,
       h.h1_grid->Fill(ev.grid);
 
     Int_t mult = 0;
-    for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++)
+    for (Int_t k = 0; k < 36; k++)
       mult += ev.hits_adc[k];
     h.h_mult->Fill(Double_t(mult));
 

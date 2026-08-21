@@ -1,7 +1,7 @@
 #include "StripSumScatter.hpp"
 
-void StripSumScatter::DrawTraceSet(const std::vector<TGraph *> &traces,
-                                   Int_t color) {
+void StripSumScatter::DrawClassTraceSet(const std::vector<TGraph *> &traces,
+                                        Int_t color) {
   for (Int_t i = 0; i < Int_t(traces.size()); i++) {
     traces[i]->SetLineColor(color);
     traces[i]->SetLineWidth(1);
@@ -32,9 +32,9 @@ void StripSumScatter::DrawRegionTraces(const TString &save_name,
   frame->SetStats(0);
   TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
   frame->Draw();
-  DrawTraceSet(beam, kGray + 2);
-  DrawTraceSet(aa, kAzure + 2);
-  DrawTraceSet(an, kRed + 1);
+  DrawClassTraceSet(beam, kGray + 2);
+  DrawClassTraceSet(aa, kAzure + 2);
+  DrawClassTraceSet(an, kRed + 1);
 
   TGraph *p_beam = new TGraph(1);
   TGraph *p_aa = new TGraph(1);
@@ -157,8 +157,8 @@ void StripSumScatter::TraceYRange(const std::vector<TGraph *> &beam,
   y_max += pad;
 }
 
-TCutG *StripSumScatter::PromptCut(TCanvas *c, const char *name,
-                                  const char *label) {
+TCutG *StripSumScatter::InteractiveRegionCut(TCanvas *c, const char *name,
+                                             const char *label) {
   std::cout << "  >>> draw the " << label
             << " region: left-click vertices, double-click to close"
             << std::endl;
@@ -257,7 +257,6 @@ Int_t StripSumScatter::FindTrigger(const Double_t *td, const Double_t *base,
   return -1;
 }
 
-// Build a TGraph trace from a Savitzky-Golay-smoothed set of per-strip totals.
 TGraph *StripSumScatter::SmoothedTraceFromTotal(const Float_t *total) {
   Double_t td[18], sgd[18];
   for (Int_t s = 0; s < 18; s++)
@@ -285,19 +284,19 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
       "RMS_{8-17}(#DeltaE#minusbeam) [a.u.]"};
   const char *clabel[NC] = {"beam", "(a,a')", "(a,n)"};
 
-  const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
-  const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
+  const Int_t kXStripLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_STRIP_LO;
+  const Int_t kXStripHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_STRIP_HI;
   const Int_t kClusterSmoothWindow =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.CLUSTER_SMOOTH_WINDOW;
   const Bool_t kScatterSavgol =
-      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SCATTER_SAVGOL;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SCATTER_CALC_FROM_SAVGOL;
 
   // Per (class, variable) value lists for raw traces.
   std::vector<Double_t> vals_raw[NC][NV];
   // Same, but cluster variables on SG-smoothed traces (the kernel removes the
   // L_odd/R_even sawtooth so features land on the real physical peak).
   std::vector<Double_t> vals_sg[NC][NV];
-  UInt_t bit = (1u << ReacIndex(reac));
+  UInt_t bit = (1u << ReactionIndex(reac));
 
   // Per-strip beam baseline = mean of the beam-flat reservoir events. It
   // carries the L_odd/R_even sawtooth, so subtraction removes it exactly before
@@ -307,9 +306,9 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
     base[s] = 0.0;
   Long64_t nbeam = 0;
   for (Int_t k = 0; k < Int_t(m_reservoir.size()); k++)
-    if (m_reservoir[k].beam_flat) {
+    if (m_reservoir[k].is_pure_beam) {
       for (Int_t s = 0; s < 18; s++)
-        base[s] += Double_t(m_reservoir[k].total[s]);
+        base[s] += Double_t(m_reservoir[k].total_norm[s]);
       nbeam++;
     }
   for (Int_t s = 0; s < 18; s++)
@@ -321,9 +320,9 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
   Double_t beam_sumsq = 0.0;
   Long64_t beam_npt = 0;
   for (Int_t k = 0; k < Int_t(m_reservoir.size()); k++)
-    if (m_reservoir[k].beam_flat)
+    if (m_reservoir[k].is_pure_beam)
       for (Int_t s = 0; s < 18; s++) {
-        Double_t d = Double_t(m_reservoir[k].total[s]) - base[s];
+        Double_t d = Double_t(m_reservoir[k].total_norm[s]) - base[s];
         beam_sumsq += d * d;
         beam_npt++;
       }
@@ -336,7 +335,7 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
   Double_t td_all[18];
   for (Int_t k = 0; k < Int_t(m_reservoir.size()); k++) {
     for (Int_t s = 0; s < 18; s++)
-      td_all[s] = Double_t(m_reservoir[k].total[s]);
+      td_all[s] = Double_t(m_reservoir[k].total_norm[s]);
     if (FindTrigger(td_all, base, beam_sigma) >= 0)
       triggered++;
     else
@@ -360,9 +359,9 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
     const TraceEvt &e = m_reservoir[k];
     Double_t td[18];
     for (Int_t s = 0; s < 18; s++)
-      td[s] = Double_t(e.total[s]);
+      td[s] = Double_t(e.total_norm[s]);
     Int_t cls = -1;
-    if (e.beam_flat)
+    if (e.is_pure_beam)
       cls = 0;
     else if (e.reac_mask & bit) {
       // Cuts are drawn on the scatter, which uses SG-smoothed sums when
@@ -374,8 +373,8 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
         SavitzkyGolay(td, td_sg);
         coords = td_sg;
       }
-      Double_t x = SumRange(coords, kXLo, kXHi);
-      Double_t y = SumRange(coords, YLoOf(reac), YHiOf(reac));
+      Double_t x = SumRange(coords, kXStripLo, kXStripHi);
+      Double_t y = SumRange(coords, ScatterYLo(reac), ScatterYHi(reac));
       if (cut_aa && cut_aa->IsInside(x, y))
         cls = 1;
       else if (cut_an && cut_an->IsInside(x, y))
@@ -441,7 +440,7 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
                       plateau,
                       td[17], // raw end strip (was td[17] - 1.0)
                       Double_t(trigger_strip),
-                      Double_t(e.both_mult),
+                      Double_t(e.both_side_mult),
                       trigtaildev,
                       reacslope3,
                       beamdev};
@@ -502,7 +501,7 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
                          plateau_sg,
                          sgd[17],
                          Double_t(reacstrip_sg),
-                         Double_t(e.both_mult),
+                         Double_t(e.both_side_mult),
                          trigtaildev_sg,
                          reacslope3_sg,
                          beamdev_sg};

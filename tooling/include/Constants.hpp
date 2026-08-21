@@ -2,7 +2,6 @@
 #define CONSTANTS_HPP
 
 #include "DedupStrategy.hpp"
-#include "SlotLayout.hpp"
 #include <Rtypes.h>
 #include <RtypesCore.h>
 #include <TString.h>
@@ -57,8 +56,10 @@ struct StripSumScatterConfig {
   // filling (auto-detected concurrency is also capped by this).
   Int_t MAX_STRIP_SUM_WORKERS;
 
-  Int_t X_LO;
-  Int_t X_HI;
+  // Strip indices summed onto the scatter x-axis (e.g. 1-16); part of the
+  // built quantity, so changes require a rebuild.
+  Int_t X_STRIP_LO;
+  Int_t X_STRIP_HI;
 
   Int_t GATE_STRIP_X;
   Int_t GATE_STRIP_Y;
@@ -71,16 +72,17 @@ struct StripSumScatterConfig {
   // Display-only windows for the strip-sum scatters (a.u.): the histograms
   // are built over the fixed ScatterBuildRange, so these only zoom the drawn
   // plot via SetRangeUser (no rebuild); XBINS/YBINS do require a rebuild.
-  Double_t XMIN;
-  Double_t XMAX;
+  Double_t X_DISPLAY_MIN;
+  Double_t X_DISPLAY_MAX;
   Int_t XBINS;
-  Double_t YMIN;
-  Double_t YMAX;
+  Double_t Y_DISPLAY_MIN;
+  Double_t Y_DISPLAY_MAX;
   Int_t YBINS;
 
-  // Per-reaction-strip y-axis display windows, overriding YMIN/YMAX for
-  // individual reaction strips (display-only, same as XMIN/XMAX).
-  std::map<Int_t, std::pair<Double_t, Double_t>> Y_RANGE;
+  // Per-reaction-strip y-axis display windows, overriding Y_DISPLAY_MIN/
+  // Y_DISPLAY_MAX for individual reaction strips (display-only, same as the
+  // X_DISPLAY_* windows).
+  std::map<Int_t, std::pair<Double_t, Double_t>> Y_DISPLAY_RANGE;
 
   Long64_t SAMPLE_MAX_POINTS;
 
@@ -94,12 +96,8 @@ struct StripSumScatterConfig {
   // Fill the per-reaction 2D scatters from per-strip sums of the
   // Savitzky-Golay-smoothed normed totals (same kernel as the smoothed trace
   // plots); filters, reservoir and region traces stay raw.
-  Bool_t SCATTER_SAVGOL;
+  Bool_t SCATTER_CALC_FROM_SAVGOL;
   Bool_t REQUIRE_STRIP_16_BELOW_BEAM;
-
-  // Skip the per-class cluster-variable histograms (ClusterVarHists) drawn by
-  // the interactive overlay after the cuts; the region trace overlays are still
-  // produced.
   Bool_t SKIP_CLUSTER_HISTS;
 
   void SetDefaults();
@@ -142,13 +140,7 @@ public:
 
   Bool_t REJECT_FLAGGED_EVENTS;
 
-  // Reject complete events where any anode channel fired more than once in the
-  // coincidence window (unambiguous pileup); hit counts stay in the Hits
-  // branch, so this is a read-side selection.
-  Bool_t REJECT_MULTI_HIT_EVENTS;
-
-  // Highest split strip that must fire for event completeness (14 = the
-  // historical L1..13/R2..14; 16 mirrors AllStripsFired). 0/17: IGNORE_*.
+  Int_t COMPLETE_CHECK_STRIP_0;
   Int_t COMPLETE_CHECK_END_STRIP;
 
   Bool_t IGNORE_SHORT_STRIPS;

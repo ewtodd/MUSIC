@@ -40,22 +40,16 @@
 #include <string>
 #include <vector>
 
-struct GateSpec {
+struct GateStripPair {
   Int_t sx;
   Int_t sy;
 };
 
-// Fixed fill range (in a.u.) for the scatters: wide enough that no
-// filter-passing event falls outside (with pileup rejection on, the x sum over
-// 16 strips stays below ~30); display windows apply at draw via SetRangeUser,
-// so retuning them never rebuilds.
 namespace ScatterBuildRange {
 const Double_t kMin = 0.0;
 const Double_t kMax = 40.0;
 } // namespace ScatterBuildRange
 
-// Beam classification ellipses: entrance (s0,s1 or s1,s2, per PURE_BEAM_GATE)
-// AND exit (s16,s17 or s15,s16); "pure beam" requires passing both.
 struct BeamEllipses {
   BeamFit2D s0_s1;
   BeamFit2D s1_s2;
@@ -66,11 +60,11 @@ struct BeamEllipses {
 };
 
 struct TraceEvt {
-  Float_t total[18];
-  Float_t total_adc[18]; // raw (un-normalized) ADC sum per strip
+  Float_t total_norm[18];
+  Float_t total_raw[18];
   UInt_t reac_mask;
-  Bool_t beam_flat;
-  Int_t both_mult; // # split strips (1-16) with BOTH ends above threshold
+  Bool_t is_pure_beam;
+  Int_t both_side_mult;
 };
 
 struct SimPop {
@@ -83,18 +77,17 @@ public:
   StripSumScatter();
   ~StripSumScatter();
 
-  // Main entry point called from main_strip_sum_scatter.cpp
   void Run();
 
 private:
   std::map<Int_t, TH2F *> m_scatter;
   std::vector<TraceEvt> m_reservoir;
-  Double_t m_yLo[64];
-  Double_t m_yHi[64];
+  Double_t m_displayYLo[64];
+  Double_t m_displayYHi[64];
 
-  static Int_t ReacIndex(Int_t reac);
-  static Int_t YLoOf(Int_t reac);
-  static Int_t YHiOf(Int_t reac);
+  static Int_t ReactionIndex(Int_t reac);
+  static Int_t ScatterYLo(Int_t reac);
+  static Int_t ScatterYHi(Int_t reac);
 
   Bool_t TryLoadCache(const TString &cacheName, const TString &fingerprint);
   void WriteCache(const TString &cacheName, const TString &fingerprint);
@@ -102,32 +95,30 @@ private:
   void FillScatters(const std::vector<Int_t> &runOrder,
                     std::map<Int_t, TChain *> &chains);
 
-  // Per-run result of the beam-ellipse + series-gate fits (FillScatters
-  // phase 1, one entry per run, computed on worker threads).
-  struct RunGateFit {
-    BeamEllipses beam;
-    std::vector<BeamFit2D> gates;
+  struct SingleRunFitResult {
+    BeamEllipses pure_beam;
+    std::vector<BeamFit2D> series_gates;
     Bool_t ok = kFALSE;
   };
 
-  // Per-run result of the event fill (FillScatters phase 2): the run's
-  // private scatter histograms (merged afterwards) and trace reservoir slice.
-  struct FillRunResult {
+  struct SingleRunFillResult {
     std::vector<TH2F *> scatters;
     std::vector<TraceEvt> reservoir;
-    Long64_t seen = 0;       // events read from the chain
-    Long64_t gated = 0;      // events passing all filters with a reaction mask
-    Long64_t n_rej_gate = 0; // rejected by the series beam gates
-    Long64_t n_rej_pileup = 0;    // rejected by IsPileup
-    Long64_t n_rej_noise = 0;     // rejected by IsNoise
-    Long64_t n_rej_highstrip = 0; // rejected by IsHighStrip
-    Long64_t n_rej_offbeam = 0;   // rejected by IsOffbeam
+    Long64_t seen = 0;
+    Long64_t kept_reaction = 0;
+    Long64_t n_rej_gate = 0;
+    Long64_t n_rej_pileup = 0;
+    Long64_t n_rej_noise = 0;
+    Long64_t n_rej_highstrip = 0;
+    Long64_t n_rej_offbeam = 0;
   };
 
-  static RunGateFit FitRunGates(Int_t run, TChain *chain);
-  static FillRunResult FillRunScatters(
-      Int_t run, TChain *chain, const std::vector<GateSpec> &active_gates,
-      const std::vector<BeamFit2D> &run_gates, const BeamEllipses &run_beam);
+  static SingleRunFitResult FitRunGates(Int_t run, TChain *chain);
+  static SingleRunFillResult
+  FillRunScatters(Int_t run, TChain *chain,
+                  const std::vector<GateStripPair> &active_pairs,
+                  const std::vector<BeamFit2D> &series_gates,
+                  const BeamEllipses &run_pure_beam);
 
   void PlotScatters();
 
@@ -142,18 +133,19 @@ private:
   static Bool_t IsHighStrip(const EnergyView &ev);
   static Bool_t IsOffbeam(const EnergyView &ev);
   static Double_t SumRange(const Double_t *total, Int_t lo, Int_t hi);
-  static std::vector<GateSpec> ActiveGates();
+  static std::vector<GateStripPair> ActiveGatePairs();
 
   static TString CacheName();
   static Bool_t PassesGate(const BeamFit2D &gate, const EnergyView &ev,
                            Int_t sx, Int_t sy);
 
   static BeamFit2D FindBeamGate(TChain *chain, Int_t sx, Int_t sy,
-                                const std::vector<GateSpec> &prior_specs,
-                                const std::vector<BeamFit2D> &prior_gates,
+                                const std::vector<GateStripPair> &seed_pairs,
+                                const std::vector<BeamFit2D> &seed_gates,
                                 const TString &tag, const TString &subdir);
 
-  static void DrawTraceSet(const std::vector<TGraph *> &traces, Int_t color);
+  static void DrawClassTraceSet(const std::vector<TGraph *> &traces,
+                                Int_t color);
   static TGraph *TraceFromTotal(const Float_t *total);
   static void DrawRegionTraces(const TString &save_name, const TString &subdir,
                                const std::vector<TGraph *> &beam,
@@ -173,21 +165,16 @@ private:
                           const std::vector<TGraph *> &aa,
                           const std::vector<TGraph *> &an, Double_t &y_min,
                           Double_t &y_max);
-  static TCutG *PromptCut(TCanvas *c, const char *name, const char *label);
+  static TCutG *InteractiveRegionCut(TCanvas *c, const char *name,
+                                     const char *label);
 
   static void SmoothTrace(const Double_t *in, Double_t *out, Int_t width);
 
-  // Savitzky-Golay smoothing: 3rd-degree, 5-point window, coefficients
-  // [-3,12,17,12,-3]/35; at edges the window shrinks and renormalises.
   static void SavitzkyGolay(const Double_t *in, Double_t *out);
 
-  // CFD-style trigger finder: first strip whose beam-subtracted signal exceeds
-  // a peak fraction and an N-sigma gate; returns the strip index or -1.
   static Int_t FindTrigger(const Double_t *td, const Double_t *base,
                            Double_t beam_sigma);
 
-  // Build a TGraph from Savitzky-Golay-smoothed per-strip totals. Input is
-  // the raw normed array; smoothing is applied internally before graph build.
   static TGraph *SmoothedTraceFromTotal(const Float_t *total);
 
   void ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
@@ -197,8 +184,8 @@ private:
   SimFingerprint(const std::vector<RemixSim::SimFileSpec> &specs);
   static TString BuildFingerprint(const std::vector<Int_t> &run_order,
                                   std::map<Int_t, TChain *> &chains);
-  static void YBounds(Double_t *y_lo, Double_t *y_hi);
-  static TString PrettyLabel(const TString &tag);
+  static void DisplayYBounds(Double_t *y_lo, Double_t *y_hi);
+  static TString SimLegendLabel(const TString &tag);
   static Bool_t SimBeamGains(Double_t *gain);
   static void SimTotal(const Float_t *left, const Float_t *right,
                        const Double_t *gain, Double_t *total);

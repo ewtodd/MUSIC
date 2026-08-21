@@ -15,6 +15,7 @@
 #include <mutex>
 #include <vector>
 
+// TODO: check how much this is hurting multithreaded perf
 // Serializes all plotting/canvas work; ROOT's global graphics state is not
 // thread-safe and the pipeline runs file workers concurrently.
 extern std::mutex g_plot_mutex;
@@ -29,7 +30,6 @@ public:
   static TString CompassBinPath(const FileSpec &s);
   static std::vector<TString> DiscoverRunSuffixes(Int_t run);
 
-  // SOLARIS .sol file path and discovery
   static TString SolBinPath(const FileSpec &s);
   static std::vector<TString> DiscoverSolRunSuffixes(Int_t run);
   static std::vector<TString> DiscoverProcessedRunSuffixes(Int_t run);

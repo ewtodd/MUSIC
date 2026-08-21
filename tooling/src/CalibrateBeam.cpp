@@ -44,43 +44,6 @@ Int_t ChannelToEresIndex(const ChannelCal &c) {
   return -1;
 }
 
-// Per-channel ADC histogram of the samples that fed each beam anchor. One file
-// per channel under <plot_subdir>/beam_peak, named beam_peak_<channel>.
-void SaveBeamPeakChannelHistograms(
-    const std::vector<ChannelCal> &chans,
-    const std::vector<std::vector<Float_t>> &samples,
-    const std::vector<TF1 *> &fits, const TString &plot_subdir) {
-  TString subdir = plot_subdir + "/beam_peak";
-  for (Int_t i = 0; i < Int_t(chans.size()); i++) {
-    const ChannelCal &c = chans[i];
-    const std::vector<Float_t> &v = samples[i];
-    if (Long64_t(v.size()) < kMinSamples)
-      continue;
-    // Same binning recipe the fit used, so the overlaid Gaussian's amplitude
-    // matches this histogram exactly.
-    Double_t mode = 0.0, sigma = 0.0;
-    RobustPeakSeed(v, mode, sigma);
-    TH1F *h = MakeBeamPeakHist(Form("h_beam_peak_%s", c.name.Data()),
-                               Form(";%s #DeltaE [ADC];Counts", c.name.Data()),
-                               v, mode, sigma);
-    TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
-    PlottingUtils::ConfigureAndDrawHistogram(h, kBlack);
-    TF1 *fit = fits[i];
-    if (fit) {
-      fit->SetLineColor(kViolet + 2);
-      fit->SetLineWidth(2);
-      fit->Draw("L SAME");
-    }
-    if (Constants::cfg.SAVE_PLOTS)
-      PlottingUtils::SaveFigure(cv, Form("beam_peak_%s", c.name.Data()), subdir,
-                                PlotSaveOptions::kLINEAR);
-    delete cv;
-    delete h;
-  }
-}
-
-// Writes a one-row calibration tree; layout matches AggregateEresTomlForRun's
-// reader, pass align=nullptr when none was computed.
 void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
                           const StripAlignmentResult *align) {
   dst->cd();
@@ -124,7 +87,6 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
 
   // Two-point linear correction: (B, 1.0)-(P, 2.0) fixes ADC sublinearity.
   // Default slope=1, intercept=0 when align is nullptr (identity).
-  Float_t beam_e_min = 0.0f, beam_e_max = 0.0f;
   Float_t strip_slope[18];
   Float_t strip_intercept[18];
   for (Int_t s = 0; s < 18; s++) {
@@ -132,8 +94,6 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
     strip_intercept[s] = 0.0f;
   }
   if (align) {
-    beam_e_min = Float_t(align->beam_e_min);
-    beam_e_max = Float_t(align->beam_e_max);
     if (align->ok) {
       for (Int_t s = 0; s < 18; s++) {
         strip_slope[s] = Float_t(align->slopes[s]);
@@ -141,16 +101,12 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
       }
     }
   }
-  cal->Branch("BeamEMin", &beam_e_min, "BeamEMin/F");
-  cal->Branch("BeamEMax", &beam_e_max, "BeamEMax/F");
   cal->Branch("StripSlope", strip_slope, "StripSlope[18]/F");
   cal->Branch("StripIntercept", strip_intercept, "StripIntercept[18]/F");
   cal->Fill();
   cal->Write("calibration", TObject::kOverwrite);
 }
 
-// Writes the per-channel gain tree into the events file; downstream readers
-// recover a.u. on the fly via gain × raw ADC (EnergyView).
 void WriteCalibrationToEvents(const FileSpec &spec,
                               const std::vector<ChannelCal> &chans,
                               const StripAlignmentResult *align) {
@@ -167,26 +123,6 @@ void WriteCalibrationToEvents(const FileSpec &spec,
   std::cout << "  wrote calibration into " << events_subpath << std::endl;
   f->Close();
   delete f;
-}
-
-// Derives beam-energy window from Strip0's Gaussian fit width in a.u.
-// Peak is at 1.0 by construction, window = 1.0 ± 3*sigma/fit_adc.
-void DeriveBeamEnergyWindow(const std::vector<ChannelCal> &chans,
-                            StripAlignmentResult &align) {
-  const Double_t kBeamNSigma = 3.0;
-  for (Int_t i = 0; i < Int_t(chans.size()); i++) {
-    const ChannelCal &c = chans[i];
-    if (c.side == 'S' && c.strip == 0 && IsCalibrated(c)) {
-      Double_t g = Gain(c);
-      align.beam_e_min = g * (c.fit_adc - kBeamNSigma * c.fit_sigma_adc);
-      align.beam_e_max = g * (c.fit_adc + kBeamNSigma * c.fit_sigma_adc);
-      std::cout << "  beam energy window (from Strip0): [" << align.beam_e_min
-                << ", " << align.beam_e_max << "] a.u." << std::endl;
-      return;
-    }
-  }
-  std::cerr << "  beam energy window: Strip0 not calibrated, using [0, 0]"
-            << std::endl;
 }
 
 // Two-point line (beam→1.0, pileup→2.0) fixes ADC sublinearity: pileup reads at
@@ -676,17 +612,16 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
   StripPairSamples pairs[18];
   CollectAnchorSamplesOneSubfile(spec, chans, beam, beam0vGrid, samples, pairs);
   std::vector<TF1 *> peak_fits;
+
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
     ReduceToAnchors(chans, samples, peak_fits, file_label, pairs);
-    SaveBeamPeakChannelHistograms(chans, samples, peak_fits, plot_subdir);
   }
+
   for (Int_t i = 0; i < Int_t(peak_fits.size()); i++)
     delete peak_fits[i];
   peak_fits.clear();
 
-  // Print uncalibrated channels with reason; long tag (dominant signal) makes
-  // that failure easy to spot: grep "[uncalibrated long]".
   for (Int_t i = 0; i < Int_t(chans.size()); i++) {
     const ChannelCal &c = chans[i];
     if (IsCalibrated(c))
@@ -715,25 +650,17 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
                 << Form("%.2f", ResolutionFWHMPercent(chans[i])) << "% FWHM"
                 << std::endl;
 
-  // Derive beam energy window from Strip0 (mu ± 3*sigma in a.u.).
-  StripAlignmentResult align;
-  DeriveBeamEnergyWindow(chans, align);
-
-  // Write initial cal tree (gains + beam window) so EnergyView can read it
-  // for the alignment step.
-  WriteCalibrationToEvents(spec, chans, &align);
+  // Write initial cal tree (gains, identity linear correction) so EnergyView
+  // can decode events for the alignment step.
+  WriteCalibrationToEvents(spec, chans, nullptr);
 
   // Two-point per-strip alignment: find beam+pileup centroids, derive linear
-  // correction (beam→1.0, pileup→2.0). Preserve beam window from
-  // DeriveBeamEnergyWindow.
-  Double_t beam_e_min = align.beam_e_min;
-  Double_t beam_e_max = align.beam_e_max;
+  // correction (beam→1.0, pileup→2.0).
+  StripAlignmentResult align;
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
     align = FindStripCentroidAlignment(spec, plot_subdir, file_label);
   }
-  align.beam_e_min = beam_e_min;
-  align.beam_e_max = beam_e_max;
   if (align.ok) {
     WriteCalibrationToEvents(spec, chans, &align);
   }

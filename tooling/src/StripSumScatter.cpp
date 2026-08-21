@@ -2,8 +2,8 @@
 
 StripSumScatter::StripSumScatter() {
   for (Int_t i = 0; i < 64; i++) {
-    m_yLo[i] = 0.0;
-    m_yHi[i] = 0.0;
+    m_displayYLo[i] = 0.0;
+    m_displayYHi[i] = 0.0;
   }
 }
 
@@ -14,13 +14,13 @@ StripSumScatter::~StripSumScatter() {
   m_scatter.clear();
 }
 
-Int_t StripSumScatter::ReacIndex(Int_t reac) {
+Int_t StripSumScatter::ReactionIndex(Int_t reac) {
   return reac - Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
 }
 
-Int_t StripSumScatter::YLoOf(Int_t reac) { return reac + 1; }
+Int_t StripSumScatter::ScatterYLo(Int_t reac) { return reac + 1; }
 
-Int_t StripSumScatter::YHiOf(Int_t reac) {
+Int_t StripSumScatter::ScatterYHi(Int_t reac) {
   const Int_t kPost =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS;
   return TMath::Min(reac + kPost, 17);
@@ -82,7 +82,6 @@ Bool_t StripSumScatter::IsPureBeam(const EnergyView &ev,
     return kFALSE;
   if (!AllStripsFired(ev))
     return kFALSE;
-  // Must pass BOTH the entrance AND exit ellipses.
   if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PURE_BEAM_GATE ==
       StripSumScatterConfig::PURE_BEAM_GATE_S1_S2) {
     if (!PassesGate(be.s1_s2, ev, 1, 2))
@@ -161,23 +160,23 @@ Double_t StripSumScatter::SumRange(const Double_t *total, Int_t lo, Int_t hi) {
   return sum;
 }
 
-std::vector<GateSpec> StripSumScatter::ActiveGates() {
-  std::vector<GateSpec> gates;
-  GateSpec g;
-  g.sx = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_X;
-  g.sy = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_Y;
-  gates.push_back(g);
+std::vector<GateStripPair> StripSumScatter::ActiveGatePairs() {
+  std::vector<GateStripPair> pairs;
+  GateStripPair p;
+  p.sx = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_X;
+  p.sy = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_Y;
+  pairs.push_back(p);
   if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_GATE_S3_S4) {
-    g.sx = 3;
-    g.sy = 4;
-    gates.push_back(g);
+    p.sx = 3;
+    p.sy = 4;
+    pairs.push_back(p);
   }
   if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_GATE_S5_S6) {
-    g.sx = 5;
-    g.sy = 6;
-    gates.push_back(g);
+    p.sx = 5;
+    p.sy = 6;
+    pairs.push_back(p);
   }
-  return gates;
+  return pairs;
 }
 
 TString StripSumScatter::CacheName() {
@@ -205,8 +204,8 @@ Bool_t StripSumScatter::PassesGate(const BeamFit2D &gate, const EnergyView &ev,
 
 BeamFit2D
 StripSumScatter::FindBeamGate(TChain *chain, Int_t sx, Int_t sy,
-                              const std::vector<GateSpec> &prior_specs,
-                              const std::vector<BeamFit2D> &prior_gates,
+                              const std::vector<GateStripPair> &seed_pairs,
+                              const std::vector<BeamFit2D> &seed_gates,
                               const TString &tag, const TString &subdir) {
   const Int_t kGateBins = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_BINS;
   const Double_t kGateMin = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_MIN;
@@ -231,11 +230,10 @@ StripSumScatter::FindBeamGate(TChain *chain, Int_t sx, Int_t sy,
   for (Long64_t j = 0; j < n; j += stride) {
     chain->GetEntry(j);
     ev.Decode();
-    // Series gating: only events passing every prior gate feed this fit.
     Bool_t prior_ok = kTRUE;
-    for (Int_t gi = 0; gi < Int_t(prior_specs.size()); gi++)
-      if (!PassesGate(prior_gates[gi], ev, prior_specs[gi].sx,
-                      prior_specs[gi].sy)) {
+    for (Int_t gi = 0; gi < Int_t(seed_pairs.size()); gi++)
+      if (!PassesGate(seed_gates[gi], ev, seed_pairs[gi].sx,
+                      seed_pairs[gi].sy)) {
         prior_ok = kFALSE;
         break;
       }
@@ -281,7 +279,6 @@ StripSumScatter::FindBeamGate(TChain *chain, Int_t sx, Int_t sy,
   std::lock_guard<std::mutex> lock(g_plot_mutex);
   TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
   PlottingUtils::ConfigureAndDraw2DHistogram(h, c);
-  // Correlated 2D Gaussian ellipse matching the InEllipseXY gate.
   Double_t sxx = out.sigma_x * out.sigma_x;
   Double_t syy = out.sigma_y * out.sigma_y;
   Double_t sxy = out.rho * out.sigma_x * out.sigma_y;
@@ -370,10 +367,10 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
 
   // Remaining knobs that change the cached scatter/reservoir contents:
   // x span, beam classification, reservoir cap, predicate toggles.
-  const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
-  const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
-  // y span YLoOf..YHiOf (YHiOf uses POST_TRIGGER_SUM_STRIPS): moving it
-  // changes every scatter's y value, so the knob itself is stamped.
+  const Int_t kXStripLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_STRIP_LO;
+  const Int_t kXStripHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_STRIP_HI;
+  // y span ScatterYLo..ScatterYHi (ScatterYHi uses POST_TRIGGER_SUM_STRIPS):
+  // moving it changes every scatter's y value, so the knob itself is stamped.
   const Int_t kPostTrig =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS;
   const Int_t kPureBeamGate =
@@ -385,16 +382,14 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
   const Bool_t kIgnStrip0 = Constants::cfg.IGNORE_STRIP_0;
   const Bool_t kIgnStrip17 = Constants::cfg.IGNORE_STRIP_17;
   const Bool_t kIgnShort = Constants::cfg.IGNORE_SHORT_STRIPS;
-  // When set, scatter x/y come from SG-smoothed totals (FillRunScatters),
-  // changing the cache even with every other knob identical.
   const Bool_t kScatterSavgol =
-      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SCATTER_SAVGOL;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SCATTER_CALC_FROM_SAVGOL;
 
-  // Display-only windows (XMIN/XMAX, YMIN/YMAX, Y_RANGE) are NOT stamped:
-  // scatters are built over the fixed ScatterBuildRange (stamped with bin
-  // counts).
+  // Display-only windows (X_DISPLAY_MIN/X_DISPLAY_MAX,
+  // Y_DISPLAY_MIN/Y_DISPLAY_MAX, Y_DISPLAY_RANGE) are NOT stamped: scatters are
+  // built over the fixed ScatterBuildRange (stamped with bin counts).
   TString s = Form(
-      "v17 reac[%d,%d] jump[%.3f,%.3f] smooth=%d,%d "
+      "v18 reac[%d,%d] jump[%.3f,%.3f] smooth=%d,%d "
       "step=%.3f s17=%.3f gate[s%d,s%d,%.2f,%.2f,%d,%.3f,%.3f,seed=%d,"
       "sample=%lld] "
       "xbuild[%.3f,%.3f,%d] "
@@ -409,13 +404,13 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
       ScatterBuildRange::kMax, kXBins, kYBins, kPostTrig, kScatterSavgol,
       kRejNoise, kNoiseThresh, kNoiseMinStrips, kRejPileup, kPileupThresh,
       kPileupMinStrips, kRejOffbeam, kOffbeamDist, kOffbeamMinStrips,
-      kRejHighStrip, kHighStripCap, kXLo, kXHi, kPureBeamGate, kTracesPerClass,
-      kReqS16BelowBeam, kIgnStrip0, kIgnStrip17, kIgnShort);
+      kRejHighStrip, kHighStripCap, kXStripLo, kXStripHi, kPureBeamGate,
+      kTracesPerClass, kReqS16BelowBeam, kIgnStrip0, kIgnStrip17, kIgnShort);
   // Active beam gates (also keyed by cache filename, but folded in here too so
   // a mismatch never silently reuses a stale same-named cache).
-  std::vector<GateSpec> gates = ActiveGates();
-  for (Int_t i = 0; i < Int_t(gates.size()); i++)
-    s += Form(" g[s%d,s%d]", gates[i].sx, gates[i].sy);
+  std::vector<GateStripPair> gatePairs = ActiveGatePairs();
+  for (Int_t i = 0; i < Int_t(gatePairs.size()); i++)
+    s += Form(" g[s%d,s%d]", gatePairs[i].sx, gatePairs[i].sy);
 
   for (Int_t i = 0; i < Int_t(run_order.size()); i++) {
     Int_t run = run_order[i];
@@ -454,9 +449,10 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
   return s;
 }
 
-// Per-strip y DISPLAY bounds from Y_RANGE (fallback YMIN/YMAX); x is
-// strip-independent. Applied at draw time via SetRangeUser; never rebuilds.
-void StripSumScatter::YBounds(Double_t *y_lo, Double_t *y_hi) {
+// Per-strip y DISPLAY bounds from Y_DISPLAY_RANGE (fallback
+// Y_DISPLAY_MIN/Y_DISPLAY_MAX); x is strip-independent. Applied at draw time
+// via SetRangeUser; never rebuilds.
+void StripSumScatter::DisplayYBounds(Double_t *y_lo, Double_t *y_hi) {
   const Int_t kReacMin =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
   const Int_t kReacMax =
@@ -464,18 +460,18 @@ void StripSumScatter::YBounds(Double_t *y_lo, Double_t *y_hi) {
   for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
     Int_t ri = reac - kReacMin;
     std::map<Int_t, std::pair<Double_t, Double_t>>::const_iterator it =
-        Constants::cfg.STRIP_SUM_SCATTER_CONFIG.Y_RANGE.find(reac);
-    if (it != Constants::cfg.STRIP_SUM_SCATTER_CONFIG.Y_RANGE.end()) {
+        Constants::cfg.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_RANGE.find(reac);
+    if (it != Constants::cfg.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_RANGE.end()) {
       y_lo[ri] = it->second.first;
       y_hi[ri] = it->second.second;
     } else {
-      y_lo[ri] = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.YMIN;
-      y_hi[ri] = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.YMAX;
+      y_lo[ri] = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MIN;
+      y_hi[ri] = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MAX;
     }
   }
 }
 
-TString StripSumScatter::PrettyLabel(const TString &tag) {
+TString StripSumScatter::SimLegendLabel(const TString &tag) {
   TString base = RemixSim::TagWithoutStrip(tag);
   base.ReplaceAll("_eres", "");
   if (base == "aa")
@@ -534,11 +530,11 @@ Bool_t StripSumScatter::TryLoadCache(const TString &cacheName,
   TTree *tt = static_cast<TTree *>(cf->Get("traces"));
   if (ok && tt) {
     TraceEvt e;
-    tt->SetBranchAddress("total", e.total);
-    tt->SetBranchAddress("total_adc", e.total_adc);
+    tt->SetBranchAddress("total_norm", e.total_norm);
+    tt->SetBranchAddress("total_raw", e.total_raw);
     tt->SetBranchAddress("reac_mask", &e.reac_mask);
-    tt->SetBranchAddress("beam_flat", &e.beam_flat);
-    tt->SetBranchAddress("both_mult", &e.both_mult);
+    tt->SetBranchAddress("is_pure_beam", &e.is_pure_beam);
+    tt->SetBranchAddress("both_side_mult", &e.both_side_mult);
     Long64_t nt = tt->GetEntries();
     m_reservoir.reserve(nt);
     for (Long64_t j = 0; j < nt; j++) {
@@ -582,11 +578,11 @@ void StripSumScatter::WriteCache(const TString &cacheName,
 
   TTree *tt = new TTree("traces", "strip-sum trace reservoir");
   TraceEvt e;
-  tt->Branch("total", e.total, "total[18]/F");
-  tt->Branch("total_adc", e.total_adc, "total_adc[18]/F");
+  tt->Branch("total_norm", e.total_norm, "total_norm[18]/F");
+  tt->Branch("total_raw", e.total_raw, "total_raw[18]/F");
   tt->Branch("reac_mask", &e.reac_mask, "reac_mask/i");
-  tt->Branch("beam_flat", &e.beam_flat, "beam_flat/O");
-  tt->Branch("both_mult", &e.both_mult, "both_mult/I");
+  tt->Branch("is_pure_beam", &e.is_pure_beam, "is_pure_beam/O");
+  tt->Branch("both_side_mult", &e.both_side_mult, "both_side_mult/I");
   for (Int_t k = 0; k < Int_t(m_reservoir.size()); k++) {
     e = m_reservoir[k];
     tt->Fill();

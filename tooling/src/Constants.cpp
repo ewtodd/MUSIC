@@ -41,8 +41,8 @@ void StripSumScatterConfig::SetDefaults() {
 
   MAX_STRIP_SUM_WORKERS = 12;
 
-  X_LO = 1;
-  X_HI = 16;
+  X_STRIP_LO = 1;
+  X_STRIP_HI = 16;
 
   GATE_STRIP_X = 1;
   GATE_STRIP_Y = 2;
@@ -52,11 +52,11 @@ void StripSumScatterConfig::SetDefaults() {
   GATE_MAX = 3.0;
   GATE_BINS = 240;
 
-  XMIN = 14;
-  XMAX = 26;
+  X_DISPLAY_MIN = 14;
+  X_DISPLAY_MAX = 26;
   XBINS = 1500;
-  YMIN = 0;
-  YMAX = 20;
+  Y_DISPLAY_MIN = 0;
+  Y_DISPLAY_MAX = 20;
   YBINS = 1500;
 
   SAMPLE_MAX_POINTS = 2000000;
@@ -68,7 +68,7 @@ void StripSumScatterConfig::SetDefaults() {
   REQUIRE_GATE_S3_S4 = kFALSE;
   REQUIRE_GATE_S5_S6 = kFALSE;
   SKIP_SAVGOL_PLOTS = kFALSE;
-  SCATTER_SAVGOL = kFALSE;
+  SCATTER_CALC_FROM_SAVGOL = kFALSE;
   REQUIRE_STRIP_16_BELOW_BEAM = kFALSE;
   SKIP_CLUSTER_HISTS = kFALSE;
 }
@@ -100,7 +100,7 @@ DatasetConfig::DatasetConfig() {
   TIMING_DO_SORT = kFALSE;
 
   REJECT_FLAGGED_EVENTS = kFALSE;
-  REJECT_MULTI_HIT_EVENTS = kFALSE;
+  COMPLETE_CHECK_STRIP_0 = kTRUE;
   COMPLETE_CHECK_END_STRIP = 14;
 
   IGNORE_SHORT_STRIPS = kFALSE;

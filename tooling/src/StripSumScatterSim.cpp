@@ -95,8 +95,8 @@ void StripSumScatter::SimTotal(const Float_t *left, const Float_t *right,
 TGraph *StripSumScatter::SimPopScatter(const TString &file, Int_t reac,
                                        const Double_t *gain,
                                        Long64_t max_points) {
-  const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
-  const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
+  const Int_t kXStripLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_STRIP_LO;
+  const Int_t kXStripHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_STRIP_HI;
 
   TFile *f = IO::OpenForReading(file);
   if (!f || f->IsZombie()) {
@@ -111,10 +111,10 @@ TGraph *StripSumScatter::SimPopScatter(const TString &file, Int_t reac,
     delete f;
     return nullptr;
   }
-  // Same y window as the data scatter (YLoOf/YHiOf), so sim points land in
-  // the data's coordinate space instead of a hardcoded, stale one.
-  Int_t y_lo = YLoOf(reac);
-  Int_t y_hi = YHiOf(reac);
+  // Same y window as the data scatter (ScatterYLo/ScatterYHi), so sim points
+  // land in the data's coordinate space instead of a hardcoded, stale one.
+  Int_t y_lo = ScatterYLo(reac);
+  Int_t y_hi = ScatterYHi(reac);
   Float_t left[18] = {0}, right[18] = {0};
   t->SetBranchAddress("Left_0_17_dE", left);
   t->SetBranchAddress("RightdE", right);
@@ -126,7 +126,7 @@ TGraph *StripSumScatter::SimPopScatter(const TString &file, Int_t reac,
     t->GetEntry(j);
     Double_t total[18];
     SimTotal(left, right, gain, total);
-    Double_t x = SumRange(total, kXLo, kXHi);
+    Double_t x = SumRange(total, kXStripLo, kXStripHi);
     Double_t y = SumRange(total, y_lo, y_hi);
     if (x > 0.0)
       g->SetPoint(k++, x, y);
@@ -245,10 +245,11 @@ TString StripSumScatter::SimFingerprint(
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
   const Int_t kReacMax =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
-  const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
-  const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
+  const Int_t kXStripLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_STRIP_LO;
+  const Int_t kXStripHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_STRIP_HI;
 
-  TString s = Form("v3 reac[%d,%d] x[%d,%d]", kReacMin, kReacMax, kXLo, kXHi);
+  TString s =
+      Form("v3 reac[%d,%d] x[%d,%d]", kReacMin, kReacMax, kXStripLo, kXStripHi);
   for (Int_t i = 0; i < Int_t(specs.size()); i++) {
     TString f = RemixSim::SimRootPath(specs[i]);
     Long_t id = 0, flags = 0, mtime = 0;
@@ -328,8 +329,8 @@ void StripSumScatter::SimOverlay() {
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
   const Int_t kReacMax =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
-  const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
-  const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
+  const Int_t kXStripLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_STRIP_LO;
+  const Int_t kXStripHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_STRIP_HI;
 
   std::vector<RemixSim::SimFileSpec> specs = RemixSim::BuildFileSpecs();
   if (specs.empty()) {
@@ -349,7 +350,7 @@ void StripSumScatter::SimOverlay() {
     for (Int_t i = 0; i < Int_t(specs.size()); i++) {
       SimPop p;
       p.file = RemixSim::SimRootPath(specs[i]);
-      p.label = PrettyLabel(specs[i].tag);
+      p.label = SimLegendLabel(specs[i].tag);
       Int_t strip = RemixSim::ReactionStripOf(specs[i].tag);
       if (strip < 0)
         refs.push_back(p);
@@ -396,8 +397,10 @@ void StripSumScatter::SimOverlay() {
   }
 
   std::map<Int_t, std::vector<TGraph *>>::iterator it;
-  const Double_t kXMin = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMIN;
-  const Double_t kXMax = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.XMAX;
+  const Double_t kXDisplayMin =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MIN;
+  const Double_t kXDisplayMax =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MAX;
   for (it = by_strip.begin(); it != by_strip.end(); ++it) {
     Int_t r = it->first;
     std::map<Int_t, TH2F *>::const_iterator sit = m_scatter.find(r);
@@ -406,13 +409,14 @@ void StripSumScatter::SimOverlay() {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
     TH2F *ref = sit->second;
     // Frame the sim overlay with the same display window as the data scatter
-    // (x XMIN/XMAX, y Y_RANGE/YMIN/YMAX): the data hists use the wide
+    // (x X_DISPLAY_MIN/X_DISPLAY_MAX, y
+    // Y_DISPLAY_RANGE/Y_DISPLAY_MIN/Y_DISPLAY_MAX): the data hists use the wide
     // ScatterBuildRange, so their axis extents don't match the plotted window.
     Double_t y_lo[64], y_hi[64];
-    YBounds(y_lo, y_hi);
-    Int_t ri = ReacIndex(r);
-    TH2F *frame = new TH2F(Form("sim_frame_r%d", r), "", 10, kXMin, kXMax, 10,
-                           y_lo[ri], y_hi[ri]);
+    DisplayYBounds(y_lo, y_hi);
+    Int_t ri = ReactionIndex(r);
+    TH2F *frame = new TH2F(Form("sim_frame_r%d", r), "", 10, kXDisplayMin,
+                           kXDisplayMax, 10, y_lo[ri], y_hi[ri]);
     frame->SetStats(0);
     frame->GetXaxis()->SetTitle(ref->GetXaxis()->GetTitle());
     frame->GetYaxis()->SetTitle(ref->GetYaxis()->GetTitle());
@@ -443,7 +447,8 @@ void StripSumScatter::SimOverlay() {
     leg->Draw();
     PlottingUtils::SaveFigure(c,
                               Form("sim_normsumE_reac%d_s%d_%d_vs_s%d_%d", r,
-                                   YLoOf(r), YHiOf(r), kXLo, kXHi),
+                                   ScatterYLo(r), ScatterYHi(r), kXStripLo,
+                                   kXStripHi),
                               "sim_scatter", PlotSaveOptions::kLINEAR);
     delete leg;
     delete c;

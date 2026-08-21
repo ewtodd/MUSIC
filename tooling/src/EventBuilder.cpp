@@ -1,5 +1,6 @@
 #include "EventBuilder.hpp"
 #include "EventsSummary.hpp"
+#include <DedupStrategy.hpp>
 
 void EventBuilder::ResetEventState(EventState &e) {
   for (Int_t k = 0; k < 18; k++) {
@@ -7,7 +8,7 @@ void EventBuilder::ResetEventState(EventState &e) {
     e.rightdE[k] = 0;
     e.totaldE[k] = 0;
   }
-  for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++)
+  for (Int_t k = 0; k < 36; k++)
     e.hits[k] = 0;
   e.cathode = -1;
   e.grid = 0;
@@ -16,7 +17,7 @@ void EventBuilder::ResetEventState(EventState &e) {
 }
 
 void EventBuilder::ResetPerChannelData(PerChannelData &p) {
-  for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++) {
+  for (Int_t k = 0; k < 36; k++) {
     p.timestamps[k] = 0;
     p.energies[k] = 0;
     p.flags[k] = 0;
@@ -55,13 +56,13 @@ EventBuilder::SlotMap EventBuilder::BuildSlotMap() {
     Int_t idx = board * Constants::cfg.N_CHANNELS + channel;
     const TString &name = it->second;
     if (name == "Strip0") {
-      sm[idx] = Constants::ARR_SLOT_STRIP_0;
+      sm[idx] = 0;
     } else if (name == "Strip17") {
-      sm[idx] = Constants::ARR_SLOT_STRIP_17;
+      sm[idx] = 33;
     } else if (name == "Cathode") {
-      sm[idx] = Constants::ARR_SLOT_CATHODE;
+      sm[idx] = 34;
     } else if (name == "Grid") {
-      sm[idx] = Constants::ARR_SLOT_GRID;
+      sm[idx] = 35;
     } else if (name.Length() >= 2 && (name[0] == 'L' || name[0] == 'R')) {
       TString numstr = name(1, name.Length() - 1);
       if (numstr.IsDigit()) {
@@ -78,9 +79,9 @@ void EventBuilder::AssignHit(EventState &e, PerChannelData *pc,
                              ULong64_t ref_ts, Int_t slot, UShort_t energy,
                              ULong64_t timestamp, UInt_t flags,
                              DedupStrategy strategy) {
-  // Slots are 0..ARR_SLOT_GRID by construction (BuildSlotMap); guard
-  // defensively so an out-of-range slot can never index the arrays below.
-  if (slot < 0 || slot >= Constants::N_ARR_SLOTS)
+  // Slots are 0..35 by construction (BuildSlotMap); guard defensively so an
+  // out-of-range slot can never index the arrays below.
+  if (slot < 0 || slot >= 36)
     return;
   e.flags_or |= flags;
 
@@ -95,17 +96,17 @@ void EventBuilder::AssignHit(EventState &e, PerChannelData *pc,
   }
 
   if (wins) {
-    if (slot == Constants::ARR_SLOT_STRIP_0)
+    if (slot == 0)
       e.totaldE[0] = energy;
     else if (slot <= 16)
       e.leftdE[slot] = energy;
     else if (slot <= 32)
       e.rightdE[slot - 16] = energy;
-    else if (slot == Constants::ARR_SLOT_STRIP_17)
+    else if (slot == 33)
       e.totaldE[17] = energy;
-    else if (slot == Constants::ARR_SLOT_CATHODE)
+    else if (slot == 34)
       e.cathode = energy;
-    else if (slot == Constants::ARR_SLOT_GRID)
+    else if (slot == 35)
       e.grid = energy;
     if (pc) {
       pc->timestamps[slot] = timestamp;
@@ -113,15 +114,13 @@ void EventBuilder::AssignHit(EventState &e, PerChannelData *pc,
       pc->flags[slot] = flags;
     }
   }
-  if (slot == Constants::ARR_SLOT_CATHODE)
+  if (slot == 34)
     e.had_cathode = kTRUE;
   e.hits[slot]++;
 }
 
 Bool_t EventBuilder::CheckEventComplete(const EventState &e) {
-  // 37Cl's Strip0 fires in only ~1/3 of events, so it is required only when
-  // not ignored. The highest split strip required is a config knob.
-  if (!Constants::cfg.IGNORE_STRIP_0 && e.totaldE[0] == 0)
+  if (Constants::cfg.COMPLETE_CHECK_STRIP_0 && e.totaldE[0] == 0)
     return kFALSE;
   const Int_t kEnd = Constants::cfg.COMPLETE_CHECK_END_STRIP;
   for (Int_t strip = 1; strip <= kEnd; strip += 2) {
@@ -142,30 +141,6 @@ void EventBuilder::GetFlagSummary(const EventState &e, Bool_t &has_fake,
                     (e.flags_or & CoMPASSData::INPUT_SATURATING)) != 0;
   has_pileup = (e.flags_or & CoMPASSData::PILEUP) != 0;
 }
-
-struct EventCounters {
-  Int_t total_events;
-  Int_t complete_events;
-  Int_t complete_with_fake;
-  Int_t complete_with_saturation;
-  Int_t complete_with_pileup;
-  Int_t complete_rejected;
-  Int_t complete_rejected_multi; // rejected by REJECT_MULTI_HIT_EVENTS
-  Int_t incomplete_events;
-  Int_t incomplete_with_fake;
-  Int_t incomplete_with_saturation;
-  Int_t incomplete_with_pileup;
-  Long64_t events_with_cathode;
-  Long64_t events_with_multi_cathode;
-  Long64_t events_with_multi_anode_hit;
-  Long64_t dropped_anode_hits_total;
-  Long64_t dropped_cathode_hits_total;
-  // Per-channel miss counts over all events: how often each completeness
-  // strip was zero; miss_long indexed by strip 1..16 (L odd, R even).
-  Long64_t miss_long[17];
-  Long64_t miss_strip0;
-  Long64_t miss_strip17;
-};
 
 void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
                    UShort_t *left_0_17_branch, UShort_t *rightdE_branch,
@@ -212,13 +187,13 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
   // Per-required-channel miss tally (over all events): which completeness
   // channel was zero. Long side = L for odd strips, R for even strips.
   if (e.totaldE[0] == 0)
-    c.miss_strip0++;
+    c.missing_long_0_17[0]++;
   if (e.totaldE[17] == 0)
-    c.miss_strip17++;
+    c.missing_long_0_17[17]++;
   for (Int_t s = 1; s <= 16; s++) {
     Int_t v = (s % 2 == 1) ? e.leftdE[s] : e.rightdE[s];
     if (v == 0)
-      c.miss_long[s]++;
+      c.missing_long_0_17[s]++;
   }
 
   Bool_t has_fake = kFALSE, has_saturation = kFALSE, has_pileup = kFALSE;
@@ -227,10 +202,8 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
 
   if (is_complete) {
     Bool_t reject = Constants::cfg.REJECT_FLAGGED_EVENTS && has_any_flag;
-    // Multi-hit on an anode = unambiguous pileup; catches only
-    // electronics-resolved doubles. Shaper-merged pulses have no hit-count
-    // signature (energy filters do).
-    if (Constants::cfg.REJECT_MULTI_HIT_EVENTS && any_anode_multi) {
+    if (Constants::cfg.DEDUP_STRATEGY == DedupStrategy::kDISCARD &&
+        any_anode_multi) {
       reject = kTRUE;
       c.complete_rejected_multi++;
     }
@@ -239,11 +212,11 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
         left_0_17_branch[k] = UShort_t(e.leftdE[k]);
         rightdE_branch[k] = UShort_t(e.rightdE[k]);
       }
-      // Guards are single-ended: park them in left_0_17_dE[0]/[17] (rightdE
-      // is 0 there) so the read-side left+right recompute reproduces them.
+      // End strips are not split; put them in left_0_17_dE[0]/[17]. rightdE
+      // is 0 there because it does not physically exist.
       left_0_17_branch[0] = UShort_t(e.totaldE[0]);
       left_0_17_branch[17] = UShort_t(e.totaldE[17]);
-      for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++)
+      for (Int_t k = 0; k < 36; k++)
         hits_branch[k] = UShort_t(e.hits[k]);
       cathode_branch = Short_t(e.cathode);
       grid_branch = Short_t(e.grid);
@@ -272,7 +245,7 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
         hSum.h1_grid->Fill(Double_t(e.grid));
 
       Int_t mult = 0;
-      for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++)
+      for (Int_t k = 0; k < 36; k++)
         mult += e.hits[k];
       hSum.h_mult->Fill(Double_t(mult));
     } else {
@@ -311,9 +284,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   // [1..16] the L ends; rightdE the R ends (0 at guards). Total = left+right.
   UShort_t left_0_17_dE[18], rightdE[18];
   UShort_t hits_arr[36];
-  // 14-bit ADC fits Short_t with room, preserving Cathode's -1 "no hit"
-  // sentinel (Grid shares the type); unsplit values are non-negative.
-  Short_t cathode, grid;
+  Short_t cathode, grid; // -1 if not present
   UInt_t flags_or;
 
   TTree *output_tree = new TTree("events", "MUSIC events");
@@ -324,6 +295,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   output_tree->Branch("Grid", &grid, "Grid/S");
   output_tree->Branch("FlagsOR", &flags_or, "FlagsOR/i");
 
+  // TODO: double check if this actually increases performance
   // Large baskets + disable auto-flush so ZSTD compresses in big chunks
   // instead of many small basket flushes during Fill().
   output_tree->SetAutoFlush(0);
@@ -439,10 +411,10 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   cnt.events_with_multi_anode_hit = 0;
   cnt.dropped_anode_hits_total = 0;
   cnt.dropped_cathode_hits_total = 0;
-  for (Int_t s = 0; s < 17; s++)
-    cnt.miss_long[s] = 0;
-  cnt.miss_strip0 = 0;
-  cnt.miss_strip17 = 0;
+  for (Int_t s = 0; s < 18; s++) {
+    cnt.missing_long_0_17[s] = 0;
+  }
+
   Int_t &total_events = cnt.total_events;
   Int_t &complete_events = cnt.complete_events;
   Int_t &complete_with_fake = cnt.complete_with_fake;
@@ -454,18 +426,18 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   Int_t &incomplete_with_fake = cnt.incomplete_with_fake;
   Int_t &incomplete_with_saturation = cnt.incomplete_with_saturation;
   Int_t &incomplete_with_pileup = cnt.incomplete_with_pileup;
-  Long64_t &events_with_cathode = cnt.events_with_cathode;
-  Long64_t &events_with_multi_cathode = cnt.events_with_multi_cathode;
-  Long64_t &events_with_multi_anode_hit = cnt.events_with_multi_anode_hit;
-  Long64_t &dropped_anode_hits_total = cnt.dropped_anode_hits_total;
-  Long64_t &dropped_cathode_hits_total = cnt.dropped_cathode_hits_total;
+  Int_t &events_with_cathode = cnt.events_with_cathode;
+  Int_t &events_with_multi_cathode = cnt.events_with_multi_cathode;
+  Int_t &events_with_multi_anode_hit = cnt.events_with_multi_anode_hit;
+  Int_t &dropped_anode_hits_total = cnt.dropped_anode_hits_total;
+  Int_t &dropped_cathode_hits_total = cnt.dropped_cathode_hits_total;
 
   Int_t n_ref = 0;
   ULong64_t first_ref_ts = 0;
   ULong64_t last_ref_ts = 0;
   Int_t emptyChannelMapEvents = 0;
-  Long64_t cathode_hits_total = 0;
-  Long64_t dropped_outside_window = 0;
+  Int_t cathode_hits_total = 0;
+  Int_t dropped_outside_window = 0;
   Long64_t event_idx = 0;
 
   ULong64_t window_ps = ULong64_t(Constants::cfg.EVENT_TIME_WINDOW_US * 1.0e6);
@@ -491,15 +463,13 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       continue;
     }
 
-    if (slot == Constants::ARR_SLOT_CATHODE)
+    if (slot == 34)
       cathode_hits_total++;
 
     if (ref_mode) {
       // Reference-channel mode: a reference hit seeds a new event; the other
       // hits queue until the next reference hit (or end of stream).
       if (slot == ref_slot) {
-        // Grid ADC window filter: skip reference hits outside the accepted
-        // range so they don't seed an event.
         if (Double_t(h.energy) < Constants::cfg.REFERENCE_CHANNEL_MIN_ADC ||
             Double_t(h.energy) > Constants::cfg.REFERENCE_CHANNEL_MAX_ADC) {
           continue;
@@ -693,13 +663,15 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     std::cout << "Per-channel miss rate (% of all events where the "
                  "completeness-required channel was zero):"
               << std::endl;
-    std::cout << "  Strip0=" << (100.0 * cnt.miss_strip0 / total_events)
-              << "%   Strip17=" << (100.0 * cnt.miss_strip17 / total_events)
-              << "%" << std::endl;
+    std::cout << "  Strip0="
+              << (100.0 * cnt.missing_long_0_17[0] / total_events)
+              << "%   Strip17="
+              << (100.0 * cnt.missing_long_0_17[17] / total_events) << "%"
+              << std::endl;
     for (Int_t s = 1; s <= 16; s++) {
       const Char_t *side = (s % 2 == 1) ? "L" : "R";
       std::cout << "  " << side << s << "="
-                << (100.0 * cnt.miss_long[s] / total_events) << "%";
+                << (100.0 * cnt.missing_long_0_17[s] / total_events) << "%";
       if (s % 4 == 0)
         std::cout << std::endl;
     }
@@ -712,9 +684,9 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
               << "% of complete; " << complete_rejected << " rejected)"
               << std::endl;
   }
-  if (Constants::cfg.REJECT_MULTI_HIT_EVENTS) {
+  if (Constants::cfg.DEDUP_STRATEGY == DedupStrategy::kDISCARD) {
     Int_t stored = complete_events - complete_rejected;
-    std::cout << "Stored events (REJECT_MULTI_HIT_EVENTS=true): " << stored
+    std::cout << "Stored events (DEDUP_STRATEGY == kDISCARD): " << stored
               << " ("
               << (complete_events > 0 ? 100.0 * stored / complete_events : 0.0)
               << "% of complete; " << complete_rejected_multi

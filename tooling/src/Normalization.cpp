@@ -38,27 +38,15 @@ void EnergyView::LoadGains() {
   cal->SetBranchAddress("GainLeft", gl);
   cal->SetBranchAddress("GainRight", gr);
   cal->SetBranchAddress("GainCathode", &gc);
-  // StripSlope/StripIntercept are optional (older files carry StripFactor);
-  // absent → slope = 1 / intercept = 0 (identity).
-  Bool_t has_linear = cal->GetBranch("StripSlope") != nullptr;
-  if (has_linear) {
-    cal->SetBranchAddress("StripSlope", sl);
-    cal->SetBranchAddress("StripIntercept", ic);
-  } else if (cal->GetBranch("StripFactor")) {
-    // Legacy multiplicative factors -> linear form (factor * total + 0).
-    cal->SetBranchAddress("StripFactor", sl);
-  }
+  cal->SetBranchAddress("StripSlope", sl);
+  cal->SetBranchAddress("StripIntercept", ic);
+
   cal->GetEntry(0);
   for (Int_t s = 0; s < 18; s++) {
     gain_left[s] = gl[s];
     gain_right[s] = gr[s];
-    if (has_linear) {
-      slope[s] = sl[s];
-      intercept[s] = ic[s];
-    } else if (sl[s] > 0.0f) {
-      slope[s] = sl[s]; // legacy factor
-      intercept[s] = 0.0f;
-    }
+    slope[s] = sl[s];
+    intercept[s] = ic[s];
   }
   gain_cathode = gc;
   is_normed = kTRUE;
@@ -80,10 +68,8 @@ void EnergyView::Decode() {
       right[s] = Double_t(gain_right[s]) * Double_t(rightdE_adc[s]);
       total[s] = left[s] + right[s];
     }
-    // Guard the -1 "no cathode" sentinel: uncalibrated/absent -> 0 a.u.
     cathode = (cathode_adc > 0) ? Double_t(gain_cathode) * Double_t(cathode_adc)
                                 : 0.0;
-    // Grid has no calibration gain; normalize to [0, 1] by dividing by max ADC.
     grid = Double_t(grid_adc) / 16384.0;
   } else {
     for (Int_t s = 0; s < 18; s++) {
@@ -105,8 +91,6 @@ void EnergyView::Decode() {
       }
     }
   }
-  // Per-strip two-point linear correction (beam→1.0, pileup→2.0) applied
-  // after gain and IGNORE_SHORT_STRIPS: fixes ADC sublinearity a gain cannot.
   if (is_normed) {
     for (Int_t s = 0; s <= 17; s++) {
       total[s] = Double_t(slope[s]) * total[s] + Double_t(intercept[s]);
