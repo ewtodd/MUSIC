@@ -79,12 +79,13 @@ std::vector<TString> DiscoverSuffixesIn(const TString &dir,
 
 std::vector<FileSpec> BuildSpecsImpl(Bool_t processed) {
   std::vector<FileSpec> specs;
-  for (Int_t r = 0; r < Int_t(Constants::cfg.RUN_NUMBERS.size()); r++) {
-    Int_t run = Constants::cfg.RUN_NUMBERS[r];
+  const std::vector<Int_t> &runs = Constants::ActiveRunNumbers();
+  for (Int_t r = 0; r < Int_t(runs.size()); r++) {
+    Int_t run = runs[r];
     std::vector<TString> suffixes;
     if (processed) {
       suffixes = FileSet::DiscoverProcessedRunSuffixes(run);
-    } else if (Constants::cfg.USE_SOLARIS_DATA) {
+    } else if (Constants::ActiveUseSolarisData()) {
       suffixes = FileSet::DiscoverSolRunSuffixes(run);
     } else {
       suffixes = FileSet::DiscoverRunSuffixes(run);
@@ -92,6 +93,9 @@ std::vector<FileSpec> BuildSpecsImpl(Bool_t processed) {
     Int_t limit = suffixes.size();
     if (Constants::cfg.N_CHUNKS > 0 && Constants::cfg.N_CHUNKS < limit)
       limit = Constants::cfg.N_CHUNKS;
+    Int_t epoch_cap = Constants::ActiveMaxFiles();
+    if (epoch_cap > 0 && epoch_cap < limit)
+      limit = epoch_cap;
     for (Int_t k = 0; k < limit; k++) {
       FileSpec s;
       s.run = run;

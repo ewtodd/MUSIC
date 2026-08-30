@@ -151,3 +151,121 @@ DatasetConfig::DatasetConfig() {
   RIGHT_EVEN_MAX_ADC = 16384.0;
   RIGHT_ODD_MAX_ADC = 16384.0;
 }
+
+namespace Constants {
+
+// The epoch currently being processed, or null outside epoch work (and for
+// datasets that declare none). Every accessor below falls back to the flat cfg
+// block when it is null, so behaviour without epochs is unchanged.
+static const RunEpoch *gActiveEpoch = nullptr;
+
+void SetActiveEpoch(const RunEpoch *epoch) { gActiveEpoch = epoch; }
+const RunEpoch *GetActiveEpoch() { return gActiveEpoch; }
+
+const RunEpoch *EpochForRun(Int_t run) {
+  for (Int_t e = 0; e < Int_t(cfg.EPOCHS.size()); e++) {
+    const RunEpoch &ep = cfg.EPOCHS[e];
+    for (Int_t r = 0; r < Int_t(ep.runs.size()); r++)
+      if (ep.runs[r] == run)
+        return &ep;
+  }
+  return nullptr;
+}
+
+Int_t ActiveNBoards() {
+  return gActiveEpoch ? gActiveEpoch->n_boards : cfg.N_BOARDS;
+}
+Int_t ActiveNChannels() {
+  return gActiveEpoch ? gActiveEpoch->n_channels : cfg.N_CHANNELS;
+}
+UShort_t ActiveTimingRefBoard() {
+  return gActiveEpoch ? gActiveEpoch->timing_ref_board : cfg.TIMING_REF_BOARD;
+}
+const std::vector<UShort_t> &ActiveTimingRefBoardChannels() {
+  return gActiveEpoch ? gActiveEpoch->timing_ref_board_channels
+                      : cfg.TIMING_REF_BOARD_CHANNELS;
+}
+Bool_t ActiveDoBoardSync() {
+  return gActiveEpoch ? gActiveEpoch->do_board_sync : cfg.TIMING_DO_BOARD_SYNC;
+}
+Bool_t ActiveDoSort() {
+  return gActiveEpoch ? gActiveEpoch->do_sort : cfg.TIMING_DO_SORT;
+}
+Bool_t ActiveHasCathode() {
+  return gActiveEpoch ? gActiveEpoch->has_cathode : cfg.HAS_CATHODE;
+}
+Bool_t ActiveUseSolarisData() {
+  return gActiveEpoch ? (gActiveEpoch->source == kSolaris)
+                      : cfg.USE_SOLARIS_DATA;
+}
+Double_t ActiveEventTimeWindowUs() {
+  return gActiveEpoch ? gActiveEpoch->event_time_window_us
+                      : cfg.EVENT_TIME_WINDOW_US;
+}
+const TString &ActiveReferenceChannel() {
+  return gActiveEpoch ? gActiveEpoch->reference_channel
+                      : cfg.REFERENCE_CHANNEL;
+}
+Double_t ActiveReferenceChannelMinAdc() {
+  return gActiveEpoch ? gActiveEpoch->reference_channel_min_adc
+                      : cfg.REFERENCE_CHANNEL_MIN_ADC;
+}
+Double_t ActiveReferenceChannelMaxAdc() {
+  return gActiveEpoch ? gActiveEpoch->reference_channel_max_adc
+                      : cfg.REFERENCE_CHANNEL_MAX_ADC;
+}
+DedupStrategy ActiveDedupStrategy() {
+  return gActiveEpoch ? gActiveEpoch->dedup_strategy : cfg.DEDUP_STRATEGY;
+}
+Double_t ActiveStripEMinAdc() {
+  return gActiveEpoch ? gActiveEpoch->strip_e_min_adc : cfg.STRIP_E_MIN_ADC;
+}
+Double_t ActiveStripEMaxAdc() {
+  return gActiveEpoch ? gActiveEpoch->strip_e_max_adc : cfg.STRIP_E_MAX_ADC;
+}
+Double_t ActiveCathodeMaxAdc() {
+  return gActiveEpoch ? gActiveEpoch->cathode_max_adc : cfg.CATHODE_MAX_ADC;
+}
+Double_t ActiveGridMaxAdc() {
+  return gActiveEpoch ? gActiveEpoch->grid_max_adc : cfg.GRID_MAX_ADC;
+}
+Double_t ActiveStrip0MaxAdc() {
+  return gActiveEpoch ? gActiveEpoch->strip0_max_adc : cfg.STRIP0_MAX_ADC;
+}
+Double_t ActiveStrip17MaxAdc() {
+  return gActiveEpoch ? gActiveEpoch->strip17_max_adc : cfg.STRIP17_MAX_ADC;
+}
+Double_t ActiveLeftEvenMaxAdc() {
+  return gActiveEpoch ? gActiveEpoch->left_even_max_adc : cfg.LEFT_EVEN_MAX_ADC;
+}
+Double_t ActiveLeftOddMaxAdc() {
+  return gActiveEpoch ? gActiveEpoch->left_odd_max_adc : cfg.LEFT_ODD_MAX_ADC;
+}
+Double_t ActiveRightEvenMaxAdc() {
+  return gActiveEpoch ? gActiveEpoch->right_even_max_adc
+                      : cfg.RIGHT_EVEN_MAX_ADC;
+}
+Double_t ActiveRightOddMaxAdc() {
+  return gActiveEpoch ? gActiveEpoch->right_odd_max_adc : cfg.RIGHT_ODD_MAX_ADC;
+}
+
+const std::vector<Int_t> &ActiveRunNumbers() {
+  return gActiveEpoch ? gActiveEpoch->runs : cfg.RUN_NUMBERS;
+}
+Int_t ActiveMaxFiles() {
+  return gActiveEpoch ? gActiveEpoch->max_files : -1;
+}
+
+const std::map<std::pair<Int_t, Int_t>, TString> &ActiveChannelMap() {
+  if (gActiveEpoch && !gActiveEpoch->channel_map.empty())
+    return gActiveEpoch->channel_map;
+  if (!cfg.channelMap64.empty())
+    return cfg.channelMap64;
+  if (!cfg.channelMap.empty())
+    return cfg.channelMap;
+  std::cerr << "FATAL: neither channelMap nor channelMap64 is configured."
+            << std::endl;
+  std::abort();
+}
+
+} // namespace Constants

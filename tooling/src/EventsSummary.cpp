@@ -27,7 +27,7 @@ void CreateSummaryHistograms(SummaryHistograms &h,
                  cfg.strip_e_min, lMax, 200, cfg.strip_e_min, rMax);
   }
 
-  if (Constants::cfg.HAS_CATHODE)
+  if (Constants::ActiveHasCathode())
     h.h1_cathode = new TH1F(PlottingUtils::GetRandomName().Data(),
                             ";Cathode #DeltaE [" + cfg.unit_label + "];Counts",
                             400, 0.0, cfg.cathode_max);

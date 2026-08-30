@@ -2,6 +2,7 @@
 #define CONSTANTS_HPP
 
 #include "DedupStrategy.hpp"
+#include "RunEpoch.hpp"
 #include "SlotLayout.hpp"
 #include <Rtypes.h>
 #include <RtypesCore.h>
@@ -94,7 +95,10 @@ public:
   Int_t SOL_N_SPLIT_WORKERS;
 
   TString COMPASS_BASE_DIR;
+  // Flat run list, used when EPOCHS is empty. When EPOCHS is populated the
+  // pipeline walks the epochs instead and this is ignored.
   std::vector<Int_t> RUN_NUMBERS;
+  std::vector<RunEpoch> EPOCHS;
   Int_t N_CHUNKS;
 
   TString SIM_BEAM_FILE;
@@ -189,17 +193,47 @@ public:
 namespace Constants {
 extern const DatasetConfig &cfg;
 
-// Returns the active channel map (channelMap64 if populated, else channelMap).
-// Aborts if neither is configured.
-inline const std::map<std::pair<Int_t, Int_t>, TString> &ActiveChannelMap() {
-  if (!cfg.channelMap64.empty())
-    return cfg.channelMap64;
-  if (!cfg.channelMap.empty())
-    return cfg.channelMap;
-  std::cerr << "FATAL: neither channelMap nor channelMap64 is configured."
-            << std::endl;
-  std::abort();
-}
+// Epoch selection. Pipeline sets the active epoch around each epoch's work;
+// every Active*() below reads it when set and falls back to the flat cfg block
+// otherwise, so a dataset that declares no epochs behaves exactly as before.
+void SetActiveEpoch(const RunEpoch *epoch);
+const RunEpoch *GetActiveEpoch();
+// Epoch owning a run number, or null when none declares it. Lets the standalone
+// tools set the same epoch the pipeline would for that run.
+const RunEpoch *EpochForRun(Int_t run);
+
+Int_t ActiveNBoards();
+Int_t ActiveNChannels();
+UShort_t ActiveTimingRefBoard();
+const std::vector<UShort_t> &ActiveTimingRefBoardChannels();
+Bool_t ActiveDoBoardSync();
+Bool_t ActiveDoSort();
+Bool_t ActiveHasCathode();
+Bool_t ActiveUseSolarisData();
+Double_t ActiveEventTimeWindowUs();
+const TString &ActiveReferenceChannel();
+Double_t ActiveReferenceChannelMinAdc();
+Double_t ActiveReferenceChannelMaxAdc();
+DedupStrategy ActiveDedupStrategy();
+Double_t ActiveStripEMinAdc();
+Double_t ActiveStripEMaxAdc();
+Double_t ActiveCathodeMaxAdc();
+Double_t ActiveGridMaxAdc();
+Double_t ActiveStrip0MaxAdc();
+Double_t ActiveStrip17MaxAdc();
+Double_t ActiveLeftEvenMaxAdc();
+Double_t ActiveLeftOddMaxAdc();
+Double_t ActiveRightEvenMaxAdc();
+Double_t ActiveRightOddMaxAdc();
+
+// Runs of the active epoch, else the flat RUN_NUMBERS. ActiveMaxFiles caps
+// subfiles per run for the active epoch (-1 = all, and -1 without an epoch).
+const std::vector<Int_t> &ActiveRunNumbers();
+Int_t ActiveMaxFiles();
+
+// Returns the active epoch's channel map when an epoch is set, else
+// channelMap64 if populated, else channelMap. Aborts if none is configured.
+const std::map<std::pair<Int_t, Int_t>, TString> &ActiveChannelMap();
 } // namespace Constants
 
 #endif

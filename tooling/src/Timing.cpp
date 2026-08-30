@@ -478,12 +478,12 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
     Double_t thresh_dt_us) {
 
   TimeShiftResult result;
-  result.board_shifts.assign(Constants::cfg.N_BOARDS, 0);
+  result.board_shifts.assign(Constants::ActiveNBoards(), 0);
 
   // Board sync disabled for this dataset (e.g. 87Rb): nothing to compute, so
   // skip the whole extract/scan/extreme-events pipeline and leave every board
   // at zero shift. Per-channel TTF correction still happens in ApplyShifts.
-  if (!Constants::cfg.TIMING_DO_BOARD_SYNC) {
+  if (!Constants::ActiveDoBoardSync()) {
     std::cout << "Board sync disabled for this dataset; skipping timeshift "
                  "calculation (all board shifts = 0)."
               << std::endl;
@@ -534,9 +534,9 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
   }
   TGraph *ref_graph = long_graphs[ref_it->second];
 
-  std::vector<Double_t> board_shifts_s(Constants::cfg.N_BOARDS, 0.0);
+  std::vector<Double_t> board_shifts_s(Constants::ActiveNBoards(), 0.0);
 
-  for (UShort_t board = 0; board < Constants::cfg.N_BOARDS; board++) {
+  for (UShort_t board = 0; board < Constants::ActiveNBoards(); board++) {
     if (board == ref_board)
       continue;
 
@@ -689,7 +689,7 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
                       h_extreme_after_zoom, file_label, before_zoom_t0_s,
                       after_zoom_t0_s);
   std::cout << "RESULTS (ref board = " << ref_board << ")" << std::endl;
-  for (UShort_t board = 0; board < Constants::cfg.N_BOARDS; board++) {
+  for (UShort_t board = 0; board < Constants::ActiveNBoards(); board++) {
     if (board == ref_board)
       continue;
     std::cout << "  Board " << ref_board << "-" << board << ": "

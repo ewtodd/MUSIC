@@ -42,17 +42,17 @@ Bool_t EventBuilder::ShouldKeepHit(ULong64_t cand_ts, ULong64_t prev_ts,
 
 EventBuilder::SlotMap EventBuilder::BuildSlotMap() {
   SlotMap sm;
-  sm.resize(Constants::cfg.N_BOARDS * Constants::cfg.N_CHANNELS, -1);
+  sm.resize(Constants::ActiveNBoards() * Constants::ActiveNChannels(), -1);
   for (std::map<std::pair<Int_t, Int_t>, TString>::const_iterator it =
            Constants::ActiveChannelMap().begin();
        it != Constants::ActiveChannelMap().end(); ++it) {
     Int_t board = it->first.first;
     Int_t channel = it->first.second;
-    if (board < 0 || board >= Constants::cfg.N_BOARDS)
+    if (board < 0 || board >= Constants::ActiveNBoards())
       continue;
-    if (channel < 0 || channel >= Constants::cfg.N_CHANNELS)
+    if (channel < 0 || channel >= Constants::ActiveNChannels())
       continue;
-    Int_t idx = board * Constants::cfg.N_CHANNELS + channel;
+    Int_t idx = board * Constants::ActiveNChannels() + channel;
     const TString &name = it->second;
     if (name == "Strip0") {
       sm[idx] = Constants::ARR_SLOT_STRIP_0;
@@ -333,17 +333,17 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
 
   SummaryHistConfig cfg;
   cfg.unit_label = "ADC";
-  cfg.strip_e_min = Constants::cfg.STRIP_E_MIN_ADC;
-  cfg.strip_e_max = Constants::cfg.STRIP_E_MAX_ADC;
+  cfg.strip_e_min = Constants::ActiveStripEMinAdc();
+  cfg.strip_e_max = Constants::ActiveStripEMaxAdc();
   cfg.odd_even_split = kTRUE;
-  cfg.left_odd_max = Constants::cfg.LEFT_ODD_MAX_ADC;
-  cfg.left_even_max = Constants::cfg.LEFT_EVEN_MAX_ADC;
-  cfg.right_odd_max = Constants::cfg.RIGHT_ODD_MAX_ADC;
-  cfg.right_even_max = Constants::cfg.RIGHT_EVEN_MAX_ADC;
-  cfg.cathode_max = Constants::cfg.CATHODE_MAX_ADC;
-  cfg.strip17_max = Constants::cfg.STRIP17_MAX_ADC;
-  cfg.grid_max = Constants::cfg.GRID_MAX_ADC;
-  cfg.strip0_max = Constants::cfg.STRIP0_MAX_ADC;
+  cfg.left_odd_max = Constants::ActiveLeftOddMaxAdc();
+  cfg.left_even_max = Constants::ActiveLeftEvenMaxAdc();
+  cfg.right_odd_max = Constants::ActiveRightOddMaxAdc();
+  cfg.right_even_max = Constants::ActiveRightEvenMaxAdc();
+  cfg.cathode_max = Constants::ActiveCathodeMaxAdc();
+  cfg.strip17_max = Constants::ActiveStrip17MaxAdc();
+  cfg.grid_max = Constants::ActiveGridMaxAdc();
+  cfg.strip0_max = Constants::ActiveStrip0MaxAdc();
   cfg.music_energy_bins = 2000;
 
   SummaryHistograms hSum;
@@ -363,7 +363,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   }
 
   // Determine operating mode: reference-channel or blind time-window.
-  Bool_t ref_mode = Constants::cfg.REFERENCE_CHANNEL != "NONE";
+  Bool_t ref_mode = Constants::ActiveReferenceChannel() != "NONE";
 
   // Resolve reference channel name to slot ID by scanning active channel map.
   Int_t ref_slot = -1;
@@ -371,19 +371,19 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     for (std::map<std::pair<Int_t, Int_t>, TString>::const_iterator it =
              Constants::ActiveChannelMap().begin();
          it != Constants::ActiveChannelMap().end(); ++it) {
-      if (it->second == Constants::cfg.REFERENCE_CHANNEL) {
+      if (it->second == Constants::ActiveReferenceChannel()) {
         Int_t board = it->first.first;
         Int_t channel = it->first.second;
-        if (board >= 0 && board < Constants::cfg.N_BOARDS && channel >= 0 &&
-            channel < Constants::cfg.N_CHANNELS) {
-          ref_slot = slot_map[board * Constants::cfg.N_CHANNELS + channel];
+        if (board >= 0 && board < Constants::ActiveNBoards() && channel >= 0 &&
+            channel < Constants::ActiveNChannels()) {
+          ref_slot = slot_map[board * Constants::ActiveNChannels() + channel];
           break;
         }
       }
     }
     if (ref_slot < 0) {
       std::cerr << "FATAL: reference channel '"
-                << Constants::cfg.REFERENCE_CHANNEL
+                << Constants::ActiveReferenceChannel()
                 << "' not found in channel map. Cannot build events."
                 << std::endl;
       output_file->Close();
@@ -464,24 +464,24 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   Long64_t dropped_outside_window = 0;
   Long64_t event_idx = 0;
 
-  ULong64_t window_ps = ULong64_t(Constants::cfg.EVENT_TIME_WINDOW_US * 1.0e6);
-  DedupStrategy dedup_strat = Constants::cfg.DEDUP_STRATEGY;
+  ULong64_t window_ps = ULong64_t(Constants::ActiveEventTimeWindowUs() * 1.0e6);
+  DedupStrategy dedup_strat = Constants::ActiveDedupStrategy();
   PerChannelData *pc_cur = &cur_per_channel;
 
   std::cout << "[" << file_label << "] Streaming pass over " << n_entries
-            << " sorted hits (reference: " << Constants::cfg.REFERENCE_CHANNEL
-            << ", window: " << Constants::cfg.EVENT_TIME_WINDOW_US << " us)"
+            << " sorted hits (reference: " << Constants::ActiveReferenceChannel()
+            << ", window: " << Constants::ActiveEventTimeWindowUs() << " us)"
             << std::endl;
 
   for (Int_t i = 0; i < Int_t(n_entries); i++) {
     const RawHit &h = hits[i];
 
-    if (h.board >= Constants::cfg.N_BOARDS ||
-        h.channel >= Constants::cfg.N_CHANNELS) {
+    if (h.board >= Constants::ActiveNBoards() ||
+        h.channel >= Constants::ActiveNChannels()) {
       emptyChannelMapEvents++;
       continue;
     }
-    Int_t slot = slot_map[h.board * Constants::cfg.N_CHANNELS + h.channel];
+    Int_t slot = slot_map[h.board * Constants::ActiveNChannels() + h.channel];
     if (slot < 0) {
       emptyChannelMapEvents++;
       continue;
@@ -497,8 +497,8 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       if (slot == ref_slot) {
         // Grid ADC window filter: skip reference hits outside the accepted
         // range so they don't seed an event.
-        if (Double_t(h.energy) < Constants::cfg.REFERENCE_CHANNEL_MIN_ADC ||
-            Double_t(h.energy) > Constants::cfg.REFERENCE_CHANNEL_MAX_ADC) {
+        if (Double_t(h.energy) < Constants::ActiveReferenceChannelMinAdc() ||
+            Double_t(h.energy) > Constants::ActiveReferenceChannelMaxAdc()) {
           continue;
         }
         if (n_ref == 0)
@@ -599,11 +599,11 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     event_idx++;
   }
 
-  std::cout << "Found " << n_ref << " " << Constants::cfg.REFERENCE_CHANNEL
+  std::cout << "Found " << n_ref << " " << Constants::ActiveReferenceChannel()
             << " hits." << std::endl;
 
   if (ref_mode && n_ref == 0) {
-    std::cerr << "No " << Constants::cfg.REFERENCE_CHANNEL
+    std::cerr << "No " << Constants::ActiveReferenceChannel()
               << " hits in file, skipping." << std::endl;
     output_file->Close();
     delete output_file;
@@ -637,7 +637,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     // Sample traces overlay
     if (!sample_traces.empty()) {
       EventsSummary::SaveSampleTraces(sample_traces, "sample_traces", subdir,
-                                      0.0, Constants::cfg.STRIP_E_MAX_ADC,
+                                      0.0, Constants::ActiveStripEMaxAdc(),
                                       "Energy [ADC]");
     }
   }
@@ -653,13 +653,13 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     std::cout << "Dropped " << dropped_outside_window
               << " hits outside coincidence window." << std::endl;
 
-  std::cout << Constants::cfg.REFERENCE_CHANNEL << " hits total: " << n_ref
+  std::cout << Constants::ActiveReferenceChannel() << " hits total: " << n_ref
             << std::endl;
-  std::cout << Constants::cfg.REFERENCE_CHANNEL
+  std::cout << Constants::ActiveReferenceChannel()
             << " trigger rate: " << ref_rate_hz << " Hz over " << span_s << " s"
             << std::endl;
   std::cout << "Cathode hits total: " << cathode_hits_total << " (cathode/"
-            << Constants::cfg.REFERENCE_CHANNEL << " = "
+            << Constants::ActiveReferenceChannel() << " = "
             << (n_ref > 0 ? Double_t(cathode_hits_total) / n_ref : 0.0) << ")"
             << std::endl;
   std::cout << "Total events: " << total_events << std::endl;

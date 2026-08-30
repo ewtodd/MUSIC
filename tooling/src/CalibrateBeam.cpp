@@ -122,8 +122,8 @@ BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
   const Int_t kBeamGateNBins = 1024;
   TH2F *h = new TH2F(Form("h2_stp2_vs_stp1_%s", run_label.Data()),
                      ";Strip1 #DeltaE [ADC];Strip2 #DeltaE [ADC]",
-                     kBeamGateNBins, 0.0, Constants::cfg.STRIP_E_MAX_ADC,
-                     kBeamGateNBins, 0.0, Constants::cfg.STRIP_E_MAX_ADC);
+                     kBeamGateNBins, 0.0, Constants::ActiveStripEMaxAdc(),
+                     kBeamGateNBins, 0.0, Constants::ActiveStripEMaxAdc());
   h->SetDirectory(nullptr);
   Long64_t n = tree->GetEntries();
   for (Long64_t j = 0; j < n; j++) {

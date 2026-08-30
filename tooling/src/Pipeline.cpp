@@ -28,7 +28,7 @@ Bool_t EnsureRunHeaderFused(Int_t run, UShort_t &header) {
   if (BinaryToRoot::ReadHeaderSidecar(run, header))
     return kTRUE;
 
-  if (Constants::cfg.USE_SOLARIS_DATA) {
+  if (Constants::ActiveUseSolarisData()) {
     // SOLARIS: find first available file (chunk or original) for header
     std::vector<TString> suffixes = FileSet::DiscoverSolRunSuffixes(run);
     Bool_t found = kFALSE;
@@ -96,7 +96,7 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
               << " events exist; re-making plots only" << std::endl;
   } else {
     TString bin_path;
-    if (Constants::cfg.USE_SOLARIS_DATA) {
+    if (Constants::ActiveUseSolarisData()) {
       bin_path = FileSet::SolBinPath(spec);
     } else {
       bin_path = FileSet::CompassBinPath(spec);
@@ -105,7 +105,7 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
     if (gSystem->AccessPathName(bin_path)) {
       std::lock_guard<std::mutex> lock(fused_log_mutex);
       std::cerr << "[fail] " << file_label
-                << (Constants::cfg.USE_SOLARIS_DATA ? " SOL" : " BIN")
+                << (Constants::ActiveUseSolarisData() ? " SOL" : " BIN")
                 << " missing: " << bin_path << std::endl;
       return kFALSE;
     }
@@ -115,7 +115,7 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
     t0 = std::chrono::steady_clock::now();
     std::vector<RawHit> hits;
 
-    if (Constants::cfg.USE_SOLARIS_DATA) {
+    if (Constants::ActiveUseSolarisData()) {
       // SOLARIS: stream blocks directly to RawHit (no intermediate SOLHit
       // vector)
       SOLReader sol_reader;
@@ -159,11 +159,11 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
       return kFALSE;
     }
 
-    if (Constants::cfg.TIMING_DO_BOARD_SYNC || Constants::cfg.TIMING_DO_SORT) {
+    if (Constants::ActiveDoBoardSync() || Constants::ActiveDoSort()) {
       t0 = std::chrono::steady_clock::now();
       TimeShiftResult shift_result = Timing::CalcTimeShiftsBeamMethodFromHits(
-          hits, file_label, Constants::cfg.TIMING_REF_BOARD,
-          Constants::cfg.TIMING_REF_BOARD_CHANNELS,
+          hits, file_label, Constants::ActiveTimingRefBoard(),
+          Constants::ActiveTimingRefBoardChannels(),
           Constants::cfg.TIMING_MIN_ENERGY, Constants::cfg.TIMING_MAX_ENERGY,
           Constants::cfg.TIMING_OVERLAP_MARGIN_S,
           Constants::cfg.TIMING_THRESH_DT_US);
@@ -173,7 +173,7 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
 
       t0 = std::chrono::steady_clock::now();
       Timing::ApplyShiftsInPlace(hits, shift_result.board_shifts);
-      if (Constants::cfg.TIMING_DO_SORT)
+      if (Constants::ActiveDoSort())
         Timing::SortHitsByTimestamp(hits);
       t_apply = FusedSecSince(t0);
 
@@ -236,21 +236,11 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
   return kTRUE;
 }
 
-void Pipeline::Run() {
-  ROOT::EnableThreadSafety();
-  GpuAccel::Init();
-  const TString project_root = Paths::DatasetDir();
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                Paths::ResultsDir() + "/plots",
-                                Paths::ResultsDir() + "/root_files");
-
-  TString log_path = project_root + "/pipeline_fused.log";
-  std::ofstream log_file(log_path.Data());
-  std::streambuf *saved_cout = std::cout.rdbuf(log_file.rdbuf());
-  std::streambuf *saved_cerr = std::cerr.rdbuf(log_file.rdbuf());
-  Int_t saved_error_level = gErrorIgnoreLevel;
-  gErrorIgnoreLevel = kError;
-
+// One epoch's worth of work (or the whole flat run list when the dataset
+// declares no epochs). The caller owns the log redirection so a multi-epoch
+// run writes one log rather than truncating it per epoch, and owns the active
+// epoch so every Active*() below reads this epoch's hardware settings.
+static void RunActiveSelection() {
   std::vector<FileSpec> specs = FileSet::BuildRawOrProcessedFileSpecs();
   Int_t n_specs = Int_t(specs.size());
 
@@ -343,6 +333,39 @@ void Pipeline::Run() {
         if (specs[k].run == *it)
           run_specs.push_back(specs[k]);
       CalibrateBeam::AggregateEresTomlForRun(*it, run_specs);
+    }
+  }
+}
+
+void Pipeline::Run() {
+  ROOT::EnableThreadSafety();
+  GpuAccel::Init();
+  const TString project_root = Paths::DatasetDir();
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                Paths::ResultsDir() + "/plots",
+                                Paths::ResultsDir() + "/root_files");
+
+  TString log_path = project_root + "/pipeline_fused.log";
+  std::ofstream log_file(log_path.Data());
+  std::streambuf *saved_cout = std::cout.rdbuf(log_file.rdbuf());
+  std::streambuf *saved_cerr = std::cerr.rdbuf(log_file.rdbuf());
+  Int_t saved_error_level = gErrorIgnoreLevel;
+  gErrorIgnoreLevel = kError;
+
+  if (Constants::cfg.EPOCHS.empty()) {
+    RunActiveSelection();
+  } else {
+    for (Int_t e = 0; e < Int_t(Constants::cfg.EPOCHS.size()); e++) {
+      const RunEpoch &epoch = Constants::cfg.EPOCHS[e];
+      if (!epoch.enabled || epoch.runs.empty())
+        continue;
+      std::cout << "\n=== epoch " << epoch.name << " ("
+                << (epoch.source == kSolaris ? "SOLARIS" : "CoMPASS") << ", "
+                << epoch.runs.size() << " run(s), " << epoch.n_boards << "x"
+                << epoch.n_channels << " ch) ===" << std::endl;
+      Constants::SetActiveEpoch(&epoch);
+      RunActiveSelection();
+      Constants::SetActiveEpoch(nullptr);
     }
   }
 

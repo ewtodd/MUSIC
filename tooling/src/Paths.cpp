@@ -34,8 +34,8 @@ void Paths::PrintBanner(const TString &dataset_dir) {
   for (Int_t i = 0; i < Int_t(Constants::cfg.RUN_NUMBERS.size()); i++)
     std::cout << " " << Constants::cfg.RUN_NUMBERS[i];
   std::cout << std::endl;
-  std::cout << " event mode  : " << Constants::cfg.REFERENCE_CHANNEL << " ("
-            << Constants::cfg.EVENT_TIME_WINDOW_US << " us window)"
+  std::cout << " event mode  : " << Constants::ActiveReferenceChannel() << " ("
+            << Constants::ActiveEventTimeWindowUs() << " us window)"
             << " | calibration "
             << (Constants::cfg.SKIP_CALIBRATION ? "SKIPPED" : "on")
             << " | plots " << (Constants::cfg.SAVE_PLOTS ? "on" : "SKIPPED")

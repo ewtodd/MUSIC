@@ -205,10 +205,28 @@ int main(int argc, char *argv[]) {
   gSystem->mkdir(Constants::cfg.SOL_SPLIT_DIR, kTRUE);
 
   // Build work queue from base dir only
+  // Split every SOLARIS run the dataset declares. With epochs that means the
+  // union of the SOLARIS epochs' run lists; without them, the flat run list.
+  // A CoMPASS epoch has no .sol files to split and is skipped.
+  std::vector<Int_t> runs;
+  if (Constants::cfg.EPOCHS.empty()) {
+    runs = Constants::cfg.RUN_NUMBERS;
+  } else {
+    for (Int_t e = 0; e < Int_t(Constants::cfg.EPOCHS.size()); e++) {
+      const RunEpoch &ep = Constants::cfg.EPOCHS[e];
+      if (!ep.enabled || ep.source != kSolaris)
+        continue;
+      for (Int_t r = 0; r < Int_t(ep.runs.size()); r++)
+        runs.push_back(ep.runs[r]);
+    }
+    std::sort(runs.begin(), runs.end());
+    runs.erase(std::unique(runs.begin(), runs.end()), runs.end());
+  }
+
   std::queue<WorkItem> work;
-  Int_t nRuns = Constants::cfg.RUN_NUMBERS.size();
+  Int_t nRuns = runs.size();
   for (Int_t r = 0; r < nRuns; r++) {
-    Int_t run = Constants::cfg.RUN_NUMBERS[r];
+    Int_t run = runs[r];
     std::vector<TString> suffixes = DiscoverSolRunSuffixesFromBase(run);
     for (Int_t k = 0; k < Int_t(suffixes.size()); k++) {
       WorkItem item;
