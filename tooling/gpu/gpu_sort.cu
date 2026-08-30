@@ -6,11 +6,21 @@
 #include <thrust/sort.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
-#include <iostream>
 #include <vector>
 
-// Mirrors layout of RawHit in include/BinaryUtils.hpp: 24 bytes, timestamp at offset 8.
+// Mirrors layout of RawHit in include/BinaryUtils.hpp.
+// The host struct uses ROOT types (UShort_t, ULong64_t, UInt_t) but the
+// memory layout under the standard ABI is:
+//   offset 0:  board    (2 bytes)
+//   offset 2:  channel  (2 bytes)
+//   offset 4:  energy   (2 bytes)
+//   offset 6:  padding  (2 bytes for ULong64_t alignment)
+//   offset 8:  timestamp (8 bytes)
+//   offset 16: flags    (4 bytes)
+//   offset 20: padding  (4 bytes for struct alignment)
+// Total: 24 bytes.
 struct RawHitGPU {
   uint16_t board;
   uint16_t channel;
@@ -26,16 +36,24 @@ static_assert(sizeof(RawHitGPU) == 24,
 static_assert(offsetof(RawHitGPU, timestamp) == 8,
               "timestamp must sit at byte offset 8");
 
-// Ship only 8-byte timestamp keys + 4-byte uint32 indices for a key/value radix sort;
-// drops device footprint from ~48 to ~24 B/hit and avoids thrust comparator merge.
+// Sort hits by timestamp. Rather than shipping the full 24-byte structs to the
+// device and sorting them with a comparator (which forces thrust into a
+// comparator merge sort needing ~2x the data in scratch), we ship only the
+// 8-byte uint64 timestamp keys plus a 4-byte uint32 index and run a key/value
+// sort -- a primitive-key radix sort. The device footprint per call drops from
+// ~48 B/hit to ~24 B/hit (so more sorts fit concurrently) and H2D/D2H traffic
+// drops from 24 down to 8 (down) + 4 (back) B/hit. The resulting permutation is
+// applied to the host array by a gather; the full structs never touch the GPU.
 extern "C" int gpu_sort_hits_by_timestamp(void *hits, long long n_hits) {
   if (n_hits <= 0)
     return 0;
 
-// uint32 indices suffice: a single subfile's hit count is far below 2^32.
+  // Indices are uint32 to keep the device payload small; a single subfile's hit
+  // count is far below 2^32, but guard anyway and let the caller fall back to
+  // the CPU sort if that ever stops holding.
   if (static_cast<unsigned long long>(n_hits) > 0xFFFFFFFFULL) {
-    std::cerr << "[GPU sort] n_hits " << n_hits
-              << " exceeds uint32 index range" << std::endl;
+    fprintf(stderr, "[GPU sort] n_hits %lld exceeds uint32 index range\n",
+            n_hits);
     return 6;
   }
 
@@ -54,8 +72,8 @@ extern "C" int gpu_sort_hits_by_timestamp(void *hits, long long n_hits) {
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
-      std::cerr << "[GPU sort] H2D copy failed: " << cudaGetErrorString(err)
-                << std::endl;
+      fprintf(stderr, "[GPU sort] H2D copy failed: %s\n",
+              cudaGetErrorString(err));
       return 1;
     }
 
@@ -63,8 +81,8 @@ extern "C" int gpu_sort_hits_by_timestamp(void *hits, long long n_hits) {
 
     err = cudaGetLastError();
     if (err != cudaSuccess) {
-      std::cerr << "[GPU sort] sort kernel failed: " << cudaGetErrorString(err)
-                << std::endl;
+      fprintf(stderr, "[GPU sort] sort kernel failed: %s\n",
+              cudaGetErrorString(err));
       return 2;
     }
 
@@ -72,8 +90,8 @@ extern "C" int gpu_sort_hits_by_timestamp(void *hits, long long n_hits) {
 
     err = cudaGetLastError();
     if (err != cudaSuccess) {
-      std::cerr << "[GPU sort] D2H copy failed: " << cudaGetErrorString(err)
-                << std::endl;
+      fprintf(stderr, "[GPU sort] D2H copy failed: %s\n",
+              cudaGetErrorString(err));
       return 3;
     }
 
@@ -84,10 +102,10 @@ extern "C" int gpu_sort_hits_by_timestamp(void *hits, long long n_hits) {
     std::memcpy(host_hits, sorted.data(),
                 static_cast<size_t>(n_hits) * sizeof(RawHitGPU));
   } catch (const std::exception &e) {
-    std::cerr << "[GPU sort] exception: " << e.what() << std::endl;
+    fprintf(stderr, "[GPU sort] exception: %s\n", e.what());
     return 4;
   } catch (...) {
-    std::cerr << "[GPU sort] unknown exception" << std::endl;
+    fprintf(stderr, "[GPU sort] unknown exception\n");
     return 5;
   }
 

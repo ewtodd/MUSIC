@@ -7,7 +7,6 @@
 #include "FileSet.hpp"
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
-#include "InteractiveEditorX11Guard.hpp"
 #include "Normalization.hpp"
 #include "PlottingUtils.hpp"
 #include "RemixSim.hpp"
@@ -30,7 +29,6 @@
 #include <TString.h>
 #include <TSystem.h>
 #include <TTree.h>
-#include <TVirtualX.h>
 #include <algorithm>
 #include <iostream>
 #include <limits>
@@ -45,23 +43,15 @@ struct GateSpec {
   Int_t sy;
 };
 
-// Fixed fill range (in a.u.) for the scatters: wide enough that no
-// filter-passing event falls outside (with pileup rejection on, the x sum over
-// 16 strips stays below ~30); display windows apply at draw via SetRangeUser,
-// so retuning them never rebuilds.
-namespace ScatterBuildRange {
-const Double_t kMin = 0.0;
-const Double_t kMax = 40.0;
-} // namespace ScatterBuildRange
-
-// Beam classification ellipses: entrance (s0,s1 or s1,s2, per PURE_BEAM_GATE)
-// AND exit (s16,s17 or s15,s16); "pure beam" requires passing both.
+// Beam classification ellipses: entrance (s0,s1 or s1,s2, per config's
+// PURE_BEAM_GATE) AND exit (s16,s17 or s15,s16). An event is "pure beam"
+// only if it passes both ellipses.
 struct BeamEllipses {
   BeamFit2D s0_s1;
   BeamFit2D s1_s2;
   BeamFit2D s16_s17;
   BeamFit2D s15_s16;
-  Bool_t ok = kFALSE;
+  Bool_t ok;
   Bool_t use_s15_s16;
 };
 
@@ -92,42 +82,17 @@ private:
   Double_t m_yLo[64];
   Double_t m_yHi[64];
 
-  static Int_t ReacIndex(Int_t reac);
-  static Int_t YLoOf(Int_t reac);
-  static Int_t YHiOf(Int_t reac);
+  const TString kSimCacheName = "StripSumScatter_simcache.root";
+
+  Int_t ReacIndex(Int_t reac);
+  Int_t YLoOf(Int_t reac);
+  Int_t YHiOf(Int_t reac);
 
   Bool_t TryLoadCache(const TString &cacheName, const TString &fingerprint);
   void WriteCache(const TString &cacheName, const TString &fingerprint);
 
   void FillScatters(const std::vector<Int_t> &runOrder,
                     std::map<Int_t, TChain *> &chains);
-
-  // Per-run result of the beam-ellipse + series-gate fits (FillScatters
-  // phase 1, one entry per run, computed on worker threads).
-  struct RunGateFit {
-    BeamEllipses beam;
-    std::vector<BeamFit2D> gates;
-    Bool_t ok = kFALSE;
-  };
-
-  // Per-run result of the event fill (FillScatters phase 2): the run's
-  // private scatter histograms (merged afterwards) and trace reservoir slice.
-  struct FillRunResult {
-    std::vector<TH2F *> scatters;
-    std::vector<TraceEvt> reservoir;
-    Long64_t seen = 0;       // events read from the chain
-    Long64_t gated = 0;      // events passing all filters with a reaction mask
-    Long64_t n_rej_gate = 0; // rejected by the series beam gates
-    Long64_t n_rej_pileup = 0;    // rejected by IsPileup
-    Long64_t n_rej_noise = 0;     // rejected by IsNoise
-    Long64_t n_rej_highstrip = 0; // rejected by IsHighStrip
-    Long64_t n_rej_offbeam = 0;   // rejected by IsOffbeam
-  };
-
-  static RunGateFit FitRunGates(Int_t run, TChain *chain);
-  static FillRunResult FillRunScatters(
-      Int_t run, TChain *chain, const std::vector<GateSpec> &active_gates,
-      const std::vector<BeamFit2D> &run_gates, const BeamEllipses &run_beam);
 
   void PlotScatters();
 
@@ -139,7 +104,6 @@ private:
   static Bool_t IsPureBeam(const EnergyView &ev, const BeamEllipses &be);
   static Bool_t IsPileup(const EnergyView &ev);
   static Bool_t IsNoise(const EnergyView &ev);
-  static Bool_t IsHighStrip(const EnergyView &ev);
   static Bool_t IsOffbeam(const EnergyView &ev);
   static Double_t SumRange(const Double_t *total, Int_t lo, Int_t hi);
   static std::vector<GateSpec> ActiveGates();
@@ -177,12 +141,14 @@ private:
 
   static void SmoothTrace(const Double_t *in, Double_t *out, Int_t width);
 
-  // Savitzky-Golay smoothing: 3rd-degree, 5-point window, coefficients
-  // [-3,12,17,12,-3]/35; at edges the window shrinks and renormalises.
+  // Savitzky-Golay smoothing: 3rd-degree polynomial, half-window of 2
+  // (5-point convolution). Uses standard SG coefficients [-3,12,17,12,-3]/35.
+  // At edges, the window shrinks and coefficients are renormalised.
   static void SavitzkyGolay(const Double_t *in, Double_t *out);
 
-  // CFD-style trigger finder: first strip whose beam-subtracted signal exceeds
-  // a peak fraction and an N-sigma gate; returns the strip index or -1.
+  // CFD-style trigger finder: locate the first strip whose beam-subtracted
+  // signal (td[s]-1) exceeds both a fraction of the trace peak and a multiple
+  // of the beam sigma. Returns the strip index, or -1 if no trigger fires.
   static Int_t FindTrigger(const Double_t *td, const Double_t *base,
                            Double_t beam_sigma);
 

@@ -29,15 +29,12 @@ struct StripSumScatterConfig {
   Double_t NOISE_THRESHOLD;
 
   Bool_t REJECT_NOISE;
+  Double_t NOISE_THRESH_PY;
   Int_t NOISE_MIN_STRIPS;
 
   Bool_t REJECT_PILEUP;
+  Double_t PILEUP_THRESH_PY;
   Int_t PILEUP_MIN_STRIPS;
-
-  // Reject events where ANY strip's total exceeds the cap (a.u.): catches
-  // single-strip blowups that the count-based pileup filter misses.
-  Bool_t REJECT_HIGH_STRIP;
-  Double_t HIGH_STRIP_THRESHOLD;
 
   Bool_t REJECT_OFFBEAM;
   Double_t OFFBEAM_DIST;
@@ -45,17 +42,13 @@ struct StripSumScatterConfig {
 
   Double_t TRIGGER_NSIGMA;
   Double_t TRIGGER_CFD_FRAC;
-  Int_t POST_TRIGGER_SUM_STRIPS;
+  Int_t PLATEAU_POST;
   Int_t CLUSTER_SMOOTH_WINDOW;
   Int_t SEED_HALF_BINS;
 
   Int_t SAVGOL_HALF;
 
   Int_t TRACES_PER_CLASS;
-
-  // Cap on the worker threads used for per-run gate fitting and scatter
-  // filling (auto-detected concurrency is also capped by this).
-  Int_t MAX_STRIP_SUM_WORKERS;
 
   Int_t X_LO;
   Int_t X_HI;
@@ -68,9 +61,6 @@ struct StripSumScatterConfig {
   Double_t GATE_MAX;
   Int_t GATE_BINS;
 
-  // Display-only windows for the strip-sum scatters (a.u.): the histograms
-  // are built over the fixed ScatterBuildRange, so these only zoom the drawn
-  // plot via SetRangeUser (no rebuild); XBINS/YBINS do require a rebuild.
   Double_t XMIN;
   Double_t XMAX;
   Int_t XBINS;
@@ -78,8 +68,6 @@ struct StripSumScatterConfig {
   Double_t YMAX;
   Int_t YBINS;
 
-  // Per-reaction-strip y-axis display windows, overriding YMIN/YMAX for
-  // individual reaction strips (display-only, same as XMIN/XMAX).
   std::map<Int_t, std::pair<Double_t, Double_t>> Y_RANGE;
 
   Long64_t SAMPLE_MAX_POINTS;
@@ -91,16 +79,7 @@ struct StripSumScatterConfig {
   Bool_t REQUIRE_GATE_S3_S4;
   Bool_t REQUIRE_GATE_S5_S6;
   Bool_t SKIP_SAVGOL_PLOTS;
-  // Fill the per-reaction 2D scatters from per-strip sums of the
-  // Savitzky-Golay-smoothed normed totals (same kernel as the smoothed trace
-  // plots); filters, reservoir and region traces stay raw.
-  Bool_t SCATTER_SAVGOL;
   Bool_t REQUIRE_STRIP_16_BELOW_BEAM;
-
-  // Skip the per-class cluster-variable histograms (ClusterVarHists) drawn by
-  // the interactive overlay after the cuts; the region trace overlays are still
-  // produced.
-  Bool_t SKIP_CLUSTER_HISTS;
 
   void SetDefaults();
 };
@@ -142,15 +121,6 @@ public:
 
   Bool_t REJECT_FLAGGED_EVENTS;
 
-  // Reject complete events where any anode channel fired more than once in the
-  // coincidence window (unambiguous pileup); hit counts stay in the Hits
-  // branch, so this is a read-side selection.
-  Bool_t REJECT_MULTI_HIT_EVENTS;
-
-  // Highest split strip that must fire for event completeness (14 = the
-  // historical L1..13/R2..14; 16 mirrors AllStripsFired). 0/17: IGNORE_*.
-  Int_t COMPLETE_CHECK_END_STRIP;
-
   Bool_t IGNORE_SHORT_STRIPS;
   Bool_t IGNORE_STRIP_0;
   Bool_t IGNORE_STRIP_17;
@@ -165,8 +135,9 @@ public:
 
   Bool_t SKIP_CALIBRATION;
 
-  // Sample traces to save during event build and normed summary passes
-  // (0 = disabled); overlays in events_summary and events_summary_normed.
+  // Number of sample traces to save during event build and normed summary
+  // passes (0 = disabled). Saved as overlays in events_summary and
+  // events_summary_normed alongside the histograms.
   Int_t SAVE_SAMPLE_TRACES;
 
   Int_t MAX_FUSED_WORKERS;

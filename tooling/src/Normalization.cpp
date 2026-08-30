@@ -8,8 +8,9 @@ Bool_t EnergyView::Attach(TTree *t) {
   t->SetBranchAddress("Hits", hits_adc);
   t->SetBranchAddress("Cathode", &cathode_adc);
   t->SetBranchAddress("Grid", &grid_adc);
-  // Materialize the first tree so GetCurrentFile() resolves for a TChain —
-  // makes is_normed correct right after Attach.
+  // Materialize the first tree so GetCurrentFile() resolves for a TChain (it is
+  // null until a tree is loaded); this makes is_normed correct right after
+  // Attach.
   t->LoadTree(0);
   LoadGains();
   loaded_tree_ = t->GetTreeNumber();
@@ -20,8 +21,7 @@ void EnergyView::LoadGains() {
   for (Int_t s = 0; s < 18; s++) {
     gain_left[s] = 0.0f;
     gain_right[s] = 0.0f;
-    slope[s] = 1.0f;
-    intercept[s] = 0.0f;
+    strip_factor[s] = 1.0f;
   }
   gain_cathode = 0.0f;
   is_normed = kFALSE;
@@ -34,39 +34,31 @@ void EnergyView::LoadGains() {
   if (!cal || cal->GetEntries() < 1)
     return;
   Float_t gl[18] = {0}, gr[18] = {0}, gc = 0.0f;
-  Float_t sl[18] = {0}, ic[18] = {0};
+  Float_t sf[18] = {0};
   cal->SetBranchAddress("GainLeft", gl);
   cal->SetBranchAddress("GainRight", gr);
   cal->SetBranchAddress("GainCathode", &gc);
-  // StripSlope/StripIntercept are optional (older files carry StripFactor);
-  // absent → slope = 1 / intercept = 0 (identity).
-  Bool_t has_linear = cal->GetBranch("StripSlope") != nullptr;
-  if (has_linear) {
-    cal->SetBranchAddress("StripSlope", sl);
-    cal->SetBranchAddress("StripIntercept", ic);
-  } else if (cal->GetBranch("StripFactor")) {
-    // Legacy multiplicative factors -> linear form (factor * total + 0).
-    cal->SetBranchAddress("StripFactor", sl);
-  }
+  // StripFactor is optional (added after the initial per-channel gain write,
+  // filled in by FindStripCentroidAlignment on the second write). When absent
+  // the default factor = 1.0 (identity) is used.
+  Bool_t has_factor = cal->GetBranch("StripFactor") != nullptr;
+  if (has_factor)
+    cal->SetBranchAddress("StripFactor", sf);
   cal->GetEntry(0);
   for (Int_t s = 0; s < 18; s++) {
     gain_left[s] = gl[s];
     gain_right[s] = gr[s];
-    if (has_linear) {
-      slope[s] = sl[s];
-      intercept[s] = ic[s];
-    } else if (sl[s] > 0.0f) {
-      slope[s] = sl[s]; // legacy factor
-      intercept[s] = 0.0f;
-    }
+    if (has_factor)
+      strip_factor[s] = sf[s];
   }
   gain_cathode = gc;
   is_normed = kTRUE;
 }
 
 void EnergyView::Decode() {
-  // A TChain advances fTreeNumber when GetEntry crosses into a new subfile
-  // → reload that file's gains; plain TTrees report -1 forever and don't.
+  // A TChain advances fTreeNumber when GetEntry crosses into a new subfile;
+  // reload that file's gains when it does. Plain TTrees report -1 forever, so
+  // this never re-fires for them (gains already loaded in Attach).
   if (tree_) {
     Int_t tn = tree_->GetTreeNumber();
     if (tn != loaded_tree_) {
@@ -105,11 +97,12 @@ void EnergyView::Decode() {
       }
     }
   }
-  // Per-strip two-point linear correction (beam→1.0, pileup→2.0) applied
-  // after gain and IGNORE_SHORT_STRIPS: fixes ADC sublinearity a gain cannot.
+  // Apply per-strip multiplicative alignment factors (notebook approach).
+  // This pulls each strip's beam-peak centroid onto the pol3 reference trend
+  // and is applied after per-channel gain and IGNORE_SHORT_STRIPS.
   if (is_normed) {
     for (Int_t s = 0; s <= 17; s++) {
-      total[s] = Double_t(slope[s]) * total[s] + Double_t(intercept[s]);
+      total[s] *= Double_t(strip_factor[s]);
     }
   }
 }

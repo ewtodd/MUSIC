@@ -42,11 +42,6 @@ void InitDatasetConfig() {
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y = 3.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.XMIN = 14;
   gInstance.STRIP_SUM_SCATTER_CONFIG.XMAX = 18;
-  // Bins over the fixed 40-a.u. build range: XBINS=3000 restores ~300 visible
-  // x bins (x 14-18); YBINS=3000 gives ~150 visible y bins (6000 would double
-  // them but 4x the memory).
-  gInstance.STRIP_SUM_SCATTER_CONFIG.XBINS = 3000;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.YBINS = 3000;
   gInstance.STRIP_SUM_SCATTER_CONFIG.Y_RANGE = {
       {3, {5.5, 7.5}}, {4, {5, 7}},    {5, {5.5, 7.5}}, {6, {5, 7}},
       {7, {5, 7}},     {8, {5, 7}},    {9, {5, 7}},     {10, {5, 7}},

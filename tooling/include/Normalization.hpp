@@ -14,12 +14,11 @@ struct EnergyView {
   Float_t gain_left[18], gain_right[18], gain_cathode;
   Bool_t is_normed; // a calibration tree was found -> Decode() yields a.u.
 
-  // Per-strip two-point linear correction (alignment pass): total_corrected =
-  // slope*total + intercept, line through (beam centroid, 1.0) and
-  // (pileup, 2.0) — fixes the ADC sublinearity a single factor cannot; identity
-  // when no alignment is loaded.
-  Float_t slope[18];
-  Float_t intercept[18];
+  // Per-strip multiplicative alignment factors matching the notebook
+  // approach: factor = pol3_reference / centroid. Applied to total[s]
+  // after the per-channel gain: total[s] *= strip_factor[s].
+  // Identity (1.0) when no alignment is loaded.
+  Float_t strip_factor[18];
 
   // decoded per-event values (a.u. if is_normed, else raw ADC)
   Double_t left[18], right[18], total[18];

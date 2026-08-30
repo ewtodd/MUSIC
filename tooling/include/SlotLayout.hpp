@@ -3,8 +3,9 @@
 
 #include <Rtypes.h>
 
-// Structural slot layout for the EventState / PerChannelData 36-element
-// arrays; fixed by the tooling data model (see EventBuilder), not the dataset.
+// Structural slot layout for the EventState / PerChannelData 36-element arrays.
+// These indices are fixed by the tooling's data model (see EventBuilder), not
+// by the dataset, so they live with the tooling rather than per-dataset config.
 namespace Constants {
 
 const Int_t ARR_SLOT_STRIP_0 = 0;

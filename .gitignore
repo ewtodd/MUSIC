@@ -29,7 +29,7 @@ __pycache__
 *.o
 *.d
 *.pcm
-result
+result*
 *.png
 
 # monorepo: per-dataset binaries (no extension) + editor/junk

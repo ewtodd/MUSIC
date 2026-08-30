@@ -1,11 +1,6 @@
 {
-  description = "MUSIC analysis monorepo (one tooling, per-dataset config)";
+  description = "MUSIC analysis monorepo (unified analysis framework, per-dataset config)";
   inputs = {
-    # Follow Analysis-Utilities' nixpkgs so both flakes share one interpreter
-    # and toolchain: its pythonPackage is then importable from this flake's
-    # python3.withPackages (a foreign-python module would be silently
-    # dropped), and the C++ here compiles with the same stdenv that built
-    # ROOT.
     nixpkgs.follows = "utils/nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
     utils = {
@@ -22,57 +17,52 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
+        isLaptop = false;
+        includePython = false;
+        lib = nixpkgs.lib;
         pkgs = import nixpkgs {
           inherit system;
-          config = {
+          config = lib.mkIf (!isLaptop) {
             allowUnfree = true;
             cudaCapabilities = [ "8.9" ];
             cudaForwardCompat = false;
           };
-          overlays = [
-            # torch-bin 2.12 requires cuda-bindings >= 13.0.3; the default
-            # cudaPackages (12.9) is too old, so pin the 13.0 set instead.
-            (final: prev: {
-              cudaPackages = prev.cudaPackages_13_0;
-            })
-            # slicer (a dep of shap) fails its test suite on python 3.14 in
-            # the updated nixpkgs; skip the checks.
-            (final: prev: {
-              pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
-                (python-final: python-prev: {
-                  # slicer (a dep of shap) is broken in the updated nixpkgs:
-                  # its pyproject build lacks setuptools, and its test suite
-                  # fails on python 3.14. Fix the build and skip the checks.
-                  slicer = python-prev.slicer.overridePythonAttrs (old: {
-                    doCheck = false;
-                    nativeBuildInputs = (old.nativeBuildInputs or []) ++ [
-                      python-final.setuptools
-                    ];
-                  });
-                  # shap is missing typing-extensions in its nixpkgs deps; the
-                  # runtime-deps check fails without it.
-                  shap = python-prev.shap.overridePythonAttrs (old: {
-                    dependencies = (old.dependencies or []) ++ [
-                      python-final.typing-extensions
-                    ];
-                  });
-                  # torch-bin pins setuptools<82 but nixpkgs ships 83.0.0;
-                  # relax the constraint so the runtime-deps check passes.
-                  torch-bin = python-prev.torch-bin.overridePythonAttrs (old: {
-                    pythonRelaxDeps = (old.pythonRelaxDeps or []) ++ [
-                      "setuptools"
-                    ];
-                  });
+          overlays =
+            if (!isLaptop && includePython == true) then
+              [
+                (final: prev: {
+                  cudaPackages = prev.cudaPackages_13_0;
                 })
-              ];
-            })
-          ];
+                (final: prev: {
+                  pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
+                    (python-final: python-prev: {
+                      slicer = python-prev.slicer.overridePythonAttrs (old: {
+                        doCheck = false;
+                        nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+                          python-final.setuptools
+                        ];
+                      });
+                      shap = python-prev.shap.overridePythonAttrs (old: {
+                        dependencies = (old.dependencies or [ ]) ++ [
+                          python-final.typing-extensions
+                        ];
+                      });
+                      torch-bin = python-prev.torch-bin.overridePythonAttrs (old: {
+                        pythonRelaxDeps = (old.pythonRelaxDeps or [ ]) ++ [
+                          "setuptools"
+                        ];
+                      });
+                    })
+                  ];
+                })
+              ]
+            else
+              [ ];
         };
-        isCUDA = true;
         analysis-utils =
-          if !isCUDA then utils.packages.${system}.default else utils.packages.${system}.cuda;
+          if isLaptop then utils.packages.${system}.default else utils.packages.${system}.cuda;
         analysis-utils-py = utils.packages.${system}.pythonPackage;
-        root = if !isCUDA then pkgs.root else utils.packages.${system}.rootCuda;
+        root = if isLaptop then pkgs.root else utils.packages.${system}.rootCuda;
         clangdConfigFile = (pkgs.formats.yaml { }).generate "dot-clangd" {
           CompileFlags.Add = [
             "--cuda-gpu-arch=sm_89"
@@ -86,9 +76,6 @@
           ];
         };
 
-        # One dev shell per dataset. The only difference is the exported
-        # MUSIC_DATASET / MUSIC_DATASET_DIR (which the Makefile and the tooling
-        # banner / path resolution read). All datasets share the one tooling.
         mkDatasetShell =
           dataset:
           pkgs.mkShell {
@@ -102,6 +89,8 @@
               root
               pkgs.bash
               pkgs.tomlplusplus
+            ]
+            ++ pkgs.lib.optionals includePython [
               (pkgs.python3.withPackages (
                 python-pkgs: with python-pkgs; [
                   numpy
@@ -116,13 +105,15 @@
                 ]
               ))
             ]
-            ++ pkgs.lib.optionals isCUDA [
+            ++ pkgs.lib.optionals (!isLaptop) [
               pkgs.cudaPackages.cuda_nvcc
               pkgs.cudaPackages.cuda_cudart
               pkgs.cudaPackages.cccl
             ];
             shellHook = ''
-               echo "Analysis-Utilities version: ${analysis-utils.version}${pkgs.lib.optionalString isCUDA " (CUDA)"}"
+               echo "Analysis-Utilities version: ${analysis-utils.version}${
+                 pkgs.lib.optionalString (!isLaptop) " (CUDA)"
+               }"
                flake_root="$PWD"
                git_root="$(git -C "$flake_root" rev-parse --show-toplevel)"
 
@@ -137,7 +128,7 @@
               export MUSIC_RESULTS_DIR="''${MUSIC_RESULTS_DIR:-$git_root/analysis/${dataset}}"
               echo "MUSIC results: $MUSIC_RESULTS_DIR"
 
-              ${pkgs.lib.optionalString isCUDA ''
+              ${pkgs.lib.optionalString (!isLaptop) ''
                 export NIX_CFLAGS_COMPILE="-DAU_ROOFIT_BACKEND_CUDA=1''${NIX_CFLAGS_COMPILE:+ $NIX_CFLAGS_COMPILE}"
                 export LD_LIBRARY_PATH="/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
                 install -m 644 ${clangdConfigFile} "$git_root/tooling/gpu/.clangd"
@@ -158,6 +149,10 @@
       let
         mkPackage =
           dataset:
+          let
+            extraBuild = if (!isLaptop) then ''GPU_LIB_OUT="$out/lib/libgpuaccel.so"'' else "";
+            extraInstall = if (!isLaptop) then "cp tooling/gpu/libgpuaccel.so $out/lib/" else "";
+          in
           pkgs.stdenv.mkDerivation {
             name = "music-tooling-${dataset}";
             src = ./.;
@@ -171,23 +166,21 @@
               pkgs.bash
               pkgs.tomlplusplus
             ]
-            ++ pkgs.lib.optionals isCUDA [
+            ++ pkgs.lib.optionals (!isLaptop) [
               pkgs.cudaPackages.cuda_nvcc
               pkgs.cudaPackages.cuda_cudart
               pkgs.cudaPackages.cccl
             ];
-
             buildPhase = ''
               export MUSIC_DATASET="${dataset}"
               export MUSIC_DATASET_DIR="$sourceRoot/analysis/${dataset}"
-              make -j DATASET_DIR_OUT="$out/analysis/${dataset}" \
-                   GPU_LIB_OUT="$out/lib/libgpuaccel.so"
+              make -j DATASET_DIR_OUT="$out/analysis/${dataset}" ${extraBuild}
             '';
 
             installPhase = ''
               mkdir -p $out/bin $out/lib $out/analysis/${dataset}/config
-              cp analysis/${dataset}/bin/* $out/bin/
-              cp tooling/gpu/libgpuaccel.so $out/lib/
+              cp analysis/${dataset}/bin/* $out/bin/ 
+              ${extraInstall}
               cp -r analysis/${dataset}/config/* $out/analysis/${dataset}/config/
             '';
           };

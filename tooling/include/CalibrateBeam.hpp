@@ -53,26 +53,40 @@ struct ChannelCal {
   Double_t fit_adc = 0.0;
   Double_t fit_sigma_adc = 0.0;
   Long64_t n_samples = 0.0;
-  // L/R gain-match override: when >= 0, Gain() uses this instead of 1/fit_adc.
-  // Set by ComputeLRGainMatch (the check_LR two-pass recipe), putting L and R
-  // in the same charge scale.
+  // L/R gain-match override. When >= 0, Gain() returns this instead of
+  // 1/fit_adc. Set by ComputeLRGainMatch (the check_LR notebook's two-pass
+  // recipe): long side anchored on its beam peak, short side anchored on
+  // the correlation-ridge peak, then a per-strip eSum median alignment
+  // applied to the short side only. Puts L and R in the same charge scale
+  // so reaction events (different L/R sharing than beam) don't sawtooth
+  // between even/odd strips. When < 0, falls back to 1/fit_adc.
   Double_t gain = -1.0;
 };
 
-// Post-gain results: the beam energy window (mu ± 3*sigma of the Gaussian fit
-// to Strip0/17, a.u.) and the per-strip two-point line (B,1.0)-(P,2.0) that
-// fixes the ADC sublinearity no single factor can; runs after ReduceToAnchors +
-// the initial calibration write, and is consumed by EnergyView.
+// Result of the two post-gain calibration steps:
+//   1. DeriveBeamEnergyWindow — Gaussian-fit Strip0 (or Strip17) and report
+//      mu ± 3*sigma in a.u. so downstream beam-selection code has a single,
+//      data-driven beam-energy window.
+//   2. FindStripCentroidAlignment — decode events with the per-channel gains
+//      already applied, find each strip's beam-peak centroid from the eSum
+//      histogram, fit a robust degree-3 polynomial reference trend through
+//      the centroids with iterative outlier rejection, and derive a
+//      multiplicative per-strip factor = reference / centroid that pulls
+//      every strip onto the smooth trend. This matches the notebook's
+//      approach (37Cl_an.ipynb cell 5).
+//
+// Both steps run AFTER ReduceToAnchors and AFTER the initial
+// WriteCalibrationToEvents (the alignment step needs the calibration tree on
+// disk so EnergyView can decode). The factors are stored in the calibration
+// tree and applied by EnergyView after the per-channel gain.
 struct StripAlignmentResult {
   Bool_t ok = kFALSE;
   Double_t beam_e_min = 0.0;
   Double_t beam_e_max = 0.0;
-  // Default slope = 1.0, intercept = 0.0 (identity — no correction). Set by
+  // Default factor = 1.0 (identity — no scaling). Set by
   // FindStripCentroidAlignment when centroid measurements are available.
-  Double_t slopes[18] = {};
-  Double_t intercepts[18] = {};
-  Double_t centroids[18] = {};        // measured beam-peak centroid per strip
-  Double_t pileup_centroids[18] = {}; // measured pileup-peak centroid per strip
+  Double_t factors[18] = {};
+  Double_t centroids[18] = {}; // measured beam-peak centroid per strip (a.u.)
 };
 
 class CalibrateBeam {
