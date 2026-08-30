@@ -198,9 +198,13 @@ extern const DatasetConfig &cfg;
 // otherwise, so a dataset that declares no epochs behaves exactly as before.
 void SetActiveEpoch(const RunEpoch *epoch);
 const RunEpoch *GetActiveEpoch();
-// Epoch owning a run number, or null when none declares it. Lets the standalone
-// tools set the same epoch the pipeline would for that run.
+// Epoch owning a run number, or null when no UNTAGGED epoch declares it. A
+// tagged epoch reuses another era's run numbers and is addressed by tag, never
+// by number alone.
 const RunEpoch *EpochForRun(Int_t run);
+// Output-name prefix of the active epoch ("" when none, so existing filenames
+// are unchanged).
+const TString &ActiveFileTag();
 
 Int_t ActiveNBoards();
 Int_t ActiveNChannels();

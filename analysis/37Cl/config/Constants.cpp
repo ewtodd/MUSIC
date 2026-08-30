@@ -103,13 +103,16 @@ void InitDatasetConfig() {
   // The SOLARIS eras share one 1x64 map; CoMPASS run 37 used four 16-channel
   // boards with a different map (0bfa4e6:ProductionMode_37Cl/macros).
   // ---------------------------------------------------------------------
-  std::map<std::pair<Int_t, Int_t>, TString> solaris_map = gInstance.channelMap64;
+  std::map<std::pair<Int_t, Int_t>, TString> solaris_map =
+      gInstance.channelMap64;
 
   RunEpoch late;
   late.name = "late";
   late.source = kSolaris;
   late.enabled = kTRUE;
-  for (Int_t i = 84; i < 138; i++)
+  // Physics runs only: 84-96 are tuning runs. The flat run list this replaced
+  // started at 84 and so included them.
+  for (Int_t i = 97; i < 138; i++)
     late.runs.push_back(i);
   late.max_files = -1;
   late.n_boards = 1;
@@ -149,6 +152,9 @@ void InitDatasetConfig() {
   // cathode, board sync and sorting on, and no Grid amplitude window.
   RunEpoch compass;
   compass.name = "compass";
+  // A different experiment years earlier that happens to reuse run numbers the
+  // SOLARIS eras also use, so its output has to be tagged apart.
+  compass.file_tag = "compass";
   compass.source = kCoMPASS;
   compass.enabled = kFALSE;
   compass.runs.push_back(37);

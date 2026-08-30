@@ -286,10 +286,16 @@ TString FileSet::ShiftFriendName(const FileSpec &s) {
 }
 
 TString FileSet::EventsName(const FileSpec &s) {
+  const TString &tag = Constants::ActiveFileTag();
+  if (tag.Length() > 0)
+    return Form("Events_%s_Run%d%s", tag.Data(), s.run, s.suffix.Data());
   return Form("Events_Run%d%s", s.run, s.suffix.Data());
 }
 
 TString FileSet::FileLabel(const FileSpec &s) {
+  const TString &tag = Constants::ActiveFileTag();
+  if (tag.Length() > 0)
+    return Form("%s_run%d%s", tag.Data(), s.run, s.suffix.Data());
   return Form("run%d%s", s.run, s.suffix.Data());
 }
 

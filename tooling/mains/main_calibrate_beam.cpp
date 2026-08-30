@@ -11,6 +11,18 @@
 static Bool_t SetEpochFromLabel(const TString &file_label) {
   if (Constants::cfg.EPOCHS.empty())
     return kTRUE;
+  // A tagged label ("compass_run37_1") names its epoch outright. Run numbers
+  // repeat across acquisition systems, so the tag is the only thing that
+  // disambiguates them; fall back to the run number only for untagged eras.
+  for (Int_t e = 0; e < Int_t(Constants::cfg.EPOCHS.size()); e++) {
+    const RunEpoch &ep = Constants::cfg.EPOCHS[e];
+    if (ep.file_tag.Length() > 0 && file_label.BeginsWith(ep.file_tag + "_")) {
+      Constants::SetActiveEpoch(&ep);
+      std::cout << "label '" << file_label << "' -> epoch " << ep.name
+                << std::endl;
+      return kTRUE;
+    }
+  }
   Int_t start = file_label.Index("run");
   if (start < 0)
     return kFALSE;

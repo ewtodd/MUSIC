@@ -31,6 +31,14 @@ struct RunEpoch {
   RunSource source;
   Bool_t enabled;
 
+  // Prefix for this epoch's output files and plot directories. Run numbers are
+  // only unique within an acquisition system: CoMPASS run 37 and SOLARIS run 37
+  // are unrelated experiments years apart that happen to share a number, and
+  // without a tag both would write Events_Run37_*.root over each other. Leave
+  // empty for the era whose filenames are already on disk (the SOLARIS runs);
+  // set it on any era that would otherwise collide.
+  TString file_tag;
+
   std::vector<Int_t> runs;
   // Cap on subfiles processed per run; -1 for all.
   Int_t max_files;
@@ -67,7 +75,8 @@ struct RunEpoch {
   Double_t right_odd_max_adc;
 
   RunEpoch()
-      : name(""), source(kSolaris), enabled(kTRUE), max_files(-1), n_boards(1),
+      : name(""), source(kSolaris), enabled(kTRUE), file_tag(""), max_files(-1),
+        n_boards(1),
         n_channels(64), timing_ref_board(0), do_board_sync(kFALSE),
         do_sort(kFALSE), event_time_window_us(8.0), reference_channel("Grid"),
         reference_channel_min_adc(0.0), reference_channel_max_adc(16384.0),

@@ -163,8 +163,13 @@ void SetActiveEpoch(const RunEpoch *epoch) { gActiveEpoch = epoch; }
 const RunEpoch *GetActiveEpoch() { return gActiveEpoch; }
 
 const RunEpoch *EpochForRun(Int_t run) {
+  // Only untagged epochs are addressable by run number. A tagged epoch exists
+  // precisely because its run numbers collide with another era's, so answering
+  // from the number alone would be a coin flip; those are addressed by tag.
   for (Int_t e = 0; e < Int_t(cfg.EPOCHS.size()); e++) {
     const RunEpoch &ep = cfg.EPOCHS[e];
+    if (ep.file_tag.Length() > 0)
+      continue;
     for (Int_t r = 0; r < Int_t(ep.runs.size()); r++)
       if (ep.runs[r] == run)
         return &ep;
@@ -251,6 +256,10 @@ Double_t ActiveRightOddMaxAdc() {
 
 const std::vector<Int_t> &ActiveRunNumbers() {
   return gActiveEpoch ? gActiveEpoch->runs : cfg.RUN_NUMBERS;
+}
+const TString &ActiveFileTag() {
+  static const TString kNone = "";
+  return gActiveEpoch ? gActiveEpoch->file_tag : kNone;
 }
 Int_t ActiveMaxFiles() {
   return gActiveEpoch ? gActiveEpoch->max_files : -1;
