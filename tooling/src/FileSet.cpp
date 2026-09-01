@@ -1,6 +1,7 @@
 #include "FileSet.hpp"
 
 std::mutex g_plot_mutex;
+std::mutex g_log_mutex;
 
 TString FileSet::CompassBinPath(const FileSpec &s) {
   return Constants::cfg.COMPASS_BASE_DIR +

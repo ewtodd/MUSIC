@@ -38,14 +38,26 @@ void InitDatasetConfig() {
   gInstance.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_COUNT_TO = 16;
   gInstance.STRIP_SUM_SCATTER_CONFIG.ALT_DECODE_REGION_TRACES = kFALSE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS = kTRUE;
+  // 6 keeps the y-sum span main has always used; the tooling default is 3.
+  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS = 6;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN = 3;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX = 15;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 9;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 5;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X = 3.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y = 3.0;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.XMIN = 14;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.XMAX = 20;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_RANGE = {
+  gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MIN = 13;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MAX = 21;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MIN = 0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MAX = 10;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.XBINS = 1500;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.YBINS = 2000;
+  // Saved cuts win when RegionCuts.root has them, so the run repeats headless.
+  // A strip with no saved cut still prompts, which is how the first pass fills
+  // the file. Flip to kTRUE only to deliberately redraw over saved cuts.
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REGION_CUT_REDRAW = kFALSE;
+  // Per-strip y zoom. Display-only now (applied with SetRangeUser over the
+  // fixed build range), so changing it never forces a refill.
+  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_RANGE = {
       {3, {4, 9}},  {4, {5, 7}},  {5, {5.5, 7.5}}, {6, {5, 7}},  {7, {5, 7}},
       {8, {5, 7}},  {9, {5, 7}},  {10, {5, 7}},    {11, {5, 7}}, {12, {3.5, 6}},
       {13, {2, 5}}, {14, {2, 5}}, {15, {1, 4}}};

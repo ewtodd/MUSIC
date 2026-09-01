@@ -12,9 +12,24 @@
 #include <utility>
 #include <vector>
 
+// Progress logging on per-hit / per-event loops. Compile-time so the branch
+// leaves the hot loop entirely when it is off; define MUSIC_HOT_PATH_LOGGING=0
+// on the compiler command line to disable. Logging outside hot loops (per-file
+// and per-run summaries) is unconditional and not covered by this.
+#ifndef MUSIC_HOT_PATH_LOGGING
+#define MUSIC_HOT_PATH_LOGGING 1
+#endif
+
 struct StripSumScatterConfig {
   enum PureBeamGate { PURE_BEAM_GATE_S0_S1, PURE_BEAM_GATE_S1_S2 };
   PureBeamGate PURE_BEAM_GATE;
+
+  // Strips summed onto the scatter y-axis after the trigger strip: y spans
+  // reac+1 .. reac+POST_TRIGGER_SUM_STRIPS. Changes the built quantity, so it
+  // is stamped in the cache fingerprint.
+  Int_t POST_TRIGGER_SUM_STRIPS;
+  // Cap on worker threads for the scatter fill.
+  Int_t MAX_STRIP_SUM_WORKERS;
 
   Int_t REACTION_STRIP_MIN;
   Int_t REACTION_STRIP_MAX;
@@ -36,6 +51,11 @@ struct StripSumScatterConfig {
   Bool_t REJECT_PILEUP;
   Double_t PILEUP_THRESH_PY;
   Int_t PILEUP_MIN_STRIPS;
+
+  // Redraw the regions for this reaction strip even if saved ones exist, and
+  // overwrite only that strip's entry. Without it the only way to redraw was
+  // to delete the whole cut file, which discarded every other strip's work.
+  Bool_t REGION_CUT_REDRAW;
 
   // Both-ends multiplicity cut: reject an event when more than MAX strips in
   // 1..COUNT_TO had BOTH ends fire. Read off raw ADC, so it is independent of
@@ -72,14 +92,19 @@ struct StripSumScatterConfig {
   Double_t GATE_MAX;
   Int_t GATE_BINS;
 
-  Double_t XMIN;
-  Double_t XMAX;
+  // Display-only windows for the strip-sum scatters (a.u.): the histograms are
+  // built over the fixed ScatterBuildRange, so these only zoom the drawn plot
+  // via SetRangeUser (no rebuild); XBINS/YBINS do require a rebuild.
+  Double_t X_DISPLAY_MIN;
+  Double_t X_DISPLAY_MAX;
   Int_t XBINS;
-  Double_t YMIN;
-  Double_t YMAX;
+  Double_t Y_DISPLAY_MIN;
+  Double_t Y_DISPLAY_MAX;
   Int_t YBINS;
 
-  std::map<Int_t, std::pair<Double_t, Double_t>> Y_RANGE;
+  // Per-reaction-strip y-axis display windows, overriding Y_DISPLAY_MIN/MAX for
+  // individual strips (display-only, same as the X_DISPLAY_* windows).
+  std::map<Int_t, std::pair<Double_t, Double_t>> Y_DISPLAY_RANGE;
 
   Long64_t SAMPLE_MAX_POINTS;
 

@@ -369,7 +369,8 @@ void Pipeline::Run() {
       const RunEpoch &epoch = Constants::cfg.EPOCHS[e];
       if (!epoch.enabled || epoch.runs.empty())
         continue;
-      std::cout << "\n=== epoch " << epoch.name << " ("
+      std::cout << std::endl;
+      std::cout << "=== epoch " << epoch.name << " ("
                 << (epoch.source == kSolaris ? "SOLARIS" : "CoMPASS") << ", "
                 << epoch.runs.size() << " run(s), " << epoch.n_boards << "x"
                 << epoch.n_channels << " ch) ===" << std::endl;

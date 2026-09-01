@@ -405,7 +405,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       delete hSum.h2_strip0_vs_grid;
       delete hSum.h1_strip0;
       delete hSum.h1_grid;
-      for (Int_t i = 0; i < sample_traces.size(); i++)
+      for (Int_t i = 0; i < Int_t(sample_traces.size()); i++)
         delete sample_traces[i];
       return kFALSE;
     }
@@ -482,7 +482,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
             << ", window: " << Constants::ActiveEventTimeWindowUs() << " us)"
             << std::endl;
 
-  for (Int_t i = 0; i < Int_t(n_entries); i++) {
+  for (Long64_t i = 0; i < n_entries; i++) {
     const RawHit &h = hits[i];
 
     if (h.board >= Constants::ActiveNBoards() ||

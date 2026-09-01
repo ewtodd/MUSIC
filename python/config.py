@@ -67,7 +67,8 @@ BLIND_PREBEAM_FEATURE = True
 BLIND_PREBEAM_MIN_STRIP = 2  # floor: pre-trigger pair = strips 1 and 0 (guard)
 
 # Savitzky-Golay smoothing: 5-point, cubic, edge-renormalized (matches
-# StripSumScatter::SavitzkyGolay); clustering uses the SG trace, beam ref stays raw.
+# StripSumScatter::SavitzkyGolay); clustering uses the SG trace, beam ref
+# stays raw.
 BLIND_SAVITZKY_GOLAY = True
 
 # Shape/topology clustering features.
@@ -85,7 +86,9 @@ BLIND_STEP1_KEEP_IF = ("beamgate", )
 BLIND_STEP1_DROP_IF = ("offbeam", "pileup")
 
 # Step 2 (per-strip shape clustering): curated feature whitelist, AUTHORITATIVE
-# (used regardless of BLIND_*_FEATURE toggles; None = fallback blacklist). The (a,n) signature is plateau-up + end-strip collapse, so the default is shape axes only; blind_combined ignores this.
+# (used regardless of BLIND_*_FEATURE toggles; None = fallback blacklist). The
+# (a,n) signature is plateau-up + end-strip collapse, so the default is shape
+# axes only; blind_combined ignores this.
 BLIND_STEP2_FEATURES = ("plateau", "tail", "beamdev", "near_mult")
 
 # Cluster count per stage: None = auto-k (k minimizing GMM BIC), int = force.
@@ -95,7 +98,8 @@ BLIND_STEP2_K = 4
 BLIND_COMBINED_K = 4
 
 # Clustering backend (cluster_auto): "gmm"/"none" -- sklearn GaussianMixture,
-# BIC model selection, native predict; optional noise tail (BLIND_GMM_NOISE_PCTL).
+# BIC model selection, native predict; optional noise tail
+# (BLIND_GMM_NOISE_PCTL).
 BLIND_NOISE_CLUSTERING = "gmm"
 BLIND_STEP1_BACKEND = None  # override BLIND_NOISE_CLUSTERING for step 1
 BLIND_STEP2_BACKEND = None  # override BLIND_NOISE_CLUSTERING for step 2
@@ -109,7 +113,8 @@ BLIND_REAC_ONSET_FRAC = 0.30  # onset = first strip reaching this frac of peak
 BLIND_COMBINED_STRIPS = tuple(range(2, 14))  # candidate reaction strips
 
 # Step-2 shape cleanup: co-assign reassigns events to the nearest cluster
-# mean-trace (shape residual), pruning outliers to -1; template_prune is the fallback.
+# mean-trace (shape residual), pruning outliers to -1; template_prune is the
+# fallback.
 BLIND_TEMPLATE_PRUNE = True
 BLIND_TEMPLATE_CUT = "mad"  # "valley" (first valley) | "mad" (median+N*MAD)
 BLIND_TEMPLATE_NMAD = 1.5  # "mad" only

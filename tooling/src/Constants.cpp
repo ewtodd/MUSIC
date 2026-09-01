@@ -3,6 +3,9 @@
 void StripSumScatterConfig::SetDefaults() {
   PURE_BEAM_GATE = PURE_BEAM_GATE_S0_S1;
 
+  POST_TRIGGER_SUM_STRIPS = 3;
+  MAX_STRIP_SUM_WORKERS = 12;
+
   REACTION_STRIP_MIN = 2;
   REACTION_STRIP_MAX = 15;
 
@@ -24,6 +27,7 @@ void StripSumScatterConfig::SetDefaults() {
   PILEUP_THRESH_PY = 1.3;
   PILEUP_MIN_STRIPS = 1;
 
+  REGION_CUT_REDRAW = kFALSE;
   BOTH_MULT_MAX = -1;      // disabled by default
   BOTH_MULT_COUNT_TO = 16; // whole trace unless narrowed
   REJECT_OFFBEAM = kFALSE;
@@ -51,12 +55,12 @@ void StripSumScatterConfig::SetDefaults() {
   GATE_MAX = 3.0;
   GATE_BINS = 240;
 
-  XMIN = 14;
-  XMAX = 26;
-  XBINS = 300;
-  YMIN = 0;
-  YMAX = 20;
-  YBINS = 300;
+  X_DISPLAY_MIN = 14;
+  X_DISPLAY_MAX = 26;
+  XBINS = 1500;
+  Y_DISPLAY_MIN = 0;
+  Y_DISPLAY_MAX = 20;
+  YBINS = 1500;
 
   SAMPLE_MAX_POINTS = 2000000;
 

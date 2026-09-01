@@ -19,6 +19,11 @@
 // thread-safe and the pipeline runs file workers concurrently.
 extern std::mutex g_plot_mutex;
 
+// Serializes multi-line progress logging from worker threads. A streaming
+// insertion chain is not atomic, so without this the per-run lines from
+// concurrent workers interleave mid-line and the log stops being readable.
+extern std::mutex g_log_mutex;
+
 struct FileSpec {
   Int_t run;
   TString suffix;

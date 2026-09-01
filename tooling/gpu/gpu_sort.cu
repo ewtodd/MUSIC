@@ -6,8 +6,8 @@
 #include <thrust/sort.h>
 
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
+#include <iostream>
 #include <vector>
 
 // Mirrors layout of RawHit in include/BinaryUtils.hpp.
@@ -52,8 +52,8 @@ extern "C" int gpu_sort_hits_by_timestamp(void *hits, long long n_hits) {
   // count is far below 2^32, but guard anyway and let the caller fall back to
   // the CPU sort if that ever stops holding.
   if (static_cast<unsigned long long>(n_hits) > 0xFFFFFFFFULL) {
-    fprintf(stderr, "[GPU sort] n_hits %lld exceeds uint32 index range\n",
-            n_hits);
+    std::cerr << "[GPU sort] n_hits " << n_hits
+              << " exceeds uint32 index range" << std::endl;
     return 6;
   }
 
@@ -72,8 +72,8 @@ extern "C" int gpu_sort_hits_by_timestamp(void *hits, long long n_hits) {
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
-      fprintf(stderr, "[GPU sort] H2D copy failed: %s\n",
-              cudaGetErrorString(err));
+      std::cerr << "[GPU sort] H2D copy failed: " << cudaGetErrorString(err)
+                << std::endl;
       return 1;
     }
 
@@ -81,8 +81,8 @@ extern "C" int gpu_sort_hits_by_timestamp(void *hits, long long n_hits) {
 
     err = cudaGetLastError();
     if (err != cudaSuccess) {
-      fprintf(stderr, "[GPU sort] sort kernel failed: %s\n",
-              cudaGetErrorString(err));
+      std::cerr << "[GPU sort] sort kernel failed: " << cudaGetErrorString(err)
+                << std::endl;
       return 2;
     }
 
@@ -90,8 +90,8 @@ extern "C" int gpu_sort_hits_by_timestamp(void *hits, long long n_hits) {
 
     err = cudaGetLastError();
     if (err != cudaSuccess) {
-      fprintf(stderr, "[GPU sort] D2H copy failed: %s\n",
-              cudaGetErrorString(err));
+      std::cerr << "[GPU sort] D2H copy failed: " << cudaGetErrorString(err)
+                << std::endl;
       return 3;
     }
 
@@ -102,10 +102,10 @@ extern "C" int gpu_sort_hits_by_timestamp(void *hits, long long n_hits) {
     std::memcpy(host_hits, sorted.data(),
                 static_cast<size_t>(n_hits) * sizeof(RawHitGPU));
   } catch (const std::exception &e) {
-    fprintf(stderr, "[GPU sort] exception: %s\n", e.what());
+    std::cerr << "[GPU sort] exception: " << e.what() << std::endl;
     return 4;
   } catch (...) {
-    fprintf(stderr, "[GPU sort] unknown exception\n");
+    std::cerr << "[GPU sort] unknown exception" << std::endl;
     return 5;
   }
 

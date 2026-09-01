@@ -110,11 +110,11 @@
               pkgs.cudaPackages.cccl
             ];
             shellHook = ''
-               echo "Analysis-Utilities version: ${analysis-utils.version}${
-                 pkgs.lib.optionalString (!isLaptop) " (CUDA)"
-               }"
-               flake_root="$PWD"
-               git_root="$(git -C "$flake_root" rev-parse --show-toplevel)"
+              echo "Analysis-Utilities version: ${analysis-utils.version}${
+                pkgs.lib.optionalString (!isLaptop) " (CUDA)"
+              }"
+              flake_root="$PWD"
+              git_root="$(git -C "$flake_root" rev-parse --show-toplevel)"
 
               # --- dataset selection ---
               export MUSIC_DATASET="${dataset}"
@@ -190,7 +190,7 @@
             installPhase = ''
               mkdir -p $out/bin $out/lib $out/assets $out/analysis/${dataset}/config
               cp -r tooling/assets/. $out/assets/
-              cp analysis/${dataset}/bin/* $out/bin/ 
+              cp analysis/${dataset}/bin/* $out/bin/
               ${extraInstall}
               cp -r analysis/${dataset}/config/* $out/analysis/${dataset}/config/
             '';

@@ -446,8 +446,10 @@ std::vector<TGraph *> Timing::ExtractAllChannelsTimingStructureFromHits(
 
     per_chan_ts[it->second].push_back(h.timestamp);
 
+#if MUSIC_HOT_PATH_LOGGING
     if (i % 10000000 == 0)
       std::cout << "  Progress: " << i << "/" << n_entries << std::endl;
+#endif
   }
 
   std::vector<TGraph *> graphs;

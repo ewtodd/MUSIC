@@ -4,7 +4,9 @@ import random
 import numpy as np
 from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 
-import config, data, mlplots
+import config
+import data
+import mlplots
 
 _EPS = 1.0e-12
 
@@ -281,7 +283,8 @@ def _beam_gate_value(X):
     return inside.astype(np.float64)
 
 
-_PREBEAM_FITS = None  # {strip: (mu_a,mu_b,sig_a,sig_b)} beam ellipse per (s-1,s-2)
+# {strip: (mu_a,mu_b,sig_a,sig_b)} beam ellipse per (s-1,s-2)
+_PREBEAM_FITS = None
 
 
 def _set_prebeam_fits(X):
@@ -304,7 +307,8 @@ def _set_prebeam_fits(X):
 def _pre_trigger_beam(X, reac):
     """Binary `prebeam` feature: 1 if the event is STILL inside the beam blob at
     the two strips just before its trigger (#DeltaE(reac-1), #DeltaE(reac-2)), 0
-    otherwise. A clean reaction is beam-like right up to the trigger; pileup/junk
+    otherwise. A clean reaction is beam-like right up to the trigger;
+    pileup/junk
     has already departed the beam by then. Applies to every trigger at or after
     config.BLIND_PREBEAM_MIN_STRIP (floors at 2, where reac-1, reac-2 = strips 1
     and 0, the guard -- both valid columns); triggers below it or with no valid
@@ -812,7 +816,8 @@ def cluster_per_reaction_strip(
     config.BLIND_TEMPLATE_PRUNE, EVERY cluster is template-pruned to its own
     self-consistent shape (the (a,n) matching -- pruned members get label -1)
     and a `_final` overlay is drawn. Per-strip working plots (initial means +
-    the template-prune rounds) go into a per-strip subdir (<subdir>/reac<strip>);
+    the template-prune rounds) go into a per-strip subdir
+    (<subdir>/reac<strip>);
     only the `_final` overlays stay in the main <subdir> (next to step 1). The
     sliding `plateau` needs POST strips after the trigger, so a strip whose
     window would run past s17 is SKIPPED. Shared by blind_an (dual-step) and
@@ -848,7 +853,8 @@ def cluster_per_reaction_strip(
         )
         strip_subdir = f"{subdir}/reac{strip}"
         # Step 2 isolates the RARE (a,n) via template prune / co-assign +
-        # an_select; GMM noise tagging would clip its low-density tail, so noise_pctl=None.
+        # an_select; GMM noise tagging would clip its low-density tail, so
+        # noise_pctl=None.
         labels, means, k, bics = cluster_auto(feats,
                                               k=force_k,
                                               tag=tag,
@@ -862,7 +868,8 @@ def cluster_per_reaction_strip(
         _print_importance(feats, labels, names)
         X_at = X[at]
         # Per-strip working plots (means + every prune round) go into a
-        # per-strip subdir (only `_final` lands in the main dir); combined auto-k drops sigma shading at k>=4.
+        # per-strip subdir (only `_final` lands in the main dir); combined
+        # auto-k drops sigma shading at k>=4.
         bands = not (tag == "combined" and k >= 4)
         _draw_means_only(X_at,
                          labels,
@@ -1134,8 +1141,9 @@ def _co_assign(X_all, labels, k, tag, beam_ref, strip_subdir, strip):
         n_changed = int((new_labels != labels).sum())
         print(
             f"  co-assign {tag} round {r}: thresh={thresh:.3f} ({desc});"
-            f" {int((new_labels >= 0).sum())} assigned, {int((new_labels == -1).sum())} pruned "
-            f"(changed {n_changed} labels)")
+            f" {int((new_labels >= 0).sum())} assigned,"
+            f" {int((new_labels == -1).sum())} pruned"
+            f" (changed {n_changed} labels)")
         # Residual histogram (global, over all currently-assigned events).
         assign_mask = new_labels >= 0
         if assign_mask.any():
@@ -1175,8 +1183,8 @@ def _co_assign(X_all, labels, k, tag, beam_ref, strip_subdir, strip):
         print(
             f"  co-assign {tag} reac{strip}: "
             f"{'valley cut' if valley else 'converged'} after {r} round(s), "
-            f"{int((labels >= 0).sum())} assigned, {int((labels == -1).sum())} pruned"
-        )
+            f"{int((labels >= 0).sum())} assigned, "
+            f"{int((labels == -1).sum())} pruned")
     else:
         print(f"  co-assign {tag} reac{strip}: hit max "
               f"{config.BLIND_CO_MAX_ROUNDS} rounds, "
@@ -1198,7 +1206,8 @@ def _shape_residual(traces, template):
     """L2 distance between each max-normalized trace and the max-normalized
     template -- the shape mismatch with amplitude divided out.
 
-    When *template* is 1-D ``(ncols,)`` returns residuals of shape ``(n_events,)``.
+    When *template* is 1-D ``(ncols,)`` returns residuals of shape
+    ``(n_events,)``.
     When *template* is 2-D ``(k, ncols)`` returns a distance matrix of shape
     ``(n_events, k)`` (each event scored against every cluster mean)."""
     traces = np.asarray(traces, dtype=np.float64)

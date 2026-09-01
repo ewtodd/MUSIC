@@ -30,12 +30,15 @@
 #include <TSystem.h>
 #include <TTree.h>
 #include <algorithm>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <map>
 #include <mutex>
+#include <queue>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 struct GateSpec {
@@ -46,6 +49,21 @@ struct GateSpec {
 // Beam classification ellipses: entrance (s0,s1 or s1,s2, per config's
 // PURE_BEAM_GATE) AND exit (s16,s17 or s15,s16). An event is "pure beam"
 // only if it passes both ellipses.
+namespace ScatterBuildRange {
+// Every strip-sum scatter is built over this fixed window, so the display
+// windows can be retuned without refilling. The axes get different ceilings
+// because they sum different numbers of strips: x runs over X_LO..X_HI (16
+// strips, so it reaches ~20), while y covers only POST_TRIGGER_SUM_STRIPS
+// after the trigger (6, so it never approaches 40). Giving y its own, lower
+// ceiling doubles its resolution at the same bin count -- which matters,
+// because y is the axis the reaction populations separate along and its
+// display windows are much narrower than x's.
+const Double_t kXMin = 0.0;
+const Double_t kXMax = 40.0;
+const Double_t kYMin = 0.0;
+const Double_t kYMax = 20.0;
+} // namespace ScatterBuildRange
+
 struct BeamEllipses {
   BeamFit2D s0_s1;
   BeamFit2D s1_s2;
@@ -75,6 +93,25 @@ struct TraceEvt {
   ULong64_t seed_ts;
 };
 
+// Per-run results, so both fill phases can run one worker per run and merge
+// afterwards in run order -- which keeps the threaded result identical to the
+// sequential one.
+struct SingleRunFitResult {
+  BeamEllipses pure_beam;
+  std::vector<BeamFit2D> series_gates;
+  Bool_t ok;
+  SingleRunFitResult() : ok(kFALSE) {}
+};
+
+struct SingleRunFillResult {
+  // Private clones, one per reaction strip; owned by the caller after merge.
+  std::vector<TH2F *> scatters;
+  std::vector<TraceEvt> reservoir;
+  Long64_t gated;
+  Long64_t seen;
+  SingleRunFillResult() : gated(0), seen(0) {}
+};
+
 struct SimPop {
   TString file;
   TString label;
@@ -96,9 +133,9 @@ private:
 
   const TString kSimCacheName = "StripSumScatter_simcache.root";
 
-  Int_t ReacIndex(Int_t reac);
-  Int_t YLoOf(Int_t reac);
-  Int_t YHiOf(Int_t reac);
+  static Int_t ReacIndex(Int_t reac);
+  static Int_t YLoOf(Int_t reac);
+  static Int_t YHiOf(Int_t reac);
 
   Bool_t TryLoadCache(const TString &cacheName, const TString &fingerprint);
   void WriteCache(const TString &cacheName, const TString &fingerprint);
@@ -150,7 +187,15 @@ private:
                           const std::vector<TGraph *> &aa,
                           const std::vector<TGraph *> &an, Double_t &y_min,
                           Double_t &y_max);
+  static SingleRunFitResult
+  FitRunGates(Int_t run, TChain *chain,
+              const std::vector<GateSpec> &activeGates);
+  static SingleRunFillResult FillRunScatters(
+      Int_t run, TChain *chain, const std::vector<GateSpec> &activeGates,
+      const std::vector<BeamFit2D> &runGates, const BeamEllipses &runBeam);
   static TCutG *PromptCut(TCanvas *c, const char *name, const char *label);
+  static void SaveRegionCuts(Int_t reac, TCutG *cut_an, TCutG *cut_aa);
+  static TCutG *LoadRegionCut(const char *name, Int_t reac);
 
   static void SmoothTrace(const Double_t *in, Double_t *out, Int_t width);
 

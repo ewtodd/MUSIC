@@ -76,16 +76,15 @@ struct RunEpoch {
 
   RunEpoch()
       : name(""), source(kSolaris), enabled(kTRUE), file_tag(""), max_files(-1),
-        n_boards(1),
-        n_channels(64), timing_ref_board(0), do_board_sync(kFALSE),
+        n_boards(1), n_channels(64), timing_ref_board(0), do_board_sync(kFALSE),
         do_sort(kFALSE), event_time_window_us(8.0), reference_channel("Grid"),
         reference_channel_min_adc(0.0), reference_channel_max_adc(16384.0),
         dedup_strategy(kLARGEST_ENERGY), has_cathode(kFALSE),
-        strip_e_min_adc(0.0), strip_e_max_adc(4096.0),
-        cathode_max_adc(16384.0), grid_max_adc(16384.0),
-        strip0_max_adc(16384.0), strip17_max_adc(16384.0),
-        left_even_max_adc(16384.0), left_odd_max_adc(16384.0),
-        right_even_max_adc(16384.0), right_odd_max_adc(16384.0) {}
+        strip_e_min_adc(0.0), strip_e_max_adc(4096.0), cathode_max_adc(16384.0),
+        grid_max_adc(16384.0), strip0_max_adc(16384.0),
+        strip17_max_adc(16384.0), left_even_max_adc(16384.0),
+        left_odd_max_adc(16384.0), right_even_max_adc(16384.0),
+        right_odd_max_adc(16384.0) {}
 };
 
 #endif

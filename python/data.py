@@ -64,7 +64,8 @@ def list_event_files():
 
 def _load_calibrated_lr(path, max_events_per_file=None):
     """Calibrated (left, right) arrays + StripFactor for one events file, per
-    channel like EnergyView::Decode; strip_factor is (18,) float32 (identity 1.0 if the branch is absent)."""
+    channel like EnergyView::Decode; strip_factor is (18,) float32 (identity
+    1.0 if the branch is absent)."""
     from analysis_utilities.io import load_leaf_array_data
     cache = str(config.CACHE_DIR)
     # Silence load_leaf_array_data's per-file "Loading cached leaf arrays"
@@ -84,13 +85,15 @@ def _load_calibrated_lr(path, max_events_per_file=None):
     right = ev["RightdE"].astype(np.float32) * \
         cal["GainRight"][0].astype(np.float32)
     # StripFactor: per-strip multiplicative alignment from the pol3 reference
-    # trend (replaced slope/intercept in the C++ rewrite); absent in old files -> identity (1.0).
+    # trend (replaced slope/intercept in the C++ rewrite); absent in old files
+    # -> identity (1.0).
     if "StripFactor" in cal:
         strip_factor = cal["StripFactor"][0].astype(np.float32)
     else:
         strip_factor = np.ones(18, dtype=np.float32)
     # Both-channel firing from the RAW ADC, not the calibrated ends (short-end
-    # gains are 0 -- no sim anchor -- so the calibrated short ends are always zero).
+    # gains are 0 -- no sim anchor -- so the calibrated short ends are always
+    # zero).
     both = _both_fired(ev["Left_0_17_dE"], ev["RightdE"],
                        config.BLIND_MULT_THRESH)
     return left, right, both, strip_factor
