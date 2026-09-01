@@ -1,4 +1,14 @@
 # MUSIC — Multi-Sampling Ionization Chamber Analysis
+
+```
+███╗   ███╗ ██╗   ██╗ ███████╗ ██╗  ██████╗
+████╗ ████║ ██║   ██║ ██╔════╝ ██║ ██╔════╝
+██╔████╔██║ ██║   ██║ ███████╗ ██║ ██║     
+██║╚██╔╝██║ ██║   ██║ ╚════██║ ██║ ██║     
+██║ ╚═╝ ██║ ╚██████╔╝ ███████║ ██║ ╚██████╗
+╚═╝     ╚═╝  ╚═════╝  ╚══════╝ ╚═╝  ╚═════╝
+```
+
 <!---->
 Analysis code for data from the MUSIC active-target ionization chamber at
 Argonne National Lab.

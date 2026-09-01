@@ -58,9 +58,21 @@ struct BeamEllipses {
 struct TraceEvt {
   Float_t total[18];
   Float_t total_adc[18]; // raw (un-normalized) ADC sum per strip
+  // Calibrated a.u. of each half of a split strip, kept separately and
+  // independently of IGNORE_SHORT_STRIPS (which is a decode-time switch and
+  // zeroes one half of EnergyView::left/right). Reconstructed from the raw
+  // ADC and the per-channel gains, so one calibration can be rendered under
+  // either decode.
+  Float_t long_au[18];
+  Float_t short_au[18];
   UInt_t reac_mask;
   Bool_t beam_flat;
   Int_t both_mult; // # split strips (1-16) with BOTH ends above threshold
+  // Timestamp of the Grid hit that seeded the event, from the events tree.
+  // Unique per event and independent of how runs are split into files, so a
+  // cached event can be joined back to its source record. 0 when the source
+  // predates the SeedTs branch.
+  ULong64_t seed_ts;
 };
 
 struct SimPop {
@@ -118,6 +130,7 @@ private:
                                 const TString &tag, const TString &subdir);
 
   static void DrawTraceSet(const std::vector<TGraph *> &traces, Int_t color);
+  void DrawAltDecodeRegionTraces(Int_t reac, TCutG *cutAn, TCutG *cutAa);
   static TGraph *TraceFromTotal(const Float_t *total);
   static void DrawRegionTraces(const TString &save_name, const TString &subdir,
                                const std::vector<TGraph *> &beam,

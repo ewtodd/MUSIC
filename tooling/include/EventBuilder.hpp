@@ -33,6 +33,10 @@ struct EventState {
   Int_t grid;
   UInt_t flags_or;
   Bool_t had_cathode;
+  // Timestamp of the reference (Grid) hit that seeded this event. Unique per
+  // event and stable across re-chunking, so it joins a cached event back to
+  // its source without depending on file or entry numbering.
+  ULong64_t ref_ts;
 };
 
 struct PerChannelData {

@@ -152,6 +152,17 @@
           let
             extraBuild = if (!isLaptop) then ''GPU_LIB_OUT="$out/lib/libgpuaccel.so"'' else "";
             extraInstall = if (!isLaptop) then "cp tooling/gpu/libgpuaccel.so $out/lib/" else "";
+            # The Makefile derives this from `git rev-parse`, which cannot work
+            # in the sandbox: the flake source carries no .git and git is not a
+            # build input, so it always fell back to "unknown". The flake knows
+            # the revision, so pass it in and let the command-line value win.
+            gitHash =
+              if self ? shortRev then
+                self.shortRev
+              else if self ? dirtyShortRev then
+                self.dirtyShortRev
+              else
+                "unknown";
           in
           pkgs.stdenv.mkDerivation {
             name = "music-tooling-${dataset}";
@@ -174,11 +185,12 @@
             buildPhase = ''
               export MUSIC_DATASET="${dataset}"
               export MUSIC_DATASET_DIR="$sourceRoot/analysis/${dataset}"
-              make -j DATASET_DIR_OUT="$out/analysis/${dataset}" ${extraBuild}
+              make -j GIT_HASH="${gitHash}" DATASET_DIR_OUT="$out/analysis/${dataset}" ASSETS_DIR_OUT="$out/assets" ${extraBuild}
             '';
 
             installPhase = ''
-              mkdir -p $out/bin $out/lib $out/analysis/${dataset}/config
+              mkdir -p $out/bin $out/lib $out/assets $out/analysis/${dataset}/config
+              cp -r tooling/assets/. $out/assets/
               cp analysis/${dataset}/bin/* $out/bin/ 
               ${extraInstall}
               cp -r analysis/${dataset}/config/* $out/analysis/${dataset}/config/

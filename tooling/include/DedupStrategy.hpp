@@ -4,11 +4,13 @@
 // Dedup strategy for multi-hit resolution within an event.
 enum DedupStrategy {
   kCLOSEST_TO_FIRST_GRID,
-  kCLOSEST_TO_LAST_GRID,
   kSMALLEST_ENERGY,
   kLARGEST_ENERGY,
-  kEARLIEST_TIMESTAMP,
-  kLATEST_TIMESTAMP
+  kLATEST_TIMESTAMP,
+  // Not a selection: any event with a repeated hit on an anode channel is
+  // thrown away whole. Mirrors the upstream builder, which sets event_rej on a
+  // second hit to de_l/de_r and never fills that event.
+  kDISCARD
 };
 
 #endif

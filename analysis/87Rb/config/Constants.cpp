@@ -1,4 +1,5 @@
 #include "Constants.hpp"
+#include <RtypesCore.h>
 
 namespace Constants {
 
@@ -15,39 +16,42 @@ void InitDatasetConfig() {
 
   gInstance.N_BOARDS = 4;
   gInstance.N_CHANNELS = 16;
-  gInstance.TIMING_REF_BOARD = 0;
-  gInstance.TIMING_REF_BOARD_CHANNELS = {8, 0, 0, 0};
 
   gInstance.REFERENCE_CHANNEL = "NONE";
-  gInstance.EVENT_TIME_WINDOW_US = 8.0;
-  gInstance.DEDUP_STRATEGY = kLARGEST_ENERGY;
+  gInstance.EVENT_TIME_WINDOW_US = 8;
+  gInstance.DEDUP_STRATEGY = kDISCARD;
+
+  gInstance.SKIP_EXISTING = kTRUE;
+  gInstance.SAVE_PLOTS = kFALSE;
 
   gInstance.TIMING_MIN_ENERGY = 300;
   gInstance.TIMING_MAX_ENERGY = 1500;
-  gInstance.TIMING_OVERLAP_MARGIN_S = 1.0;
-  gInstance.TIMING_THRESH_DT_US = 175.0;
-  gInstance.TIMING_MAX_ABS_SHIFT_S = 1.5;
-  gInstance.TIMING_SHIFT_FINE_STEP_US = 1.0;
-  gInstance.TIMING_SHIFT_FINE_HALF_WIDTH_US = 5000.0;
+  gInstance.TIMING_DO_BOARD_SYNC = kFALSE;
   gInstance.TIMING_DO_SORT = kTRUE;
 
-  gInstance.REJECT_FLAGGED_EVENTS = kFALSE;
+  gInstance.IGNORE_SHORT_STRIPS = kFALSE;
+  gInstance.REJECT_FLAGGED_EVENTS = kTRUE;
   gInstance.MAX_FUSED_WORKERS = 16;
   gInstance.MAX_GPU_CONCURRENT_SORTS = 20;
 
+  gInstance.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_MAX = 3;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_COUNT_TO = 16;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.ALT_DECODE_REGION_TRACES = kFALSE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN = 3;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX = 15;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 7;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 9;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X = 3.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y = 3.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.XMIN = 14;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.XMAX = 18;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.XMAX = 20;
   gInstance.STRIP_SUM_SCATTER_CONFIG.Y_RANGE = {
-      {3, {5.5, 7.5}}, {4, {5, 7}},    {5, {5.5, 7.5}}, {6, {5, 7}},
-      {7, {5, 7}},     {8, {5, 7}},    {9, {5, 7}},     {10, {5, 7}},
-      {11, {5, 7}},    {12, {3.5, 6}}, {13, {2, 5}},    {14, {2, 5}},
-      {15, {1, 4}}};
+      {3, {4, 9}},  {4, {5, 7}},  {5, {5.5, 7.5}}, {6, {5, 7}},  {7, {5, 7}},
+      {8, {5, 7}},  {9, {5, 7}},  {10, {5, 7}},    {11, {5, 7}}, {12, {3.5, 6}},
+      {13, {2, 5}}, {14, {2, 5}}, {15, {1, 4}}};
 
+  gInstance.STRIP_DE_MIN_NORMED = 0;
+  gInstance.STRIP_DE_MAX_NORMED = 4;
   gInstance.STRIP_E_MAX_ADC = 12000;
   gInstance.TOTAL_E_MAX_ADC = 15 * gInstance.STRIP_E_MAX_ADC;
 

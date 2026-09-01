@@ -47,6 +47,8 @@ GPU_LIB  ?= $(abspath $(GPU_DIR)/libgpuaccel.so)
 # Runtime paths that can be overridden by nix build (default: same as build paths)
 DATASET_DIR_OUT ?= $(DATASET_DIR)
 GPU_LIB_OUT     ?= $(GPU_LIB)
+ASSETS_DIR      ?= $(abspath $(TOOLING)/assets)
+ASSETS_DIR_OUT  ?= $(ASSETS_DIR)
 
 CXXFLAGS  := -O3 -g -Wall -Wno-unused-variable -fPIC -std=c++17 \
              -march=native -mtune=native \
@@ -57,6 +59,7 @@ CXXFLAGS  := -O3 -g -Wall -Wno-unused-variable -fPIC -std=c++17 \
              -DMUSIC_DATASET_DIR='"$(DATASET_DIR_OUT)"' \
              -DMUSIC_GIT_HASH='"$(GIT_HASH)"' \
              -DMUSIC_GPU_LIB='"$(GPU_LIB_OUT)"' \
+             -DMUSIC_ASSETS_DIR='"$(ASSETS_DIR_OUT)"' \
              -MMD -MP
 LDFLAGS   := -Wl,--gc-sections $(ROOT_LIBS) -lSpectrum -lMinuit \
              -l:libanalysis-utils.so -ldl -lpthread

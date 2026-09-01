@@ -14,12 +14,8 @@ void InitDatasetConfig() {
   gInstance.SOL_N_SPLIT_WORKERS = 32;
   gInstance.SOL_SPLIT_CHUNK_SECONDS = 60;
   gInstance.COMPASS_BASE_DIR = "/labdata/MUSIC/37Cl/";
-  std::vector<Int_t> RUNS;
-  for (Int_t i = 84; i < 138; i++) {
-    RUNS.push_back(i);
-  };
-  gInstance.RUN_NUMBERS = RUNS;
-  gInstance.N_CHUNKS = -1;
+
+  gInstance.N_CHUNKS = 1;
   gInstance.SIM_BEAM_FILE = "traces_37Cl_beam.root";
 
   gInstance.N_BOARDS = 1;
@@ -27,7 +23,8 @@ void InitDatasetConfig() {
   gInstance.TIMING_REF_BOARD = 0;
   gInstance.TIMING_REF_BOARD_CHANNELS = {8};
 
-  gInstance.SAVE_PLOTS = kFALSE;
+  gInstance.SAVE_PLOTS = kTRUE;
+  gInstance.SKIP_EXISTING = kTRUE;
   gInstance.SAVE_SAMPLE_TRACES = 10;
 
   gInstance.HAS_CATHODE = kFALSE;
@@ -94,15 +91,6 @@ void InitDatasetConfig() {
       {{0, 58}, "Grid"}, {{0, 59}, "Cathode"}, {{0, 60}, "R16"},
       {{0, 61}, "L16"},  {{0, 62}, "Strip17"}, {{0, 63}, "Strip0"}};
 
-  // ---------------------------------------------------------------------
-  // Epochs. The flat block above stays as the fallback for tools that run
-  // without an epoch set; the values below are what the pipeline actually
-  // uses. `late` restates the flat block exactly, so enabling epochs does not
-  // change the late calibration that reproduces the reference traces.
-  //
-  // The SOLARIS eras share one 1x64 map; CoMPASS run 37 used four 16-channel
-  // boards with a different map (0bfa4e6:ProductionMode_37Cl/macros).
-  // ---------------------------------------------------------------------
   std::map<std::pair<Int_t, Int_t>, TString> solaris_map =
       gInstance.channelMap64;
 
@@ -110,8 +98,6 @@ void InitDatasetConfig() {
   late.name = "late";
   late.source = kSolaris;
   late.enabled = kTRUE;
-  // Physics runs only: 84-96 are tuning runs. The flat run list this replaced
-  // started at 84 and so included them.
   for (Int_t i = 97; i < 138; i++)
     late.runs.push_back(i);
   late.max_files = -1;
@@ -139,8 +125,6 @@ void InitDatasetConfig() {
   late.right_even_max_adc = 8000.0;
   late.right_odd_max_adc = 2500.0;
 
-  // Same detector and DAQ as `late`, earlier in the run. Split the .sol files
-  // for these runs with preprocess-sol before enabling.
   RunEpoch early = late;
   early.name = "early";
   early.enabled = kFALSE;
@@ -148,70 +132,7 @@ void InitDatasetConfig() {
   for (Int_t i = 30; i <= 53; i++)
     early.runs.push_back(i);
 
-  // CoMPASS era. Different digitiser: 4x16 channels, full 16384 ADC scale, a
-  // cathode, board sync and sorting on, and no Grid amplitude window.
-  RunEpoch compass;
-  compass.name = "compass";
-  // A different experiment years earlier that happens to reuse run numbers the
-  // SOLARIS eras also use, so its output has to be tagged apart.
-  compass.file_tag = "compass";
-  compass.source = kCoMPASS;
-  compass.enabled = kFALSE;
-  compass.runs.push_back(37);
-  compass.max_files = -1;
-  compass.n_boards = 4;
-  compass.n_channels = 16;
-  compass.timing_ref_board = 1;
-  compass.timing_ref_board_channels = {12, 0, 0, 0};
-  compass.do_board_sync = kTRUE;
-  compass.do_sort = kTRUE;
-  compass.event_time_window_us = 8.0;
-  compass.reference_channel = "Grid";
-  compass.reference_channel_min_adc = 0;
-  compass.reference_channel_max_adc = 16384;
-  compass.dedup_strategy = kCLOSEST_TO_FIRST_GRID;
-  compass.has_cathode = kTRUE;
-  compass.strip_e_min_adc = 0.0;
-  compass.strip_e_max_adc = 5500.0;
-  compass.cathode_max_adc = 16384.0;
-  compass.grid_max_adc = 16384.0;
-  compass.strip0_max_adc = 16384.0;
-  compass.strip17_max_adc = 16384.0;
-  compass.left_even_max_adc = 16384.0;
-  compass.left_odd_max_adc = 16384.0;
-  compass.right_even_max_adc = 16384.0;
-  compass.right_odd_max_adc = 16384.0;
-  compass.channel_map = {
-      {{0, 0}, "Cathode"}, {{0, 1}, ""},         {{0, 2}, "L2"},
-      {{0, 3}, ""},        {{0, 4}, "Strip0"},   {{0, 5}, "100HzPulserBoard0"},
-      {{0, 6}, "L6"},      {{0, 7}, ""},         {{0, 8}, "L1"},
-      {{0, 9}, ""},        {{0, 10}, "L10"},     {{0, 11}, ""},
-      {{0, 12}, "R2"},     {{0, 13}, "L14"},     {{0, 14}, ""},
-      {{0, 15}, "Grid"},
-
-      {{1, 0}, "L3"},      {{1, 1}, ""},         {{1, 2}, "R1"},
-      {{1, 3}, ""},        {{1, 4}, "R6"},       {{1, 5}, "100HzPulserBoard1"},
-      {{1, 6}, "R5"},      {{1, 7}, ""},         {{1, 8}, "L9"},
-      {{1, 9}, ""},        {{1, 10}, "R9"},      {{1, 11}, ""},
-      {{1, 12}, "R12"},    {{1, 13}, "R13"},     {{1, 14}, ""},
-      {{1, 15}, "L15"},
-
-      {{2, 0}, "R4"},      {{2, 1}, ""},         {{2, 2}, "L4"},
-      {{2, 3}, ""},        {{2, 4}, "L7"},       {{2, 5}, "100HzPulserBoard2"},
-      {{2, 6}, "L8"},      {{2, 7}, ""},         {{2, 8}, "R10"},
-      {{2, 9}, ""},        {{2, 10}, "L12"},     {{2, 11}, ""},
-      {{2, 12}, "L13"},    {{2, 13}, "L16"},     {{2, 14}, ""},
-      {{2, 15}, "L11"},
-
-      {{3, 0}, "L5"},      {{3, 1}, ""},         {{3, 2}, "R3"},
-      {{3, 3}, ""},        {{3, 4}, "R8"},       {{3, 5}, "100HzPulserBoard3"},
-      {{3, 6}, "R7"},      {{3, 7}, "SidETime"}, {{3, 8}, "R14"},
-      {{3, 9}, ""},        {{3, 10}, "R11"},     {{3, 11}, "SidE"},
-      {{3, 12}, "R16"},    {{3, 13}, "R15"},     {{3, 14}, ""},
-      {{3, 15}, "Strip17"}};
-
-  gInstance.EPOCHS.push_back(compass);
-  gInstance.EPOCHS.push_back(early);
+  //  gInstance.EPOCHS.push_back(early);
   gInstance.EPOCHS.push_back(late);
 }
 

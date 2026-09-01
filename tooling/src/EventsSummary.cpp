@@ -20,11 +20,30 @@ void CreateSummaryHistograms(SummaryHistograms &h,
       lMax = (s % 2 == 0) ? cfg.left_even_max : cfg.left_odd_max;
       rMax = (s % 2 == 0) ? cfg.right_even_max : cfg.right_odd_max;
     }
-    TString rlTitle = Form(";Strip %d L #DeltaE [", s) + cfg.unit_label + "];" +
-                      Form("Strip %d R #DeltaE [", s) + cfg.unit_label + "]";
-    h.h2_R_vs_L[s] =
-        new TH2F(PlottingUtils::GetRandomName().Data(), rlTitle, 200,
-                 cfg.strip_e_min, lMax, 200, cfg.strip_e_min, rMax);
+    // Plotted as long vs short rather than R vs L: which physical end is long
+    // alternates with strip parity (L on odd, R on even), so the R-vs-L view
+    // swaps axes every strip and the two parities cannot be compared by eye.
+    const Bool_t lIsLong = (s % 2) != 0;
+    Double_t shortMax = lIsLong ? rMax : lMax;
+    Double_t longMax = lIsLong ? lMax : rMax;
+    // The four per-side maxima default to the full ADC span, which puts both
+    // axes on the same scale and squashes the short end into the axis. When
+    // they are left at that default, fall back to the tuned strip maximum for
+    // the long end and a quarter of it for the short end -- the short end is
+    // on its own preamp and only picks up a minority share, so it never
+    // approaches the long end's range.
+    if (shortMax == longMax) {
+      longMax = cfg.strip_e_max;
+      shortMax = 0.25 * cfg.strip_e_max;
+    }
+    TString rlTitle =
+        Form(";Strip %d Short (%c) #DeltaE [", s, lIsLong ? 'R' : 'L') +
+        cfg.unit_label + "];" +
+        Form("Strip %d Long (%c) #DeltaE [", s, lIsLong ? 'L' : 'R') +
+        cfg.unit_label + "]";
+    h.h2_long_vs_short[s] =
+        new TH2F(PlottingUtils::GetRandomName().Data(), rlTitle, 300,
+                 cfg.strip_e_min, shortMax, 300, cfg.strip_e_min, longMax);
   }
 
   if (Constants::ActiveHasCathode())
@@ -86,13 +105,13 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
   for (Int_t s = 1; s <= 16; s++) {
     TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
     c->cd();
-    PlottingUtils::ConfigureAndDraw2DHistogram(h.h2_R_vs_L[s], c);
-    h.h2_R_vs_L[s]->GetYaxis()->SetTitleOffset(1.3);
+    PlottingUtils::ConfigureAndDraw2DHistogram(h.h2_long_vs_short[s], c);
+    h.h2_long_vs_short[s]->GetYaxis()->SetTitleOffset(1.3);
     if (Constants::cfg.SAVE_PLOTS)
-      PlottingUtils::SaveFigure(c, TString("R_vs_L_s") + s + plot_suffix,
+      PlottingUtils::SaveFigure(c, TString("long_vs_short_s") + s + plot_suffix,
                                 subdir, PlotSaveOptions::kLINEAR);
     out_file->cd();
-    c->Write(h.h2_R_vs_L[s]->GetName(), TObject::kOverwrite);
+    c->Write(h.h2_long_vs_short[s]->GetName(), TObject::kOverwrite);
     delete c;
   }
 
@@ -151,7 +170,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
   }
 
   for (Int_t s = 1; s <= 16; s++)
-    delete h.h2_R_vs_L[s];
+    delete h.h2_long_vs_short[s];
   delete h.h_music;
   delete h.h_mult;
   delete h.h1_cathode;
@@ -271,8 +290,11 @@ void EventsSummary::BuildNormedSummaryHistograms(const TString &input_filename,
     for (Int_t s = 0; s < 18; s++)
       h.h_music->Fill(Double_t(s), ev.total[s]);
 
-    for (Int_t s = 1; s <= 16; s++)
-      h.h2_R_vs_L[s]->Fill(ev.left[s], ev.right[s]);
+    for (Int_t s = 1; s <= 16; s++) {
+      const Bool_t lIsLong = (s % 2) != 0;
+      h.h2_long_vs_short[s]->Fill(lIsLong ? ev.right[s] : ev.left[s],
+                                  lIsLong ? ev.left[s] : ev.right[s]);
+    }
 
     if (h.h1_cathode && ev.cathode > 0.0)
       h.h1_cathode->Fill(ev.cathode);

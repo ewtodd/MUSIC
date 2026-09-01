@@ -25,6 +25,11 @@ public:
   // per-machine deployment choice, redirectable without a rebuild.
   static TString ResultsDir();
 
+  // Wordmark, printed once before anything else so a log opens with the
+  // project name rather than a GPU probe. Public because it has to run ahead
+  // of the lazy PrintBanner, which fires from DatasetDir().
+  static void PrintLogo();
+
 private:
   static void PrintBanner(const TString &dataset_dir);
 };

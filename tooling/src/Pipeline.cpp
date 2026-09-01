@@ -325,6 +325,15 @@ static void RunActiveSelection() {
   std::cout << "All fused pipelines complete." << std::endl;
 
   if (!chans.empty()) {
+    std::cout << "Phase C: per-run ridge-ratio aggregation" << std::endl;
+    for (std::set<Int_t>::const_iterator it = unique_runs.begin();
+         it != unique_runs.end(); ++it) {
+      std::vector<FileSpec> run_specs;
+      for (Int_t k = 0; k < n_specs; k++)
+        if (specs[k].run == *it)
+          run_specs.push_back(specs[k]);
+      CalibrateBeam::AggregateRidgeRatiosForRun(*it, run_specs);
+    }
     std::cout << "Phase C: per-run eres TOML aggregation" << std::endl;
     for (std::set<Int_t>::const_iterator it = unique_runs.begin();
          it != unique_runs.end(); ++it) {
@@ -338,6 +347,7 @@ static void RunActiveSelection() {
 }
 
 void Pipeline::Run() {
+  Paths::PrintLogo();
   ROOT::EnableThreadSafety();
   GpuAccel::Init();
   const TString project_root = Paths::DatasetDir();

@@ -54,13 +54,18 @@ struct ChannelCal {
   Double_t fit_sigma_adc = 0.0;
   Long64_t n_samples = 0.0;
   // L/R gain-match override. When >= 0, Gain() returns this instead of
-  // 1/fit_adc. Set by ComputeLRGainMatch (the check_LR notebook's two-pass
-  // recipe): long side anchored on its beam peak, short side anchored on
-  // the correlation-ridge peak, then a per-strip eSum median alignment
-  // applied to the short side only. Puts L and R in the same charge scale
-  // so reaction events (different L/R sharing than beam) don't sawtooth
-  // between even/odd strips. When < 0, falls back to 1/fit_adc.
+  // 1/fit_adc. Set by ComputeLRGainMatch: long side anchored on its own beam
+  // peak, short side on C_long/|slope| of the charge-sharing ridge. Puts L and
+  // R in the same charge scale so reaction events (different L/R sharing than
+  // beam) don't sawtooth between even/odd strips. When < 0, falls back to
+  // 1/fit_adc.
   Double_t gain = -1.0;
+  // Short channels only: C_short/C_long from this subfile's own ridge fit, or
+  // 0 when the ridge was not measurable and a fallback ratio was used. The
+  // ratio is a preamp-gain ratio and so is fixed per channel, which lets
+  // AggregateRidgeRatiosForRun replace each subfile's value with the run-level
+  // median over the subfiles that did measure it.
+  Double_t ridge_ratio = 0.0;
 };
 
 // Result of the two post-gain calibration steps:
@@ -102,6 +107,8 @@ public:
                          const std::vector<std::vector<Float_t>> &samples,
                          const TString &plot_subdir, const TString &file_label);
 
+  static void AggregateRidgeRatiosForRun(Int_t run,
+                                         const std::vector<FileSpec> &specs);
   static void AggregateEresTomlForRun(Int_t run,
                                       const std::vector<FileSpec> &specs);
 

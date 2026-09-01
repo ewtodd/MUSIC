@@ -41,3 +41,6 @@ analysis/*/bin/
 analysis/*/models/
 analysis/*/ml_cache/
 *.pt
+
+# Source assets, not build output — the blanket *.txt above would eat these.
+!tooling/assets/*.txt

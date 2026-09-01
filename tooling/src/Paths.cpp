@@ -1,4 +1,5 @@
 #include "Paths.hpp"
+#include <fstream>
 
 #ifndef MUSIC_DATASET_NAME
 #define MUSIC_DATASET_NAME "unknown"
@@ -12,6 +13,11 @@
 #ifndef MUSIC_DATASET_DIR
 #define MUSIC_DATASET_DIR ""
 #endif
+// Where the wordmark lives. Baked in at build like the paths above so the
+// binary stays self-locating; nix points it at the installed copy.
+#ifndef MUSIC_ASSETS_DIR
+#define MUSIC_ASSETS_DIR ""
+#endif
 
 TString Paths::DatasetName() { return TString(MUSIC_DATASET_NAME); }
 
@@ -20,6 +26,13 @@ TString Paths::ResultsDir() {
   if (env && env[0] != '\0')
     return TString(env);
   return DatasetDir();
+}
+
+void Paths::PrintLogo() {
+  std::ifstream in(TString(MUSIC_ASSETS_DIR) + "/music.txt");
+  if (!in)
+    return; // art is decoration; never let a missing asset stop a run
+  std::cout << std::endl << in.rdbuf() << std::endl;
 }
 
 void Paths::PrintBanner(const TString &dataset_dir) {

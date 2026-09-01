@@ -37,6 +37,16 @@ struct StripSumScatterConfig {
   Double_t PILEUP_THRESH_PY;
   Int_t PILEUP_MIN_STRIPS;
 
+  // Both-ends multiplicity cut: reject an event when more than MAX strips in
+  // 1..COUNT_TO had BOTH ends fire. Read off raw ADC, so it is independent of
+  // IGNORE_SHORT_STRIPS. Charge sharing means a displaced track lights the
+  // short end on every strip of one parity at once, and tagging on a summed
+  // trace then enriches for those -- this removes them. MAX < 0 disables it.
+  // COUNT_TO < 16 restricts the count to strips upstream of the reaction, where
+  // the sim has no sharing at all, without penalising products downstream.
+  Int_t BOTH_MULT_MAX;
+  Int_t BOTH_MULT_COUNT_TO;
+
   Bool_t REJECT_OFFBEAM;
   Double_t OFFBEAM_DIST;
   Int_t OFFBEAM_MIN_STRIPS;
@@ -81,6 +91,11 @@ struct StripSumScatterConfig {
   Bool_t REQUIRE_GATE_S5_S6;
   Bool_t SKIP_SAVGOL_PLOTS;
   Bool_t REQUIRE_STRIP_16_BELOW_BEAM;
+
+  // Also render the selected region traces under the OTHER decode
+  // (long-side-only <-> L+R sum) from the same calibration and the
+  // same selected events, into a separate plot plus a text dump.
+  Bool_t ALT_DECODE_REGION_TRACES;
 
   void SetDefaults();
 };

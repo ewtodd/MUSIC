@@ -593,16 +593,17 @@ Bool_t FitGaussianMuSigma(const std::vector<Float_t> &v, const TString &fname,
 struct StripPairSamples {
   std::vector<Float_t> l;
   std::vector<Float_t> r;
-  std::vector<Float_t> shoulder;
+  // Beam-gated, long-side-triggered pairs. Unlike `l`/`r` these keep events
+  // where the short end did not fire (recorded as 0), so they describe the
+  // population the decode actually sums. `l`/`r` require both ends and are
+  // therefore biased towards anomalously large short-side signals.
+  std::vector<Float_t> gated_long;
+  std::vector<Float_t> gated_short;
 };
 
 // check_LR gain-match slice constants (37Cl_an_check_LR.ipynb, cell "Save
 // 2-pass calibration"). Defined before CollectAnchorSamplesOneSubfile because
 // the shoulder slice is selected during sample collection.
-const Double_t kGmOffsetLongL = 350.0; // ADC slice centre when L is long
-const Double_t kGmOffsetLongR = 300.0; // ADC slice centre when R is long
-const Double_t kGmOffsetWin = 80.0;    // ADC slice half-width
-const Double_t kGmPeakWin = 150.0;     // ADC near-peak gate half-width
 
 void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
                                     const std::vector<ChannelCal> &chans,
@@ -655,17 +656,6 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
           pairs[s].l.push_back(Float_t(lv));
           pairs[s].r.push_back(Float_t(rv));
         }
-        // Shoulder slice: short-side value when the long side reads ≈ the
-        // offset. Collected independently of the capped pairs above so rare
-        // slice events are never crowded out by beam statistics.
-        Bool_t l_is_long = (LongSide(s) == 'L');
-        Int_t long_v = l_is_long ? lv : rv;
-        Int_t short_v = l_is_long ? rv : lv;
-        Double_t offset = l_is_long ? kGmOffsetLongL : kGmOffsetLongR;
-        if (short_v > 0 &&
-            TMath::Abs(Double_t(long_v) - offset) < kGmOffsetWin &&
-            Long64_t(pairs[s].shoulder.size()) < kPairCap)
-          pairs[s].shoulder.push_back(Float_t(short_v));
       }
     }
     Double_t x = Double_t(left_0_17_adc[1]) + Double_t(rightdE_adc[1]);
@@ -683,6 +673,21 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
       if (!BeamFitUtils::InEllipseXY(beam0vGrid, g0, s0, kEllipseNSigmaX,
                                      kEllipseNSigmaY))
         continue;
+    }
+    if (pairs) {
+      for (Int_t s = 1; s <= 16; s++) {
+        if (Long64_t(pairs[s].gated_long.size()) >= kPairCap)
+          continue;
+        Bool_t l_is_long = (LongSide(s) == 'L');
+        Int_t long_v =
+            l_is_long ? Int_t(left_0_17_adc[s]) : Int_t(rightdE_adc[s]);
+        Int_t short_v =
+            l_is_long ? Int_t(rightdE_adc[s]) : Int_t(left_0_17_adc[s]);
+        if (long_v > 0) {
+          pairs[s].gated_long.push_back(Float_t(long_v));
+          pairs[s].gated_short.push_back(Float_t(short_v > 0 ? short_v : 0));
+        }
+      }
     }
     for (Int_t i = 0; i < n_chans; i++) {
       if (Long64_t(samples[i].size()) >= kSampleCap)
@@ -711,39 +716,197 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
 //   * LONG side anchor  = beam peak of the long side (histogram mode). The
 //     per-channel anchor from ReduceToAnchors is exactly this (the beam
 //     dominates the spectrum), so it is reused.
-//   * SHORT side anchor = "shoulder": the mode of the short side among events
-//     where the LONG side reads low (≈350 ADC for L-long strips, ≈300 for
-//     R-long, ±80). Those are events where the charge went mostly to the
-//     short end, so the short side is measured at the same charge scale as
-//     the long side's beam peak. Search window (500, 2000) ADC.
+//   * SHORT side anchor = C_long/|slope| of the charge-sharing ridge; see
+//     RidgeShortAnchor. The short end is never observed collecting the full
+//     deposit -- the beam is collimated onto the long end -- so the anchor is
+//     reached by extrapolating the ridge to the short axis rather than by
+//     finding a peak.
 //   * gain = TARGET / anchor per side, with TARGET = 1.0 a.u. (the notebook
 //     uses 1000 ADC; only the overall scale differs).
 //
-// Pass 2 — per-strip eSum alignment via the SHORT side only:
-//   * eSum = gain_L·L + gain_R·R over the pairs; per-strip beam peak found
-//     in (0.8, 2.5) a.u. (notebook: TARGET=1000, eSum ≈1200 →
-//     (1100/1000, 2500/1000) = (1.1, 2.5); widened slightly here).
-//   * reference = median of the per-strip peaks.
-//   * strips with |peak − ref| > 0.05 get gain_short *= (ref−1)/(peak−1),
-//     which moves the strip's eSum peak onto the reference without touching
-//     the long side.
+// Pass 2 — per-strip normalisation of the summed beam peak to 1.0 a.u.:
+//   * pass 1 anchors the LONG side's own beam peak at 1.0, but at that peak
+//     the long end only carries fraction (1-f) of the strip's charge, so the
+//     summed total reads 1+f. f varies strip to strip (it grows downstream and
+//     differs by parity), which is what shows up as a sawtooth in the summed
+//     trace.
+//   * the peak is measured on `gated_long`/`gated_short`: beam-gated events
+//     where the LONG end fired, with a silent short end recorded as 0. That is
+//     the population the decode sums. The `l`/`r` pairs must not be used here:
+//     they require both ends to fire and so are biased towards large
+//     short-side signals.
+//   * both gains are scaled by 1/peak, which leaves the L/R ratio from pass 1
+//     untouched, so a wrong short anchor misallocates charge within a strip
+//     but no longer shifts the strip total.
+//   * when IGNORE_SHORT_STRIPS is set the decode keeps only the long end, so
+//     the long end alone is normalised to 1.0 and pass 1 already provides it.
 //
 // Pairs are collected UNGATED (all events with both ends firing) because the
-// shoulder slice needs reaction/off-position events that the beam gate
-// removes. Strips whose slice is still too small (upstream strips see few
-// reaction products, so slice statistics grow with strip number) fall back to
-// the MEDIAN shoulder of the strips that measured one — the short-side
-// full-charge response is the same electronics scale on every strip, and
-// pass 2 then fine-tunes each strip individually using its own eSum peak
-// (full beam statistics).
-const Double_t kGmShortLo = 500.0; // ADC short-side shoulder search window
-const Double_t kGmShortHi = 2000.0;
+// ridge needs the off-centre crossings that a beam gate removes. Strips whose
+// ridge cannot be fitted fall back to the MEDIAN anchor of the strips that
+// could; that fallback assumes a common electronics scale across strips, which
+// the measured ridge slopes can be used to check rather than assume.
 const Int_t kGmBins = 512;
-const Double_t kGmSkipFrac = 0.05;
-const Long64_t kGmMinSlice = 100; // min entries in the shoulder slice
-const Double_t kGmEsumLo = 0.8;   // a.u. eSum peak search window (pass 2)
+// Ridge-slope short anchor. In the long-vs-short plane a fixed deposit divided
+// between the two ends of a strip traces
+//     ADC_long/C_long + ADC_short/C_short = 1,
+// a line of slope -C_long/C_short. The slope is the same for every deposit
+// energy, so the ridge direction alone gives the anchor ratio and C_short need
+// never be observed directly -- which matters because the beam is collimated
+// onto the long end and almost never deposits its full charge on the short one.
+// The plane also contains pile-up bands at 2x, 3x the single-particle deposit;
+// the 2-particle band falls into the single-particle window once
+// short > ~0.55*C_short, so the fit is capped well below that.
+const Double_t kRidgeShortMaxFrac =
+    0.25;                           // cap on short, as a fraction of C_long
+const Double_t kRidgeBandLo = 0.30; // single-particle band, x C_long
+const Double_t kRidgeBandHi = 1.45;
+const Int_t kRidgeSlices = 60;
+const Long64_t kRidgeMinPerSlice = 200;
+const Int_t kRidgeMinPts = 6;
+// C_short/C_long is a preamp gain ratio, so it is order unity; outside this
+// range the ridge fit has failed in a way the intercept test cannot see.
+const Double_t kRidgeRatioLo = 0.30;
+const Double_t kRidgeRatioHi = 3.00;
+const Double_t kGmEsumLo = 0.8; // a.u. eSum peak search window (pass 2)
 const Double_t kGmEsumHi = 2.5;
-const Double_t kGmCorrThresh = 0.05; // a.u. (notebook: 30/1000 = 3% of TARGET)
+
+// Everything SaveRidgeFitPlots needs to redraw a fit: the slice medians it was
+// fitted to, the window they were taken from, and the resulting line. Filled
+// even when the fit is later rejected, so a bad fit can be looked at.
+struct RidgeFit {
+  std::vector<Double_t> x, y, ey; // slice centres, medians, median errors
+  Double_t lo = 0.0, hi = 0.0;    // short-axis fit window
+  Double_t slope = 0.0, intercept = 0.0;
+  Double_t c_long = 0.0, c_short = 0.0;
+  Bool_t fitted = kFALSE; // a line was fitted (it may still be rejected)
+};
+
+// Slope of the single-particle charge-sharing ridge, returning C_short via
+// C_short = C_long/|slope|. Returns 0 when the ridge is not measurable.
+Double_t RidgeShortAnchor(const std::vector<Float_t> &v_short,
+                          const std::vector<Float_t> &v_long, Double_t c_long,
+                          Double_t &slope_out, Double_t &intercept_out,
+                          RidgeFit *dbg = nullptr) {
+  slope_out = 0.0;
+  intercept_out = 0.0;
+  if (dbg)
+    dbg->c_long = c_long;
+  if (c_long <= 0 || v_short.size() != v_long.size() || v_short.size() < 500)
+    return 0.0;
+  const Double_t hi = kRidgeShortMaxFrac * c_long;
+  const Double_t lo = 0.04 * c_long;
+  std::vector<std::vector<Double_t>> slice(kRidgeSlices);
+  for (Int_t j = 0; j < Int_t(v_short.size()); j++) {
+    Double_t sh = Double_t(v_short[j]), lg = Double_t(v_long[j]);
+    if (sh < lo || sh >= hi)
+      continue;
+    if (lg <= kRidgeBandLo * c_long || lg >= kRidgeBandHi * c_long)
+      continue;
+    Int_t b = Int_t((sh - lo) / (hi - lo) * kRidgeSlices);
+    if (b >= 0 && b < kRidgeSlices)
+      slice[b].push_back(lg);
+  }
+  std::vector<Double_t> x, y, ey;
+  for (Int_t b = 0; b < kRidgeSlices; b++) {
+    if (Long64_t(slice[b].size()) < kRidgeMinPerSlice)
+      continue;
+    std::sort(slice[b].begin(), slice[b].end());
+    Double_t med = slice[b][slice[b].size() / 2];
+    Double_t iqr =
+        slice[b][slice[b].size() * 3 / 4] - slice[b][slice[b].size() / 4];
+    x.push_back(lo + (b + 0.5) * (hi - lo) / kRidgeSlices);
+    y.push_back(med);
+    ey.push_back(1.253 * (iqr / 1.349) /
+                 TMath::Sqrt(Double_t(slice[b].size())));
+  }
+  if (dbg) {
+    dbg->x = x;
+    dbg->y = y;
+    dbg->ey = ey;
+    dbg->lo = lo;
+    dbg->hi = hi;
+  }
+  if (Int_t(x.size()) < kRidgeMinPts)
+    return 0.0;
+  TGraphErrors g(Int_t(x.size()), &x[0], &y[0], nullptr, &ey[0]);
+  TF1 fit("f_ridge", "pol1", x.front(), x.back());
+  if (g.Fit(&fit, "QN") != 0)
+    return 0.0;
+  Double_t slope = fit.GetParameter(1);
+  Double_t inter = fit.GetParameter(0);
+  slope_out = slope;
+  intercept_out = inter;
+  if (dbg) {
+    dbg->slope = slope;
+    dbg->intercept = inter;
+    dbg->fitted = kTRUE;
+    if (slope < 0)
+      dbg->c_short = c_long / TMath::Abs(slope);
+  }
+  if (slope >= 0)
+    return 0.0;
+  // The line must pass through C_long on the long axis; a large departure means
+  // the band selection did not isolate the single-particle ridge.
+  if (inter < 0.80 * c_long || inter > 1.20 * c_long)
+    return 0.0;
+  return c_long / TMath::Abs(slope);
+}
+
+// One plot per strip under <plot_subdir>/ridge, named ridge_s<NN>: the
+// beam-gated long-vs-short plane, the slice medians the fit was actually given
+// (black), and the fitted line (violet). Drawn for every strip, including the
+// ones whose fit was rejected, so a bad ridge can be seen rather than inferred
+// from the slope in the log.
+void SaveRidgeFitPlots(const StripPairSamples pairs[18], const RidgeFit dbg[18],
+                       const TString &plot_subdir) {
+  TString subdir = plot_subdir + "/ridge";
+  for (Int_t s = 1; s <= 16; s++) {
+    const RidgeFit &d = dbg[s];
+    const StripPairSamples &p = pairs[s];
+    if (d.c_long <= 0 || p.gated_short.empty())
+      continue;
+    Bool_t l_is_long = (LongSide(s) == 'L');
+    // A little past the fit window, so the cap the fit stops at is visible.
+    Double_t xhi = (d.hi > 0 ? d.hi : kRidgeShortMaxFrac * d.c_long) * 1.35;
+    TH2F *h = new TH2F(Form("h_ridge_s%d", s),
+                       Form(";Strip %d Short (%c) #DeltaE [ADC];Strip %d Long "
+                            "(%c) #DeltaE [ADC]",
+                            s, l_is_long ? 'R' : 'L', s, l_is_long ? 'L' : 'R'),
+                       200, 0.0, xhi, 200, 0.0, 1.60 * d.c_long);
+    for (Int_t j = 0; j < Int_t(p.gated_short.size()); j++)
+      h->Fill(Double_t(p.gated_short[j]), Double_t(p.gated_long[j]));
+    TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
+    PlottingUtils::Configure2DHistogram(h, cv);
+    h->Draw("COLZ");
+    TGraphErrors *g = nullptr;
+    if (!d.x.empty()) {
+      g = new TGraphErrors(Int_t(d.x.size()), &d.x[0], &d.y[0], nullptr,
+                           &d.ey[0]);
+      g->SetMarkerStyle(20);
+      g->SetMarkerSize(0.8);
+      g->SetMarkerColor(kBlack);
+      g->SetLineColor(kBlack);
+      g->Draw("P SAME");
+    }
+    // Extended to short = 0 on purpose: where the line lands there is the
+    // anchor the calibration takes, and it should sit on C_long.
+    TLine *lf = nullptr;
+    if (d.fitted) {
+      lf = new TLine(0.0, d.intercept, xhi, d.intercept + d.slope * xhi);
+      lf->SetLineColor(kViolet + 2);
+      lf->SetLineWidth(2);
+      lf->Draw();
+    }
+    if (Constants::cfg.SAVE_PLOTS)
+      PlottingUtils::SaveFigure(cv, Form("ridge_s%02d", s), subdir,
+                                PlotSaveOptions::kLINEAR);
+    delete cv;
+    delete g;
+    delete lf;
+    delete h;
+  }
+}
 
 // Histogram-mode peak finder, mirroring the notebook's find_peak(): histogram
 // `v` over [lo, hi] with kGmBins bins, skip the first skip_frac of bins (to
@@ -777,7 +940,9 @@ Double_t GmFindPeak(const std::vector<Float_t> &v, Double_t lo, Double_t hi,
 }
 
 void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
-                        const StripPairSamples pairs[18]) {
+                        const StripPairSamples pairs[18],
+                        const TString &plot_subdir) {
+  RidgeFit ridge_dbg[18];
   Int_t idx_l[18], idx_r[18];
   for (Int_t s = 0; s < 18; s++) {
     idx_l[s] = -1;
@@ -792,20 +957,15 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
     }
   }
 
-  // ── Pass 1: per-side peak anchors, matching the notebook cell 7 ──
-  // Even strips (s % 2 == 0, R=LONG): shoulder method — find the short
-  //   side (L) peak in events where R reads low (~300 ADC ± 80).
-  // Odd strips (s % 2 == 1, L=LONG): 2D correlation ridge — build a 2D
-  //   histogram of (R, L), find the most probable R value given the L
-  //   beam peak, then extract peak_R.
-  // Strips without measured anchors fall back to the median.
-  const Int_t kNCorrBins = 256;
-  const Double_t kCorrRange = 2000.0;
-  const Int_t kCorrMinCounts = 20;
+  // ── Pass 1: per-side anchors ──
+  // LONG side: its own beam peak, already fitted by ReduceToAnchors.
+  // SHORT side: from the charge-sharing ridge slope, the same method on both
+  //   parities. Strips whose ridge is not measurable fall back to the median
+  //   of the strips that did measure one.
 
   Bool_t matched[18] = {kFALSE};
   Double_t short_anchor_adc[18] = {0};
-  std::vector<Double_t> anchors_found;
+  std::vector<Double_t> ratios_found[2];
   for (Int_t s = 1; s <= 16; s++) {
     if (idx_l[s] < 0 || idx_r[s] < 0)
       continue;
@@ -820,83 +980,84 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
     }
     Double_t peak_short = 0.0;
 
-    if (l_is_long) {
-      // Odd strip (L=LONG, R=SHORT): 2D correlation ridge for peak_R
+    {
       const StripPairSamples &p = pairs[s];
-      if (Long64_t(p.l.size()) > 100) {
-        TH2F *h2d = new TH2F(Form("h2d_lr_corr_s%d", s),
-                             ";R (short) [ADC];L (long) [ADC]", kNCorrBins, 0.0,
-                             kCorrRange, kNCorrBins, 0.0, kCorrRange);
-        h2d->SetDirectory(nullptr);
-        for (Int_t j = 0; j < Int_t(p.l.size()); j++)
-          h2d->Fill(Double_t(p.r[j]), Double_t(p.l[j]));
-
-        // Notebook: scan from high R downward, find first R bin whose
-        // column (projection onto L) has any bin >= 20 counts.
-        Double_t rough_R = 0.0;
-        for (Int_t ix = kNCorrBins; ix >= 1; ix--) {
-          Double_t col_max = 0.0;
-          for (Int_t iy = 1; iy <= kNCorrBins; iy++) {
-            Double_t v = h2d->GetBinContent(ix, iy);
-            if (v > col_max)
-              col_max = v;
-          }
-          if (col_max >= kCorrMinCounts) {
-            rough_R = h2d->GetXaxis()->GetBinCenter(ix);
-            break;
-          }
-        }
-
-        // Find offset_r: R peak in events where L ≈ long peak
-        Double_t long_peak = c_long.fit_adc;
-        std::vector<Float_t> r_near_long;
-        for (Int_t j = 0; j < Int_t(p.l.size()); j++) {
-          if (TMath::Abs(Double_t(p.l[j]) - long_peak) < kGmPeakWin)
-            r_near_long.push_back(p.r[j]);
-        }
-        Double_t offset_r = 0.0;
-        if (r_near_long.size() > 50)
-          offset_r = GmFindPeak(r_near_long, 50.0, 600.0, 0.05);
-
-        if (rough_R > 0) {
-          peak_short = GmFindPeak(p.r, rough_R * 0.85, rough_R * 1.15, 0.0);
-        } else {
-          Double_t lo = (offset_r > 0) ? offset_r + 100.0 : 500.0;
-          peak_short = GmFindPeak(p.r, lo, 2000.0, 0.05);
-        }
-        delete h2d;
-      }
-      if (peak_short <= 0) {
-        // Fall back to shoulder if 2D correlation fails
-        const std::vector<Float_t> &slice = pairs[s].shoulder;
-        if (Long64_t(slice.size()) >= kGmMinSlice)
-          peak_short = GmFindPeak(slice, kGmShortLo, kGmShortHi, kGmSkipFrac);
-      }
-    } else {
-      // Even strip (L=SHORT, R=LONG): shoulder method (notebook cell 7)
-      const std::vector<Float_t> &slice = pairs[s].shoulder;
-      if (Long64_t(slice.size()) >= kGmMinSlice)
-        peak_short = GmFindPeak(slice, kGmShortLo, kGmShortHi, kGmSkipFrac);
+      // Fit the ridge on beam-gated events. The gate cuts on the strip-1 and
+      // strip-2 SUMS, so it removes pile-up and junk without touching where a
+      // particle crossed on any other strip -- exactly the off-centre
+      // crossings the ridge is made of. Fitting the ungated pairs instead
+      // admits the 2- and 3-particle bands and a low-long background that
+      // grows with short, which drags the slice medians down and steepens the
+      // slope.
+      const std::vector<Float_t> &v_short = p.gated_short;
+      const std::vector<Float_t> &v_long = p.gated_long;
+      Double_t slope = 0.0, inter = 0.0;
+      peak_short = RidgeShortAnchor(v_short, v_long, c_long.fit_adc, slope,
+                                    inter, &ridge_dbg[s]);
+      if (peak_short > 0)
+        std::cout << "  strip " << s << " ridge slope=" << Form("%.3f", slope)
+                  << " intercept/C_long="
+                  << Form("%.3f",
+                          c_long.fit_adc > 0 ? inter / c_long.fit_adc : 0.0)
+                  << "  short_anchor=" << Form("%.1f", peak_short) << " ADC"
+                  << std::endl;
+      else
+        std::cerr << "  strip " << s
+                  << ": ridge not measurable (slope=" << Form("%.3f", slope)
+                  << ", intercept=" << Form("%.1f", inter) << ")" << std::endl;
     }
 
     if (peak_short <= 0)
       continue;
+    // C_short/C_long is the ratio of the two preamp gains, so it is order
+    // unity. A ridge too flat to measure still crosses the long axis near
+    // C_long, so the intercept test above cannot catch it -- but it sends
+    // C_long/|slope| to absurd values, which this does catch.
+    Double_t ratio = peak_short / c_long.fit_adc;
+    if (ratio < kRidgeRatioLo || ratio > kRidgeRatioHi) {
+      std::cerr << "  strip " << s << ": ridge ratio " << Form("%.2f", ratio)
+                << " outside [" << kRidgeRatioLo << ", " << kRidgeRatioHi
+                << "]; rejecting anchor " << Form("%.1f", peak_short) << " ADC"
+                << std::endl;
+      continue;
+    }
     short_anchor_adc[s] = peak_short;
-    anchors_found.push_back(peak_short);
+    ratios_found[s % 2].push_back(ratio);
+    chans[l_is_long ? idx_r[s] : idx_l[s]].ridge_ratio = ratio;
     std::cout << "  strip " << s << " short_anchor=" << Form("%.1f", peak_short)
-              << " ADC (method=" << (l_is_long ? "2Dcorr" : "shoulder") << ")"
-              << std::endl;
+              << " ADC (ratio " << Form("%.3f", ratio) << ")" << std::endl;
   }
 
-  Double_t median_anchor = 0.0;
-  if (!anchors_found.empty()) {
-    std::sort(anchors_found.begin(), anchors_found.end());
-    Int_t ms = Int_t(anchors_found.size());
-    median_anchor =
-        (ms % 2 == 1)
-            ? anchors_found[ms / 2]
-            : 0.5 * (anchors_found[ms / 2 - 1] + anchors_found[ms / 2]);
+  SaveRidgeFitPlots(pairs, ridge_dbg, plot_subdir);
+
+  // Fall back on the median RATIO rather than the median anchor: the ratio is a
+  // property of the two preamps, so it carries across strips, whereas an anchor
+  // in ADC does not -- each strip has its own C_long. Taken per parity because
+  // the L and R channels are on separate preamps and their ratios differ
+  // systematically (odd ~1.2, even ~0.9 on 87Rb).
+  Double_t median_ratio[2] = {0.0, 0.0};
+  std::vector<Double_t> all_ratios;
+  for (Int_t par = 0; par < 2; par++) {
+    std::vector<Double_t> &v = ratios_found[par];
+    all_ratios.insert(all_ratios.end(), v.begin(), v.end());
+    if (v.size() < 2)
+      continue;
+    std::sort(v.begin(), v.end());
+    Int_t m = Int_t(v.size());
+    median_ratio[par] =
+        (m % 2 == 1) ? v[m / 2] : 0.5 * (v[m / 2 - 1] + v[m / 2]);
   }
+  Double_t global_ratio = 0.0;
+  if (!all_ratios.empty()) {
+    std::sort(all_ratios.begin(), all_ratios.end());
+    Int_t m = Int_t(all_ratios.size());
+    global_ratio = (m % 2 == 1)
+                       ? all_ratios[m / 2]
+                       : 0.5 * (all_ratios[m / 2 - 1] + all_ratios[m / 2]);
+  }
+  std::cout << "  ridge ratio medians: odd=" << Form("%.3f", median_ratio[1])
+            << " even=" << Form("%.3f", median_ratio[0])
+            << " all=" << Form("%.3f", global_ratio) << std::endl;
 
   for (Int_t s = 1; s <= 16; s++) {
     if (idx_l[s] < 0 || idx_r[s] < 0)
@@ -907,16 +1068,20 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
     if (!IsCalibrated(c_long))
       continue;
     if (short_anchor_adc[s] <= 0) {
-      if (median_anchor <= 0) {
+      Double_t r = median_ratio[s % 2] > 0 ? median_ratio[s % 2] : global_ratio;
+      if (r <= 0) {
         std::cerr << "  strip " << s
-                  << ": no anchor and no median fallback; keeping "
+                  << ": no ridge and no ratio fallback; keeping "
                      "independent gains"
                   << std::endl;
         continue;
       }
-      short_anchor_adc[s] = median_anchor;
-      std::cout << "  strip " << s << " short_anchor=median fallback "
-                << Form("%.1f", median_anchor) << " ADC" << std::endl;
+      short_anchor_adc[s] = r * c_long.fit_adc;
+      std::cout << "  strip " << s << " short_anchor=ratio fallback "
+                << Form("%.3f", r)
+                << " x C_long = " << Form("%.1f", short_anchor_adc[s]) << " ADC"
+                << (median_ratio[s % 2] > 0 ? "" : " (global, parity had none)")
+                << std::endl;
     }
     c_long.gain = 1.0 / c_long.fit_adc;
     c_short.gain = 1.0 / short_anchor_adc[s];
@@ -927,59 +1092,41 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
               << " ADC" << std::endl;
   }
 
-  // ── Pass 2: per-strip eSum peak, median reference, short-side correction ──
+  // ── Pass 2: check, do not correct ──
+  // Both anchors are now measured (long from its beam peak, short from the
+  // ridge slope), so gain_L*L + gain_R*R already peaks at 1.0 a.u. for a beam
+  // event by construction. A departure means the ridge fit for that strip is
+  // wrong, and is reported rather than absorbed into the gains -- rescaling
+  // here would hide exactly the failure worth seeing.
   Double_t esum_peak[18] = {0};
-  std::vector<Double_t> peaks_for_median;
   for (Int_t s = 1; s <= 16; s++) {
     if (!matched[s])
       continue;
     const StripPairSamples &p = pairs[s];
-    Double_t gl = Gain(chans[idx_l[s]]);
-    Double_t gr = Gain(chans[idx_r[s]]);
+    Bool_t l_is_long = (LongSide(s) == 'L');
+    Double_t g_long = Gain(chans[l_is_long ? idx_l[s] : idx_r[s]]);
+    Double_t g_short = Gain(chans[l_is_long ? idx_r[s] : idx_l[s]]);
     std::vector<Float_t> esum;
-    esum.reserve(p.l.size());
-    for (Int_t j = 0; j < Int_t(p.l.size()); j++)
-      esum.push_back(Float_t(gl * Double_t(p.l[j]) + gr * Double_t(p.r[j])));
+    esum.reserve(p.gated_long.size());
+    for (Int_t j = 0; j < Int_t(p.gated_long.size()); j++)
+      esum.push_back(Float_t(g_long * Double_t(p.gated_long[j]) +
+                             g_short * Double_t(p.gated_short[j])));
     esum_peak[s] = GmFindPeak(esum, kGmEsumLo, kGmEsumHi, 0.0);
-    if (esum_peak[s] > 0)
-      peaks_for_median.push_back(esum_peak[s]);
   }
-  if (peaks_for_median.size() < 4) {
-    std::cerr << "  L/R gain match pass 2: too few strips with eSum peaks ("
-              << peaks_for_median.size() << "); skipping short-side correction"
-              << std::endl;
-  } else {
-    std::sort(peaks_for_median.begin(), peaks_for_median.end());
-    Int_t m = Int_t(peaks_for_median.size());
-    Double_t esum_ref =
-        (m % 2 == 1)
-            ? peaks_for_median[m / 2]
-            : 0.5 * (peaks_for_median[m / 2 - 1] + peaks_for_median[m / 2]);
-    std::cout << "  L/R gain match: eSum reference (median) = "
-              << Form("%.4f", esum_ref) << " a.u." << std::endl;
-
-    for (Int_t s = 1; s <= 16; s++) {
-      if (!matched[s] || esum_peak[s] <= 0)
-        continue;
-      Double_t delta = esum_peak[s] - esum_ref;
-      Double_t short_now = esum_peak[s] - 1.0;
-      Double_t short_want = esum_ref - 1.0;
-      Bool_t l_is_long = (LongSide(s) == 'L');
-      ChannelCal &c_short = chans[l_is_long ? idx_r[s] : idx_l[s]];
-      if (TMath::Abs(delta) > kGmCorrThresh && short_now > 0 &&
-          short_want > 0) {
-        Double_t corr = short_want / short_now;
-        c_short.gain *= corr;
-        std::cout << "  strip " << s
-                  << " eSum peak=" << Form("%.4f", esum_peak[s])
-                  << " delta=" << Form("%+.4f", delta) << " -> short gain x"
-                  << Form("%.4f", corr) << std::endl;
-      } else {
-        std::cout << "  strip " << s
-                  << " eSum peak=" << Form("%.4f", esum_peak[s])
-                  << " delta=" << Form("%+.4f", delta) << " OK" << std::endl;
-      }
+  for (Int_t s = 1; s <= 16; s++) {
+    if (!matched[s])
+      continue;
+    if (esum_peak[s] <= 0) {
+      std::cerr << "  strip " << s << ": no summed beam peak in (" << kGmEsumLo
+                << ", " << kGmEsumHi << ") a.u." << std::endl;
+      continue;
     }
+    Double_t dev = esum_peak[s] - 1.0;
+    std::cout << "  strip " << s
+              << " summed beam peak=" << Form("%.4f", esum_peak[s]) << " a.u. ("
+              << Form("%+.1f%%", 100.0 * dev) << ")"
+              << (TMath::Abs(dev) > 0.05 ? "  <-- check ridge fit" : "")
+              << std::endl;
   }
 }
 
@@ -991,7 +1138,8 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
 void ReduceToAnchors(std::vector<ChannelCal> &chans,
                      std::vector<std::vector<Float_t>> &samples,
                      std::vector<TF1 *> &fits_out, const TString &run_label,
-                     const StripPairSamples pairs[18]) {
+                     const StripPairSamples pairs[18],
+                     const TString &plot_subdir) {
   Int_t n_chans = Int_t(chans.size());
   fits_out.assign(n_chans, nullptr);
 
@@ -1049,7 +1197,7 @@ void ReduceToAnchors(std::vector<ChannelCal> &chans,
   // short side only. Sets the ChannelCal::gain overrides; strips where the
   // shoulder cannot be found keep the independent 1/fit_adc gains.
   if (pairs)
-    ComputeLRGainMatch(chans, pairs);
+    ComputeLRGainMatch(chans, pairs, plot_subdir);
 }
 
 void WriteEresTomlRaw(const TString &out_subpath,
@@ -1108,6 +1256,10 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
   // stored.
   Float_t gain_left[18] = {0}, gain_right[18] = {0};
   Float_t gain_cathode = 0.0f;
+  // Per-strip ridge ratio measured in THIS subfile, 0 where the ridge was not
+  // measurable. AggregateRidgeRatiosForRun medians these across a run.
+  Float_t ridge_ratio[18] = {0};
+  Float_t long_anchor[18] = {0};
   Int_t n_actual = TMath::Min(Int_t(chans.size()), kMaxChannels);
   for (Int_t k = 0; k < n_actual; k++) {
     const ChannelCal &c = chans[k];
@@ -1116,6 +1268,12 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
     fit_adc[k] = Float_t(c.fit_adc);
     fit_sigma[k] = Float_t(c.fit_sigma_adc);
     fit_n[k] = c.n_samples;
+    if (c.strip >= 1 && c.strip <= 16 && (c.side == 'L' || c.side == 'R')) {
+      if (c.ridge_ratio > 0)
+        ridge_ratio[c.strip] = Float_t(c.ridge_ratio);
+      if (c.side == LongSide(c.strip))
+        long_anchor[c.strip] = Float_t(c.fit_adc);
+    }
     if (c.side == 'S' && c.strip >= 0 && c.strip <= 17)
       gain_left[c.strip] = gain[k];
     else if (c.side == 'L' && c.strip >= 1 && c.strip <= 16)
@@ -1134,6 +1292,8 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
   cal->Branch("GainLeft", gain_left, "GainLeft[18]/F");
   cal->Branch("GainRight", gain_right, "GainRight[18]/F");
   cal->Branch("GainCathode", &gain_cathode, "GainCathode/F");
+  cal->Branch("RidgeRatio", ridge_ratio, "RidgeRatio[18]/F");
+  cal->Branch("LongAnchor", long_anchor, "LongAnchor[18]/F");
 
   // Beam-energy window and per-strip multiplicative alignment factors
   // matching the notebook approach (pol3 reference / centroid).
@@ -1721,7 +1881,7 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
   std::vector<TF1 *> peak_fits;
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
-    ReduceToAnchors(chans, samples, peak_fits, file_label, pairs);
+    ReduceToAnchors(chans, samples, peak_fits, file_label, pairs, plot_subdir);
     SaveBeamPeakChannelHistograms(chans, samples, peak_fits, plot_subdir);
   }
   for (Int_t i = 0; i < Int_t(peak_fits.size()); i++)
@@ -1799,6 +1959,116 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
   }
 
   std::cout << "  " << file_label << " calibration complete." << std::endl;
+}
+
+// Replace each subfile's short-side gain with one built from the run-level
+// median ridge ratio.
+//
+// C_short/C_long is a ratio of preamp gains, so it is fixed per channel and
+// does not vary subfile to subfile -- the measured scatter is ~1%, well below
+// the ~7% spread between strips. But a single subfile often cannot fit the
+// ridge on the low-occupancy short ends (on 87Rb the even strips fit in only
+// ~45% of subfiles, and 37Cl's upstream strips almost never do), so per-subfile
+// fitting leaves a large fraction of strips on a fallback.
+//
+// Aggregating fixes that without re-reading any event data: take the median
+// ratio per strip over the subfiles that did measure it, then rebuild every
+// subfile's short gain as 1/(ratio * C_long), using that subfile's own C_long
+// so per-subfile gain drift is preserved. Strips that no subfile could fit keep
+// whatever the per-subfile fallback gave them.
+void CalibrateBeam::AggregateRidgeRatiosForRun(
+    Int_t run, const std::vector<FileSpec> &specs) {
+  std::vector<Double_t> per_strip[18];
+  for (Int_t k = 0; k < Int_t(specs.size()); k++) {
+    TString sub = FileSet::EventsName(specs[k]) + ".root";
+    TFile *cf = IO::OpenForReading(sub);
+    if (!cf || cf->IsZombie()) {
+      if (cf)
+        delete cf;
+      continue;
+    }
+    TTree *t = static_cast<TTree *>(cf->Get("calibration"));
+    if (!t || t->GetEntries() < 1 || !t->GetBranch("RidgeRatio")) {
+      cf->Close();
+      delete cf;
+      continue;
+    }
+    Float_t rr[18] = {0};
+    t->SetBranchAddress("RidgeRatio", rr);
+    t->GetEntry(0);
+    for (Int_t s = 1; s <= 16; s++)
+      if (rr[s] > 0)
+        per_strip[s].push_back(Double_t(rr[s]));
+    cf->Close();
+    delete cf;
+  }
+
+  Double_t med[18] = {0};
+  std::cout << "Run " << run << " ridge-ratio aggregation:" << std::endl;
+  for (Int_t s = 1; s <= 16; s++) {
+    std::vector<Double_t> &v = per_strip[s];
+    if (v.size() < 3) {
+      std::cerr << "  strip " << s << ": only " << v.size()
+                << " subfiles measured the ridge; leaving per-subfile gains"
+                << std::endl;
+      continue;
+    }
+    std::sort(v.begin(), v.end());
+    Int_t m = Int_t(v.size());
+    med[s] = (m % 2 == 1) ? v[m / 2] : 0.5 * (v[m / 2 - 1] + v[m / 2]);
+    Double_t lo = v[m / 4], hi = v[(3 * m) / 4];
+    std::cout << "  strip " << s << " ratio=" << Form("%.4f", med[s])
+              << "  IQR " << Form("%.4f", lo) << "-" << Form("%.4f", hi)
+              << "  from " << m << " subfiles" << std::endl;
+  }
+
+  Int_t n_rewritten = 0;
+  for (Int_t k = 0; k < Int_t(specs.size()); k++) {
+    TString sub = FileSet::EventsName(specs[k]) + ".root";
+    TFile *cf = IO::OpenForWriting(sub, "UPDATE");
+    if (!cf || cf->IsZombie()) {
+      if (cf)
+        delete cf;
+      continue;
+    }
+    TTree *t = static_cast<TTree *>(cf->Get("calibration"));
+    if (!t || t->GetEntries() < 1 || !t->GetBranch("LongAnchor")) {
+      cf->Close();
+      delete cf;
+      continue;
+    }
+    Float_t gl[18] = {0}, gr[18] = {0}, la[18] = {0}, rr[18] = {0};
+    t->SetBranchAddress("GainLeft", gl);
+    t->SetBranchAddress("GainRight", gr);
+    t->SetBranchAddress("LongAnchor", la);
+    t->SetBranchAddress("RidgeRatio", rr);
+    t->GetEntry(0);
+    Bool_t changed = kFALSE;
+    for (Int_t s = 1; s <= 16; s++) {
+      if (med[s] <= 0 || la[s] <= 0)
+        continue;
+      Double_t anchor = med[s] * Double_t(la[s]);
+      if (anchor <= 0)
+        continue;
+      if (LongSide(s) == 'L')
+        gr[s] = Float_t(1.0 / anchor);
+      else
+        gl[s] = Float_t(1.0 / anchor);
+      rr[s] = Float_t(med[s]);
+      changed = kTRUE;
+    }
+    if (changed) {
+      TTree *nt = t->CloneTree(0);
+      nt->Fill();
+      cf->cd();
+      nt->Write("calibration", TObject::kOverwrite);
+      n_rewritten++;
+    }
+    cf->Close();
+    delete cf;
+  }
+  std::cout << "  rewrote short gains in " << n_rewritten << " subfiles"
+            << std::endl;
 }
 
 void CalibrateBeam::AggregateEresTomlForRun(

@@ -24,6 +24,8 @@ void StripSumScatterConfig::SetDefaults() {
   PILEUP_THRESH_PY = 1.3;
   PILEUP_MIN_STRIPS = 1;
 
+  BOTH_MULT_MAX = -1;      // disabled by default
+  BOTH_MULT_COUNT_TO = 16; // whole trace unless narrowed
   REJECT_OFFBEAM = kFALSE;
   OFFBEAM_DIST = 0.3;
   OFFBEAM_MIN_STRIPS = 4;
@@ -66,6 +68,7 @@ void StripSumScatterConfig::SetDefaults() {
   REQUIRE_GATE_S5_S6 = kFALSE;
   SKIP_SAVGOL_PLOTS = kFALSE;
   REQUIRE_STRIP_16_BELOW_BEAM = kFALSE;
+  ALT_DECODE_REGION_TRACES = kFALSE;
 }
 
 DatasetConfig::DatasetConfig() {
@@ -208,8 +211,7 @@ Double_t ActiveEventTimeWindowUs() {
                       : cfg.EVENT_TIME_WINDOW_US;
 }
 const TString &ActiveReferenceChannel() {
-  return gActiveEpoch ? gActiveEpoch->reference_channel
-                      : cfg.REFERENCE_CHANNEL;
+  return gActiveEpoch ? gActiveEpoch->reference_channel : cfg.REFERENCE_CHANNEL;
 }
 Double_t ActiveReferenceChannelMinAdc() {
   return gActiveEpoch ? gActiveEpoch->reference_channel_min_adc
@@ -261,9 +263,7 @@ const TString &ActiveFileTag() {
   static const TString kNone = "";
   return gActiveEpoch ? gActiveEpoch->file_tag : kNone;
 }
-Int_t ActiveMaxFiles() {
-  return gActiveEpoch ? gActiveEpoch->max_files : -1;
-}
+Int_t ActiveMaxFiles() { return gActiveEpoch ? gActiveEpoch->max_files : -1; }
 
 const std::map<std::pair<Int_t, Int_t>, TString> &ActiveChannelMap() {
   if (gActiveEpoch && !gActiveEpoch->channel_map.empty())

@@ -22,7 +22,7 @@
 struct SummaryHistograms {
   TH2F *h_music;
   TH1F *h_mult;
-  TH2F *h2_R_vs_L[18];
+  TH2F *h2_long_vs_short[18];
   TH1F *h1_cathode;
   TH1F *h1_strip17;
   TH2F *h2_strip0_vs_grid;
@@ -34,7 +34,7 @@ struct SummaryHistograms {
         h1_strip17(nullptr), h2_strip0_vs_grid(nullptr), h1_strip0(nullptr),
         h1_grid(nullptr) {
     for (Int_t s = 0; s < 18; s++)
-      h2_R_vs_L[s] = nullptr;
+      h2_long_vs_short[s] = nullptr;
   }
 };
 

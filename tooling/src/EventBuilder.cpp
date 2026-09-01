@@ -13,6 +13,7 @@ void EventBuilder::ResetEventState(EventState &e) {
   e.grid = 0;
   e.flags_or = 0;
   e.had_cathode = kFALSE;
+  e.ref_ts = 0;
 }
 
 void EventBuilder::ResetPerChannelData(PerChannelData &p) {
@@ -30,8 +31,6 @@ Bool_t EventBuilder::ShouldKeepHit(ULong64_t cand_ts, ULong64_t prev_ts,
     return cand_energy < prev_energy;
   if (strategy == kLARGEST_ENERGY)
     return cand_energy > prev_energy;
-  if (strategy == kEARLIEST_TIMESTAMP)
-    return cand_ts < prev_ts;
   if (strategy == kLATEST_TIMESTAMP)
     return cand_ts > prev_ts;
 
@@ -168,8 +167,8 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
                    UShort_t *left_0_17_branch, UShort_t *rightdE_branch,
                    UShort_t *hits_branch, Short_t &cathode_branch,
                    Short_t &grid_branch, UInt_t &flags_or_branch,
-                   SummaryHistograms &hSum, EventCounters &c,
-                   Long64_t event_idx = -1,
+                   ULong64_t &seed_ts_branch, SummaryHistograms &hSum,
+                   EventCounters &c, Long64_t event_idx = -1,
                    std::vector<TGraph *> *sample_traces = nullptr,
                    Long64_t sample_stride = 0, Int_t *n_sampled = nullptr) {
   for (Int_t s = 1; s < 17; s++)
@@ -224,6 +223,8 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
 
   if (is_complete) {
     Bool_t reject = Constants::cfg.REJECT_FLAGGED_EVENTS && has_any_flag;
+    if (Constants::ActiveDedupStrategy() == kDISCARD && any_anode_multi)
+      reject = kTRUE;
     if (!reject) {
       for (Int_t k = 0; k < 18; k++) {
         left_0_17_branch[k] = UShort_t(e.leftdE[k]);
@@ -239,13 +240,18 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
       cathode_branch = Short_t(e.cathode);
       grid_branch = Short_t(e.grid);
       flags_or_branch = e.flags_or;
+      seed_ts_branch = e.ref_ts;
       output_tree->Fill();
 
       for (Int_t s = 0; s < 18; s++)
         hSum.h_music->Fill(Double_t(s), Double_t(e.totaldE[s]));
 
-      for (Int_t s = 1; s <= 16; s++)
-        hSum.h2_R_vs_L[s]->Fill(Double_t(e.leftdE[s]), Double_t(e.rightdE[s]));
+      for (Int_t s = 1; s <= 16; s++) {
+        const Bool_t lIsLong = (s % 2) != 0;
+        hSum.h2_long_vs_short[s]->Fill(
+            Double_t(lIsLong ? e.rightdE[s] : e.leftdE[s]),
+            Double_t(lIsLong ? e.leftdE[s] : e.rightdE[s]));
+      }
 
       if (hSum.h1_cathode && e.had_cathode)
         hSum.h1_cathode->Fill(Double_t(e.cathode));
@@ -313,6 +319,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   // hence the UShort_t arrays above.
   Short_t cathode, grid;
   UInt_t flags_or;
+  ULong64_t seed_ts;
 
   TTree *output_tree = new TTree("events", "MUSIC events");
   output_tree->Branch("Left_0_17_dE", left_0_17_dE, "Left_0_17_dE[18]/s");
@@ -321,6 +328,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   output_tree->Branch("Cathode", &cathode, "Cathode/S");
   output_tree->Branch("Grid", &grid, "Grid/S");
   output_tree->Branch("FlagsOR", &flags_or, "FlagsOR/i");
+  output_tree->Branch("SeedTs", &seed_ts, "SeedTs/l");
 
   // Large baskets + disable auto-flush so ZSTD compresses in big chunks
   // instead of many small basket flushes during Fill().
@@ -389,7 +397,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       output_file->Close();
       delete output_file;
       for (Int_t s = 1; s <= 16; s++)
-        delete hSum.h2_R_vs_L[s];
+        delete hSum.h2_long_vs_short[s];
       delete hSum.h_music;
       delete hSum.h_mult;
       delete hSum.h1_cathode;
@@ -469,7 +477,8 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   PerChannelData *pc_cur = &cur_per_channel;
 
   std::cout << "[" << file_label << "] Streaming pass over " << n_entries
-            << " sorted hits (reference: " << Constants::ActiveReferenceChannel()
+            << " sorted hits (reference: "
+            << Constants::ActiveReferenceChannel()
             << ", window: " << Constants::ActiveEventTimeWindowUs() << " us)"
             << std::endl;
 
@@ -519,22 +528,26 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
           }
           pending.clear();
 
-          // Assign the reference hit itself.
-          AssignHit(cur_event, pc_cur, cur_ref_ts, ref_slot, h.energy,
-                    h.timestamp, h.flags, dedup_strat);
-
           // Finalize the completed event.
           FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
-                        hits_arr, cathode, grid, flags_or, hSum, cnt, event_idx,
-                        &sample_traces, sample_stride, &n_sampled);
+                        hits_arr, cathode, grid, flags_or, seed_ts, hSum, cnt,
+                        event_idx, &sample_traces, sample_stride, &n_sampled);
           event_idx++;
         }
 
-        // Seed new event from this reference hit.
+        // Seed the new event from this reference hit, and store its energy in
+        // the event it seeds. Assigning it to the outgoing event instead puts a
+        // different ion's reference amplitude in every event, uncorrelated with
+        // the anode signals it sits beside -- and the beam gate cuts on it.
+        // Time-window mode below already assigns the seeding hit to its own
+        // event.
         ResetEventState(cur_event);
         ResetPerChannelData(cur_per_channel);
         cur_ref_ts = h.timestamp;
+        cur_event.ref_ts = cur_ref_ts;
         have_cur = kTRUE;
+        AssignHit(cur_event, pc_cur, cur_ref_ts, ref_slot, h.energy,
+                  h.timestamp, h.flags, dedup_strat);
       } else {
         if (have_cur && h.timestamp - cur_ref_ts <= window_ps) {
           PendingHit ph;
@@ -555,6 +568,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
         ResetEventState(cur_event);
         ResetPerChannelData(cur_per_channel);
         cur_ref_ts = h.timestamp;
+        cur_event.ref_ts = cur_ref_ts;
         have_cur = kTRUE;
         AssignHit(cur_event, pc_cur, cur_ref_ts, slot, h.energy, h.timestamp,
                   h.flags, dedup_strat);
@@ -564,12 +578,13 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       } else {
         // Window exceeded — finalize and start new window.
         FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
-                      hits_arr, cathode, grid, flags_or, hSum, cnt, event_idx,
-                      &sample_traces, sample_stride, &n_sampled);
+                      hits_arr, cathode, grid, flags_or, seed_ts, hSum, cnt,
+                      event_idx, &sample_traces, sample_stride, &n_sampled);
         event_idx++;
         ResetEventState(cur_event);
         ResetPerChannelData(cur_per_channel);
         cur_ref_ts = h.timestamp;
+        cur_event.ref_ts = cur_ref_ts;
         AssignHit(cur_event, pc_cur, cur_ref_ts, slot, h.energy, h.timestamp,
                   h.flags, dedup_strat);
       }
@@ -594,8 +609,8 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       pending.clear();
     }
     FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
-                  hits_arr, cathode, grid, flags_or, hSum, cnt, event_idx,
-                  &sample_traces, sample_stride, &n_sampled);
+                  hits_arr, cathode, grid, flags_or, seed_ts, hSum, cnt,
+                  event_idx, &sample_traces, sample_stride, &n_sampled);
     event_idx++;
   }
 
@@ -608,7 +623,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     output_file->Close();
     delete output_file;
     for (Int_t s = 1; s <= 16; s++)
-      delete hSum.h2_R_vs_L[s];
+      delete hSum.h2_long_vs_short[s];
     delete hSum.h_music;
     delete hSum.h_mult;
     delete hSum.h1_cathode;
