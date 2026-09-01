@@ -81,7 +81,6 @@
           pkgs.mkShell {
             nativeBuildInputs = with pkgs; [
               pkg-config
-              gnumake
               clang-tools
             ];
             buildInputs = [
@@ -185,7 +184,7 @@
             buildPhase = ''
               export MUSIC_DATASET="${dataset}"
               export MUSIC_DATASET_DIR="$sourceRoot/analysis/${dataset}"
-              make -j GIT_HASH="${gitHash}" DATASET_DIR_OUT="$out/analysis/${dataset}" ASSETS_DIR_OUT="$out/assets" ${extraBuild}
+              make -C tooling -j GIT_HASH="${gitHash}" DATASET_DIR_OUT="$out/analysis/${dataset}" ASSETS_DIR_OUT="$out/assets" ${extraBuild}
             '';
 
             installPhase = ''

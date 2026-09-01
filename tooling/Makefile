@@ -1,7 +1,10 @@
 # MUSIC monorepo build.
 #
-# The flake invokes the Makefile with correct args; just use nix build with the 
-# chosen dataset
+# This is an INTERNAL build recipe, driven by the flake's derivation
+# (`nix build .#<dataset>`), which invokes it as:  make -C tooling ...
+# Never run it directly. It is no longer at the repo root, so it can't be
+# invoked from there; running it by hand would place binaries in
+# analysis/<dataset>/bin instead of keeping them at the repo root.
 #
 # Per-dataset outputs are self-contained: binaries in analysis/<DATASET>/bin,
 # objects + libmusic.a in analysis/<DATASET>/build. tooling/src compiles once
@@ -25,15 +28,15 @@ export NIX_ENFORCE_NO_NATIVE :=
 # ---- dataset selection ----
 DATASET ?= $(MUSIC_DATASET)
 ifeq ($(strip $(DATASET)),)
-$(error MUSIC_DATASET not set. Enter a dataset dev shell (e.g. `nix develop .#87Rb`) or pass DATASET=<iso>)
+$(error MUSIC_DATASET not set. This Makefile is internal to `nix build .#<iso>`; build via nix, never run make directly)
 endif
-DATASET_DIR := $(abspath analysis/$(DATASET))
+DATASET_DIR := $(abspath ../analysis/$(DATASET))
 ifeq ($(wildcard $(DATASET_DIR)/config/Constants.cpp),)
 $(error No config at analysis/$(DATASET)/config/Constants.cpp for DATASET=$(DATASET))
 endif
 
 # ---- tree ----
-TOOLING   := tooling
+TOOLING   := .
 INC_DIR   := $(TOOLING)/include
 SRC_DIR   := $(TOOLING)/src
 MAIN_DIR  := $(TOOLING)/mains
