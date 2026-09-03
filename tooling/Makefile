@@ -47,6 +47,9 @@ BUILD_DIR := $(DATASET_DIR)/build
 
 GIT_HASH := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 GPU_LIB  ?= $(abspath $(GPU_DIR)/libgpuaccel.so)
+# TALYS, for talys-xs: the flake passes the talys-nix store path; empty means
+# whatever `talys` is on PATH at run time.
+TALYS_BIN ?=
 # Runtime paths that can be overridden by nix build (default: same as build paths)
 DATASET_DIR_OUT ?= $(DATASET_DIR)
 GPU_LIB_OUT     ?= $(GPU_LIB)
@@ -62,6 +65,7 @@ CXXFLAGS  := -O3 -g -Wall -Wno-unused-variable -fPIC -std=c++17 \
              -DMUSIC_DATASET_DIR='"$(DATASET_DIR_OUT)"' \
              -DMUSIC_GIT_HASH='"$(GIT_HASH)"' \
              -DMUSIC_GPU_LIB='"$(GPU_LIB_OUT)"' \
+             -DMUSIC_TALYS_BIN='"$(TALYS_BIN)"' \
              -DMUSIC_ASSETS_DIR='"$(ASSETS_DIR_OUT)"' \
              -MMD -MP
 LDFLAGS   := -Wl,--gc-sections $(ROOT_LIBS) -lSpectrum -lMinuit \
@@ -86,7 +90,7 @@ DATASET_CFG_OBJ := $(BUILD_DIR)/dataset_constants.o
 SRC_OBJS += $(DATASET_CFG_OBJ)
 
 # Binary "foo-bar" is built from tooling/mains/main_foo_bar.cpp (dashes->underscores).
-BINS := pipeline calibrate-beam strip-sum-scatter split-sol preprocess-sol
+BINS := pipeline calibrate-beam strip-sum-scatter split-sol preprocess-sol compute-regions cross-section talys-xs
 
 BIN_PATHS := $(addprefix $(BIN_DIR)/,$(BINS))
 

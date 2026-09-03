@@ -6,6 +6,12 @@
     utils = {
       url = "/home/e-work/Analysis-Utilities";
     };
+    # TALYS, driven by talys-xs for the Hauser-Feshbach curve on the
+    # cross-section plot. Its store path is compiled into the tooling.
+    talys-nix = {
+      url = "github:ewtodd/talys-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
   outputs =
     {
@@ -13,6 +19,7 @@
       nixpkgs,
       flake-utils,
       utils,
+      talys-nix,
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
@@ -63,6 +70,7 @@
           if isLaptop then utils.packages.${system}.default else utils.packages.${system}.cuda;
         analysis-utils-py = utils.packages.${system}.pythonPackage;
         root = if isLaptop then pkgs.root else utils.packages.${system}.rootCuda;
+        talys = talys-nix.packages.${system}.default;
         clangdConfigFile = (pkgs.formats.yaml { }).generate "dot-clangd" {
           CompileFlags.Add = [
             "--cuda-gpu-arch=sm_89"
@@ -86,6 +94,7 @@
             buildInputs = [
               analysis-utils
               root
+              talys
               pkgs.bash
               pkgs.tomlplusplus
             ]
@@ -126,6 +135,7 @@
               # processed output to a scratch drive without rebuilding.
               export MUSIC_RESULTS_DIR="''${MUSIC_RESULTS_DIR:-$git_root/analysis/${dataset}}"
               echo "MUSIC results: $MUSIC_RESULTS_DIR"
+              export TALYS_BIN="${talys}/bin/talys"
 
               ${pkgs.lib.optionalString (!isLaptop) ''
                 export NIX_CFLAGS_COMPILE="-DAU_ROOFIT_BACKEND_CUDA=1''${NIX_CFLAGS_COMPILE:+ $NIX_CFLAGS_COMPILE}"
@@ -184,7 +194,7 @@
             buildPhase = ''
               export MUSIC_DATASET="${dataset}"
               export MUSIC_DATASET_DIR="$sourceRoot/analysis/${dataset}"
-              make -C tooling -j GIT_HASH="${gitHash}" DATASET_DIR_OUT="$out/analysis/${dataset}" ASSETS_DIR_OUT="$out/assets" ${extraBuild}
+              make -C tooling -j GIT_HASH="${gitHash}" DATASET_DIR_OUT="$out/analysis/${dataset}" ASSETS_DIR_OUT="$out/assets" TALYS_BIN="${talys}/bin/talys" ${extraBuild}
             '';
 
             installPhase = ''

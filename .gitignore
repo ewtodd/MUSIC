@@ -44,3 +44,13 @@ analysis/*/ml_cache/
 
 # Source assets, not build output — the blanket *.txt above would eat these.
 !tooling/assets/*.txt
+# TALYS, driven by talys-xs: the run and its graphs live under
+# analysis/<dataset>/root_files/talys/. The file patterns are talys-nix's own
+# ignore list, so a TALYS run anywhere in the tree stays out too.
+analysis/*/root_files/talys/
+*.tot
+*.pot
+*.LST
+*.respoint*
+*.res.tendl.*
+*.inp

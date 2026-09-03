@@ -1,9 +1,49 @@
 #include "Constants.hpp"
 
+Int_t TargetGasA(TargetGas gas) {
+  switch (gas) {
+  case kHELIUM:
+    return 4;
+  }
+  return 0;
+}
+
+Double_t TargetGasAtomsPerMolecule(TargetGas gas) {
+  switch (gas) {
+  case kHELIUM:
+    return 1.0;
+  }
+  return 0.0;
+}
+
+void CrossSectionConfig::SetDefaults() {
+  // Deliberately not a working experiment: a dataset that wants a cross
+  // section has to state its own gas and beam. Zero pressure makes a dataset
+  // that forgot fail loudly rather than report a wrong number.
+  TARGET_GAS = kHELIUM;
+  GAS_PRESSURE_TORR = 0.0;
+
+  BEAM_A = 0;
+  BEAM_Z = 0;
+  BEAM_ELEMENT = "";
+
+  TALYS_MODELS.clear();
+
+  BEAM_SIM_FILE = "";
+
+  XS_STRIP_MIN = 3;
+  XS_STRIP_MAX = 15;
+
+  REFERENCE_XS.clear();
+  REFERENCE_LABEL = "";
+}
+
 void StripSumScatterConfig::SetDefaults() {
   PURE_BEAM_GATE = PURE_BEAM_GATE_S0_S1;
 
   POST_TRIGGER_SUM_STRIPS = 3;
+  POST_WINDOW_LAST_STRIP = 17;
+  POST_WINDOW_STRIPS.clear();
   MAX_STRIP_SUM_WORKERS = 12;
 
   REACTION_STRIP_MIN = 2;
@@ -12,7 +52,7 @@ void StripSumScatterConfig::SetDefaults() {
   REQUIRE_SMOOTHNESS_END_STRIP = 12;
   REQUIRE_SMOOTHNESS_MAX_STEP = 1.2;
 
-  REAC_JUMP_MIN = 0.1;
+  REAC_JUMP_NSIGMA = 1.0;
   REAC_JUMP_MAX = 2.0;
   END_STRIP_MAX = 1.0;
 
@@ -28,6 +68,10 @@ void StripSumScatterConfig::SetDefaults() {
   PILEUP_MIN_STRIPS = 1;
 
   REGION_CUT_REDRAW = kFALSE;
+  AN_REGION_NSIGMA = 2.0;
+  AA_REGION_NSIGMA = 2.0;
+  REQUIRE_BEAM_UPSTREAM_OF_REAC = kFALSE;
+  BEAM_UPSTREAM_NSIGMA = 2.0;
   BOTH_MULT_MAX = -1;      // disabled by default
   BOTH_MULT_COUNT_TO = 16; // whole trace unless narrowed
   REJECT_OFFBEAM = kFALSE;
@@ -137,6 +181,7 @@ DatasetConfig::DatasetConfig() {
   TOTAL_E_MAX_NORMED = 400.0;
 
   STRIP_SUM_SCATTER_CONFIG.SetDefaults();
+  CROSS_SECTION_CONFIG.SetDefaults();
 
   STRIP_E_MIN_ADC = 0.0;
   STRIP_E_MAX_ADC = 4096.0;

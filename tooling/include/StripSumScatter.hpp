@@ -109,7 +109,21 @@ struct SingleRunFillResult {
   std::vector<TraceEvt> reservoir;
   Long64_t gated;
   Long64_t seen;
-  SingleRunFillResult() : gated(0), seen(0) {}
+  // Events surviving every cut applied before reaction tagging: the beam
+  // gates, pileup/noise/offbeam rejection and the both-ends multiplicity.
+  // Every tagged event passed exactly this selection, so it is the
+  // denominator in which those efficiencies cancel.
+  Long64_t normed;
+  // Per-strip denominator, indexed by ReacIndex: beam particles that reached
+  // that strip under exactly the conditions a reaction there would have had to
+  // satisfy -- every strip fired, and strips 1..reac-1 beam-like. Those
+  // conditions are strip-dependent (strip 5 must have four strips upstream
+  // look like beam where strip 3 needs two), so a single denominator would
+  // leave that efficiency uncancelled and bias the excitation function.
+  std::vector<Long64_t> normed_at;
+  // Events tagged at each reaction strip, indexed by ReacIndex.
+  std::vector<Long64_t> tagged;
+  SingleRunFillResult() : gated(0), seen(0), normed(0) {}
 };
 
 struct SimPop {
@@ -125,21 +139,61 @@ public:
   // Main entry point called from main_strip_sum_scatter.cpp
   void Run();
 
+  // The scatter cache this configuration reads and writes; compute-regions
+  // reads the same file, so the name lives here and nowhere else.
+  static TString CacheName();
+
+  // The scatter plane's coordinates of one event's normed strip totals, for
+  // reaction strip `reac`: x the sum over X_LO..X_HI, y the sum over the
+  // post-trigger window. Every consumer of a region cut goes through this, so
+  // the fill, the overlay and the cross section can never disagree about
+  // where an event sits.
+  static void PlaneXY(const Double_t *total, Int_t reac, Double_t &x,
+                      Double_t &y);
+  // The post-trigger window summed onto y for reaction strip `reac`:
+  // YLoOf..YHiOf inclusive, per the POST_TRIGGER_SUM_STRIPS /
+  // POST_WINDOW_LAST_STRIP / POST_WINDOW_STRIPS rule.
+  static Int_t YLoOf(Int_t reac);
+  static Int_t YHiOf(Int_t reac);
+  // The beam's noise, measured by MeasureBeamNoise and stamped in the cache:
+  // JumpSigma is the sigma of total[s] - total[s-1] (jump_sigma_s<N>),
+  // StripSigma the sigma of total[s] itself (strip_sigma_s<N>). Set once
+  // before any tagging and read-only after, so the worker threads share them
+  // safely.
+  static Double_t JumpSigma(Int_t strip);
+  static Double_t StripSigma(Int_t strip);
+  static void SetJumpSigma(const Double_t *sigma);
+  static void SetStripSigma(const Double_t *sigma);
+  // Minimum jump for a tag at `reac`: REAC_JUMP_NSIGMA times JumpSigma(reac).
+  static Double_t JumpMin(Int_t reac);
+
 private:
+  static Double_t s_jumpSigma[18];
+  static Double_t s_stripSigma[18];
   std::map<Int_t, TH2F *> m_scatter;
   std::vector<TraceEvt> m_reservoir;
+  // Normalization counts, merged over every run and persisted in the cache so
+  // a cross section can be taken from it without a second pass over the data.
+  Long64_t m_nSeen;
+  Long64_t m_nNormed;
+  std::vector<Long64_t> m_normedAt;
+  std::vector<Long64_t> m_tagged;
   Double_t m_yLo[64];
   Double_t m_yHi[64];
 
   const TString kSimCacheName = "StripSumScatter_simcache.root";
 
   static Int_t ReacIndex(Int_t reac);
-  static Int_t YLoOf(Int_t reac);
-  static Int_t YHiOf(Int_t reac);
 
   Bool_t TryLoadCache(const TString &cacheName, const TString &fingerprint);
   void WriteCache(const TString &cacheName, const TString &fingerprint);
 
+  // Fresh, empty scatters for the configured plane and build range.
+  void AllocateScatters();
+  // Fill the scatters from the reservoir alone. The reservoir keeps every
+  // tagged event, so a plane or axes change needs only this and not a
+  // 25-minute pass over the events files.
+  void ReprojectFromReservoir();
   void FillScatters(const std::vector<Int_t> &runOrder,
                     std::map<Int_t, TChain *> &chains);
 
@@ -151,13 +205,20 @@ private:
   static Bool_t AllStripsFired(const EnergyView &ev);
   static Bool_t PassesReaction(const EnergyView &ev, Int_t reac);
   static Bool_t IsPureBeam(const EnergyView &ev, const BeamEllipses &be);
+  // Sigma-clipped width of each strip-to-strip difference and of each strip's
+  // deposit over a capped sample of `chain`, after the cheap pre-tag cuts.
+  // False when too few events survive to measure them.
+  static Bool_t MeasureBeamNoise(TChain *chain, Double_t *jump_sigma,
+                                 Double_t *strip_sigma);
+  // Strips 1..reac-1 within BEAM_UPSTREAM_NSIGMA of the beam, or the
+  // requirement is off. Shared by the tag and its per-strip denominator.
+  static Bool_t BeamUpstreamOf(const EnergyView &ev, Int_t reac);
   static Bool_t IsPileup(const EnergyView &ev);
   static Bool_t IsNoise(const EnergyView &ev);
   static Bool_t IsOffbeam(const EnergyView &ev);
   static Double_t SumRange(const Double_t *total, Int_t lo, Int_t hi);
   static std::vector<GateSpec> ActiveGates();
 
-  static TString CacheName();
   static Bool_t PassesGate(const BeamFit2D &gate, const EnergyView &ev,
                            Int_t sx, Int_t sy);
 

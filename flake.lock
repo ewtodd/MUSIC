@@ -59,6 +59,7 @@
           "utils",
           "nixpkgs"
         ],
+        "talys-nix": "talys-nix",
         "utils": "utils"
       }
     },
@@ -89,6 +90,26 @@
       "original": {
         "owner": "nix-systems",
         "repo": "default",
+        "type": "github"
+      }
+    },
+    "talys-nix": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1788365816,
+        "narHash": "sha256-svo56jND7kEXyC8p9GFw1uWjKst8z0tQDVj1V0Qzb/Q=",
+        "owner": "ewtodd",
+        "repo": "talys-nix",
+        "rev": "db7ab07274e0a9edb7096c66550fa05d82316235",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ewtodd",
+        "repo": "talys-nix",
         "type": "github"
       }
     },

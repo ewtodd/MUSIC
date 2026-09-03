@@ -25,9 +25,16 @@ struct StripSumScatterConfig {
   PureBeamGate PURE_BEAM_GATE;
 
   // Strips summed onto the scatter y-axis after the trigger strip: y spans
-  // reac+1 .. reac+POST_TRIGGER_SUM_STRIPS. Changes the built quantity, so it
-  // is stamped in the cache fingerprint.
+  // reac+1 .. min(reac+POST_TRIGGER_SUM_STRIPS, POST_WINDOW_LAST_STRIP), so
+  // the window shrinks at deep strips instead of running into the region
+  // where the recoil slows and its excess turns into a deficit. ApJ 983:142
+  // did this by hand (five strips at 3-8, two at 9-12, one at 13);
+  // POST_WINDOW_STRIPS sets a strip's window length outright, to reproduce
+  // such a table. Part of the built quantity, so a change re-projects the
+  // cache rather than refilling.
   Int_t POST_TRIGGER_SUM_STRIPS;
+  Int_t POST_WINDOW_LAST_STRIP;
+  std::map<Int_t, Int_t> POST_WINDOW_STRIPS;
   // Cap on worker threads for the scatter fill.
   Int_t MAX_STRIP_SUM_WORKERS;
 
@@ -37,7 +44,10 @@ struct StripSumScatterConfig {
   Int_t REQUIRE_SMOOTHNESS_END_STRIP;
   Double_t REQUIRE_SMOOTHNESS_MAX_STEP;
 
-  Double_t REAC_JUMP_MIN;
+  // Minimum jump at the reaction strip for a tag, in sigma of the measured
+  // strip-to-strip beam noise (StripSumScatter::JumpSigma). Part of the
+  // tagging, so a change refills.
+  Double_t REAC_JUMP_NSIGMA;
   Double_t REAC_JUMP_MAX;
   Double_t END_STRIP_MAX;
 
@@ -56,6 +66,19 @@ struct StripSumScatterConfig {
   // overwrite only that strip's entry. Without it the only way to redraw was
   // to delete the whole cut file, which discarded every other strip's work.
   Bool_t REGION_CUT_REDRAW;
+
+  // compute-regions: the (a,n) region is the reaction component's
+  // AN_REGION_NSIGMA Mahalanobis ellipse from the bivariate Gaussian mixture
+  // fitted to each strip's scatter; the (a,a') region is the beam-like
+  // component's AA_REGION_NSIGMA ellipse. Saved like drawn cuts, so nothing
+  // downstream knows the difference.
+  Double_t AN_REGION_NSIGMA;
+  Double_t AA_REGION_NSIGMA;
+
+  // Tolerance in sigma of each strip's measured beam spread
+  // (StripSumScatter::StripSigma). Part of the tagging, so a change refills.
+  Bool_t REQUIRE_BEAM_UPSTREAM_OF_REAC;
+  Double_t BEAM_UPSTREAM_NSIGMA;
 
   // Both-ends multiplicity cut: reject an event when more than MAX strips in
   // 1..COUNT_TO had BOTH ends fire. Read off raw ADC, so it is independent of
@@ -121,6 +144,69 @@ struct StripSumScatterConfig {
   // (long-side-only <-> L+R sum) from the same calibration and the
   // same selected events, into a separate plot plus a text dump.
   Bool_t ALT_DECODE_REGION_TRACES;
+
+  void SetDefaults();
+};
+
+// One TALYS calculation: what the plot calls it, and the input lines that
+// select it (see CrossSectionConfig::TALYS_MODELS).
+struct TalysModel {
+  TString label;
+  std::vector<TString> keywords;
+};
+
+// The fill gas the beam reacts in. Only helium so far; the per-gas numbers
+// the cross section needs come from TargetGasA and TargetGasAtomsPerMolecule.
+enum TargetGas { kHELIUM };
+// Mass number of the target nucleus, and atoms of the reacting species per
+// gas molecule.
+Int_t TargetGasA(TargetGas gas);
+Double_t TargetGasAtomsPerMolecule(TargetGas gas);
+
+// Everything the cross section needs that is a property of the experiment
+// rather than of the analysis: the gas the beam reacts in and which reaction
+// is being counted. Nothing here is 87Rb-specific -- a second dataset supplies
+// its own values and reuses the tool unchanged.
+struct CrossSectionConfig {
+  TargetGas TARGET_GAS;
+  // At the pressure the gas was actually at rather than the nominal one.
+  Double_t GAS_PRESSURE_TORR;
+
+  // Beam mass number, for the lab-to-centre-of-mass conversion; its Z and
+  // element symbol name it to a reaction code.
+  Int_t BEAM_A;
+  Int_t BEAM_Z;
+  TString BEAM_ELEMENT;
+
+  // Hauser-Feshbach predictions from TALYS. talys-xs runs the code for an
+  // alpha on this beam nucleus over the reported strips' energies, once per
+  // model, and writes every residual-production channel to
+  // root_files/talys/talys_xs.root; cross-section sums the (a,xn) ones. Each
+  // model is a legend label and the input lines passed to TALYS verbatim
+  // after the projectile, target and energies -- "alphaomp 6" picks the
+  // alpha optical potential by TALYS's own index, for instance -- so any of
+  // its options is reachable without this config knowing them. The first
+  // model is the one drawn in full and the one whose shape sets each
+  // strip's effective energy; the others are drawn dashed and give the
+  // spread of that energy across shapes. Empty: no overlay, midpoint
+  // energies.
+  std::vector<TalysModel> TALYS_MODELS;
+
+  // Simulated unreacted beam, read for the energy at each strip. Relative to
+  // the dataset's sim_root_files directory.
+  TString BEAM_SIM_FILE;
+
+  // Reaction strips to report a cross section for.
+  Int_t XS_STRIP_MIN;
+  Int_t XS_STRIP_MAX;
+
+  // Published values to compare against, if any, one row per point: the
+  // effective centre-of-mass energy [MeV] with its upward and downward
+  // uncertainties [MeV] (the strip's extent, asymmetric about that energy;
+  // zero when the table gives none), then the cross section [mb] with its
+  // total uncertainty [mb]. Left empty when there is nothing to compare to.
+  std::vector<std::vector<Double_t>> REFERENCE_XS;
+  TString REFERENCE_LABEL;
 
   void SetDefaults();
 };
@@ -202,6 +288,7 @@ public:
   Double_t TOTAL_E_MAX_NORMED;
 
   StripSumScatterConfig STRIP_SUM_SCATTER_CONFIG;
+  CrossSectionConfig CROSS_SECTION_CONFIG;
 
   Double_t STRIP_E_MIN_ADC;
   Double_t STRIP_E_MAX_ADC;

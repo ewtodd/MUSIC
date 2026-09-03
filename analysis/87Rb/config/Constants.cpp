@@ -38,29 +38,66 @@ void InitDatasetConfig() {
   gInstance.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_COUNT_TO = 16;
   gInstance.STRIP_SUM_SCATTER_CONFIG.ALT_DECODE_REGION_TRACES = kFALSE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS = kTRUE;
-  // 6 keeps the y-sum span main has always used; the tooling default is 3.
-  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS = 6;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN = 3;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX = 15;
   gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 5;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X = 3.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y = 3.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS = 6;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_WINDOW_LAST_STRIP = 14;
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MIN = 13;
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MAX = 21;
   gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MIN = 0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MAX = 10;
   gInstance.STRIP_SUM_SCATTER_CONFIG.XBINS = 1500;
   gInstance.STRIP_SUM_SCATTER_CONFIG.YBINS = 2000;
-  // Saved cuts win when RegionCuts.root has them, so the run repeats headless.
-  // A strip with no saved cut still prompts, which is how the first pass fills
-  // the file. Flip to kTRUE only to deliberately redraw over saved cuts.
   gInstance.STRIP_SUM_SCATTER_CONFIG.REGION_CUT_REDRAW = kFALSE;
-  // Per-strip y zoom. Display-only now (applied with SetRangeUser over the
-  // fixed build range), so changing it never forces a refill.
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REAC_JUMP_NSIGMA = 1.0;
+  // compute-regions (a separate, read-only pass over the scatter cache)
+  // fits a bivariate Gaussian mixture per strip and saves these ellipses as
+  // the region cuts, overwriting the per-cut files. Hand-drawn cuts stay in
+  // the RegionCuts.root and in region_cuts_hand_<date>/.
+  gInstance.STRIP_SUM_SCATTER_CONFIG.AN_REGION_NSIGMA = 5.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.AA_REGION_NSIGMA = 5.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_BEAM_UPSTREAM_OF_REAC = kTRUE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.BEAM_UPSTREAM_NSIGMA = 2.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_RANGE = {
-      {3, {4, 9}},  {4, {5, 7}},  {5, {5.5, 7.5}}, {6, {5, 7}},  {7, {5, 7}},
-      {8, {5, 7}},  {9, {5, 7}},  {10, {5, 7}},    {11, {5, 7}}, {12, {3.5, 6}},
-      {13, {2, 5}}, {14, {2, 5}}, {15, {1, 4}}};
+      {3, {4, 9}},     {4, {5, 7.5}},    {5, {5, 7.5}},    {6, {5, 7.5}},
+      {7, {5, 7.5}},   {8, {5, 7.5}},    {9, {4, 6.5}},    {10, {3, 5.5}},
+      {11, {2, 4.5}},  {12, {1.2, 3.2}}, {13, {0.5, 1.8}}, {14, {0.5, 1.8}},
+      {15, {0.5, 1.8}}};
+
+  gInstance.CROSS_SECTION_CONFIG.TARGET_GAS = kHELIUM;
+  gInstance.CROSS_SECTION_CONFIG.GAS_PRESSURE_TORR = 555.0;
+  gInstance.CROSS_SECTION_CONFIG.BEAM_A = 87;
+  gInstance.CROSS_SECTION_CONFIG.BEAM_Z = 37;
+  gInstance.CROSS_SECTION_CONFIG.BEAM_ELEMENT = "Rb";
+  // TALYS Hauser-Feshbach for the plot, written by talys-xs. The paper used
+  // the Atomki-V2 alpha potential, which TALYS 2.2 does not carry; its
+  // default Avrigeanu (2014) potential, alphaomp 6, tracks it closely at
+  // these energies (ApJ 983:142 Figure 1) and is the shape the effective
+  // energies come from. McFadden-Satchler (alphaomp 2) has the most
+  // different energy dependence of TALYS's eight and is the check on them.
+  gInstance.CROSS_SECTION_CONFIG.TALYS_MODELS = {
+      {"TALYS HF, Avrigeanu", {"alphaomp 6"}},
+      {"TALYS HF, McFadden-Satchler", {"alphaomp 2"}}};
+  gInstance.CROSS_SECTION_CONFIG.BEAM_SIM_FILE = "traces_87Rb_beam.root";
+  gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MIN = 3;
+  gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MAX = 9;
+  // ApJ 983:142 Table 2: effective centre-of-mass energy [MeV], sigma(a,xn)
+  // [mb], and the quadrature sum of its statistical and systematic
+  // uncertainties [mb]. Ten strips, 13.01 down to 8.09 MeV.
+  gInstance.CROSS_SECTION_CONFIG.REFERENCE_LABEL =
+      "Foug#grave{e}res et al. (2025)";
+  // Per row: E_cm,eff, its +/- uncertainties (the strip's extent about it,
+  // asymmetric because the thick-target-yield correction puts E_eff above
+  // the strip's midpoint), sigma, its uncertainty.
+  gInstance.CROSS_SECTION_CONFIG.REFERENCE_XS = {
+      {13.01, 0.26, 0.28, 420.0, 17.0}, {12.49, 0.24, 0.30, 355.0, 19.0},
+      {11.94, 0.25, 0.30, 291.0, 11.0}, {11.41, 0.23, 0.32, 192.0, 8.0},
+      {10.87, 0.22, 0.33, 109.0, 6.0},  {10.32, 0.22, 0.33, 67.4, 3.8},
+      {9.77, 0.21, 0.44, 32.9, 2.0},    {9.22, 0.19, 0.38, 10.7, 1.0},
+      {8.66, 0.18, 0.39, 3.77, 0.66},   {8.09, 0.18, 0.39, 0.92, 0.31}};
 
   gInstance.STRIP_DE_MIN_NORMED = 0;
   gInstance.STRIP_DE_MAX_NORMED = 4;
