@@ -232,143 +232,6 @@ BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
   return out;
 }
 
-BeamFit2D FindBeamGateStp0VsGrid(const FileSpec &spec, const TString &run_label,
-                                 const TString &plot_subdir,
-                                 const BeamFit2D &beam,
-                                 Bool_t save_plot = kTRUE) {
-  BeamFit2D out;
-
-  TString sub = FileSet::EventsName(spec) + ".root";
-  TFile *sf = IO::OpenForReading(sub);
-  if (!sf || sf->IsZombie()) {
-    if (sf)
-      delete sf;
-    return out;
-  }
-  TTree *tree = static_cast<TTree *>(sf->Get("events"));
-  if (!tree) {
-    sf->Close();
-    delete sf;
-    return out;
-  }
-  UShort_t left_0_17_adc[18], rightdE_adc[18];
-  Short_t grid_adc = 0;
-  tree->SetBranchAddress("Left_0_17_dE", left_0_17_adc);
-  tree->SetBranchAddress("RightdE", rightdE_adc);
-  tree->SetBranchAddress("Grid", &grid_adc);
-
-  const Int_t kBeamGateNBins = 256;
-  const Double_t kGridMaxADC = 4096.0;
-  const Double_t kStrip0MaxADC = 1024.0;
-  TH2F *h = new TH2F(Form("h2_stp0_vs_grid_%s", run_label.Data()),
-                     ";Grid #DeltaE [ADC];Strip0 #DeltaE [ADC]", kBeamGateNBins,
-                     0.0, kGridMaxADC, kBeamGateNBins, 0.0, kStrip0MaxADC);
-  h->SetDirectory(nullptr);
-  Long64_t n = tree->GetEntries();
-  for (Long64_t j = 0; j < n; j++) {
-    tree->GetEntry(j);
-    if (beam.ok) {
-      Double_t x = Double_t(left_0_17_adc[1]) + Double_t(rightdE_adc[1]);
-      Double_t y = Double_t(left_0_17_adc[2]) + Double_t(rightdE_adc[2]);
-      if (x <= 0 || y <= 0)
-        continue;
-      if (!BeamFitUtils::InEllipseXY(beam, x, y, kEllipseNSigmaX,
-                                     kEllipseNSigmaY))
-        continue;
-    }
-    Int_t s0 = Int_t(left_0_17_adc[0]);
-    Int_t g = Int_t(grid_adc);
-    if (s0 > 0 && g > 0)
-      h->Fill(Double_t(g), Double_t(s0));
-  }
-  sf->Close();
-  delete sf;
-
-  if (h->GetEntries() < 100) {
-    std::cerr << "  " << run_label
-              << ": too few events for Strip0-vs-Grid beam gate" << std::endl;
-    delete h;
-    return out;
-  }
-
-  const Double_t kSeedFrac = 0.30;
-  const Int_t kSeedHalfBins = 40;
-  const Int_t kMomentRefineIters = 4;
-  const Double_t kMomentRefineNSigma = 2.5;
-  Double_t bw_x = h->GetXaxis()->GetBinWidth(1);
-  Double_t bw_y = h->GetYaxis()->GetBinWidth(1);
-  Int_t bx, by, bz;
-  h->GetMaximumBin(bx, by, bz);
-  Double_t peak_val = h->GetBinContent(bx, by);
-  Int_t lo_bx = std::max(1, bx - kSeedHalfBins);
-  Int_t hi_bx = std::min(h->GetNbinsX(), bx + kSeedHalfBins);
-  Int_t lo_by = std::max(1, by - kSeedHalfBins);
-  Int_t hi_by = std::min(h->GetNbinsY(), by + kSeedHalfBins);
-  Moments2D m = BeamFitUtils::ComputeMoments(h, lo_bx, hi_bx, lo_by, hi_by,
-                                             kSeedFrac * peak_val, bw_x, bw_y);
-  if (m.weight <= 0) {
-    std::cerr << "  " << run_label
-              << ": no bins above beam seed threshold in Strip0-vs-Grid"
-              << std::endl;
-    delete h;
-    return out;
-  }
-  for (Int_t iter = 0; iter < kMomentRefineIters; iter++) {
-    Int_t wlo_bx = std::max(
-        1, h->GetXaxis()->FindBin(m.mu_x - kMomentRefineNSigma * m.sigma_x));
-    Int_t whi_bx = std::min(
-        h->GetNbinsX(),
-        h->GetXaxis()->FindBin(m.mu_x + kMomentRefineNSigma * m.sigma_x));
-    Int_t wlo_by = std::max(
-        1, h->GetYaxis()->FindBin(m.mu_y - kMomentRefineNSigma * m.sigma_y));
-    Int_t whi_by = std::min(
-        h->GetNbinsY(),
-        h->GetYaxis()->FindBin(m.mu_y + kMomentRefineNSigma * m.sigma_y));
-    Moments2D m_ref = BeamFitUtils::ComputeMoments(
-        h, wlo_bx, whi_bx, wlo_by, whi_by, kSeedFrac * peak_val, bw_x, bw_y);
-    if (m_ref.weight <= 0)
-      break;
-    m = m_ref;
-  }
-  out.amp = peak_val;
-  out.mu_x = m.mu_x;
-  out.mu_y = m.mu_y;
-  out.sigma_x = m.sigma_x;
-  out.sigma_y = m.sigma_y;
-  out.rho = m.rho;
-  out.ok = kTRUE;
-  std::cout << "  beam gate (Strip0 vs Grid): mu=(" << out.mu_x << ","
-            << out.mu_y << ") sigma=(" << out.sigma_x << "," << out.sigma_y
-            << ") rho=" << out.rho << std::endl;
-
-  if (save_plot) {
-    TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
-    PlottingUtils::ConfigureAndDraw2DHistogram(h, cv);
-    Double_t sxx = out.sigma_x * out.sigma_x;
-    Double_t syy = out.sigma_y * out.sigma_y;
-    Double_t sxy = out.rho * out.sigma_x * out.sigma_y;
-    Double_t sum = sxx + syy;
-    Double_t diff = sxx - syy;
-    Double_t det = TMath::Sqrt(diff * diff + 4.0 * sxy * sxy);
-    Double_t lambda1 = 0.5 * (sum + det);
-    Double_t lambda2 = 0.5 * (sum - det);
-    Double_t theta = 0.5 * TMath::ATan2(2.0 * sxy, diff) * 180.0 / TMath::Pi();
-    Double_t n = 0.5 * (kEllipseNSigmaX + kEllipseNSigmaY);
-    TEllipse *e = new TEllipse(out.mu_x, out.mu_y, n * TMath::Sqrt(lambda1),
-                               n * TMath::Sqrt(lambda2), 0, 360, theta);
-    e->SetFillStyle(0);
-    e->SetLineColor(kViolet + 2);
-    e->SetLineWidth(2);
-    e->Draw();
-    if (Constants::cfg.SAVE_PLOTS)
-      PlottingUtils::SaveFigure(cv, "beam_gate_stp0_vs_grid", plot_subdir,
-                                PlotSaveOptions::kLINEAR);
-    delete cv;
-  }
-  delete h;
-  return out;
-}
-
 inline Double_t Median(std::vector<Float_t> &v) {
   if (v.empty())
     return 0.0;
@@ -608,7 +471,6 @@ struct StripPairSamples {
 void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
                                     const std::vector<ChannelCal> &chans,
                                     const BeamFit2D &beam,
-                                    const BeamFit2D &beam0vGrid,
                                     std::vector<std::vector<Float_t>> &samples,
                                     StripPairSamples pairs[18]) {
   Int_t n_chans = Int_t(chans.size());
@@ -633,11 +495,10 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
   // Left_0_17_dE; right ends in RightdE. Strip totals are L+R; the gate uses
   // the strip1 total (L1+R1) and the strip2 total (L2+R2).
   UShort_t left_0_17_adc[18], rightdE_adc[18];
-  Short_t cathode_adc = 0, grid_adc = 0;
+  Short_t cathode_adc = 0;
   tree->SetBranchAddress("Left_0_17_dE", left_0_17_adc);
   tree->SetBranchAddress("RightdE", rightdE_adc);
   tree->SetBranchAddress("Cathode", &cathode_adc);
-  tree->SetBranchAddress("Grid", &grid_adc);
 
   Long64_t n = tree->GetEntries();
   for (Long64_t j = 0; j < n; j++) {
@@ -665,15 +526,6 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
     if (!BeamFitUtils::InEllipseXY(beam, x, y, kEllipseNSigmaX,
                                    kEllipseNSigmaY))
       continue;
-    if (beam0vGrid.ok) {
-      Double_t g0 = Double_t(grid_adc);
-      Double_t s0 = Double_t(left_0_17_adc[0]);
-      if (g0 <= 0 || s0 <= 0)
-        continue;
-      if (!BeamFitUtils::InEllipseXY(beam0vGrid, g0, s0, kEllipseNSigmaX,
-                                     kEllipseNSigmaY))
-        continue;
-    }
     if (pairs) {
       for (Int_t s = 1; s <= 16; s++) {
         if (Long64_t(pairs[s].gated_long.size()) >= kPairCap)
@@ -1864,20 +1716,10 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
     return;
   }
 
-  BeamFit2D beam0vGrid;
-  {
-    std::lock_guard<std::mutex> lock(g_plot_mutex);
-    beam0vGrid = FindBeamGateStp0VsGrid(spec, file_label, plot_subdir, beam);
-  }
-  if (!beam0vGrid.ok)
-    std::cerr << "  " << file_label
-              << ": Strip0-vs-Grid beam gate failed — continuing without it"
-              << std::endl;
-
   std::vector<ChannelCal> chans = chans_template;
   std::vector<std::vector<Float_t>> samples;
   StripPairSamples pairs[18];
-  CollectAnchorSamplesOneSubfile(spec, chans, beam, beam0vGrid, samples, pairs);
+  CollectAnchorSamplesOneSubfile(spec, chans, beam, samples, pairs);
   std::vector<TF1 *> peak_fits;
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);

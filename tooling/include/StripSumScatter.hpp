@@ -203,7 +203,6 @@ private:
 
   static void EnableEventBranches(TChain *chain);
   static Bool_t AllStripsFired(const EnergyView &ev);
-  static Bool_t PassesReaction(const EnergyView &ev, Int_t reac);
   static Bool_t IsPureBeam(const EnergyView &ev, const BeamEllipses &be);
   // Sigma-clipped width of each strip-to-strip difference and of each strip's
   // deposit over a capped sample of `chain`, after the cheap pre-tag cuts.
@@ -216,6 +215,7 @@ private:
   static Bool_t IsPileup(const EnergyView &ev);
   static Bool_t IsNoise(const EnergyView &ev);
   static Bool_t IsOffbeam(const EnergyView &ev);
+  static Bool_t IsParityAsymmetric(const EnergyView &ev);
   static Double_t SumRange(const Double_t *total, Int_t lo, Int_t hi);
   static std::vector<GateSpec> ActiveGates();
 
@@ -284,6 +284,13 @@ private:
                                   std::map<Int_t, TChain *> &chains);
   static void YBounds(Double_t *y_lo, Double_t *y_hi);
   static TString PrettyLabel(const TString &tag);
+
+public:
+  // Shared with tag-efficiency, which pushes bootstrapped traces through the
+  // same tag as the scatter.
+  static Bool_t PassesReaction(const EnergyView &ev, Int_t reac);
+
+private:
   static Bool_t SimBeamGains(Double_t *gain);
   static void SimTotal(const Float_t *left, const Float_t *right,
                        const Double_t *gain, Double_t *total);

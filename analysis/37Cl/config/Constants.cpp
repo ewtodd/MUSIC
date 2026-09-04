@@ -1,4 +1,5 @@
 #include "Constants.hpp"
+#include <DedupStrategy.hpp>
 #include <RtypesCore.h>
 
 namespace Constants {
@@ -12,10 +13,10 @@ void InitDatasetConfig() {
   gInstance.SOL_BASE_DIR = "/labdata/MUSIC/New-37Cl/data_raw/";
   gInstance.SOL_SPLIT_DIR = "/labdata/MUSIC/New-37Cl/data_split/";
   gInstance.SOL_N_SPLIT_WORKERS = 32;
-  gInstance.SOL_SPLIT_CHUNK_SECONDS = 60;
+  gInstance.SOL_SPLIT_CHUNK_SECONDS = 45;
   gInstance.COMPASS_BASE_DIR = "/labdata/MUSIC/37Cl/";
 
-  gInstance.N_CHUNKS = 1;
+  gInstance.N_CHUNKS = -1;
   gInstance.SIM_BEAM_FILE = "traces_37Cl_beam.root";
 
   gInstance.N_BOARDS = 1;
@@ -23,16 +24,14 @@ void InitDatasetConfig() {
   gInstance.TIMING_REF_BOARD = 0;
   gInstance.TIMING_REF_BOARD_CHANNELS = {8};
 
-  gInstance.SAVE_PLOTS = kTRUE;
+  gInstance.SAVE_PLOTS = kFALSE;
   gInstance.SKIP_EXISTING = kTRUE;
   gInstance.SAVE_SAMPLE_TRACES = 10;
 
   gInstance.HAS_CATHODE = kFALSE;
   gInstance.REFERENCE_CHANNEL = "Grid";
-  gInstance.REFERENCE_CHANNEL_MIN_ADC = 500;
-  gInstance.REFERENCE_CHANNEL_MAX_ADC = 4500;
   gInstance.EVENT_TIME_WINDOW_US = 8.0;
-  gInstance.DEDUP_STRATEGY = kLARGEST_ENERGY;
+  gInstance.DEDUP_STRATEGY = kDISCARD;
 
   gInstance.TIMING_DO_BOARD_SYNC = kFALSE;
   gInstance.TIMING_DO_SORT = kFALSE;
@@ -41,32 +40,63 @@ void InitDatasetConfig() {
   gInstance.IGNORE_STRIP_17 = kTRUE;
   gInstance.MAX_FUSED_WORKERS = 32;
 
-  gInstance.STRIP_SUM_SCATTER_CONFIG.PURE_BEAM_GATE =
-      StripSumScatterConfig::PURE_BEAM_GATE_S1_S2;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.MAX_STRIP_SUM_WORKERS = 8;
+
   gInstance.STRIP_SUM_SCATTER_CONFIG.RERUN_SIM = kFALSE;
-  // 6 keeps the y-sum span main has always used; the tooling default is 3.
-  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS = 6;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 5;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MIN = 11;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MAX = 21;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_RANGE = {
-      {2, {3.3, 8.7}},  {3, {3.3, 8.7}},  {4, {3.3, 8.7}},  {5, {3.3, 8.7}},
-      {6, {3.3, 8.7}},  {7, {3.3, 8.7}},  {8, {3.3, 8.7}},  {9, {3.3, 8.7}},
-      {10, {3.3, 8.7}}, {11, {3.3, 8.7}}, {12, {2.8, 7.2}}, {13, {2.2, 5.8}},
-      {14, {1.7, 4.3}}, {15, {1.1, 2.9}}};
+  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS = 4;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_WINDOW_LAST_STRIP = 14;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 6;
+
+  gInstance.STRIP_SUM_SCATTER_CONFIG.X_LO = 1;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.X_HI = 16;
+
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN = 2;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX = 8;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MIN = 13;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MAX = 19;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MIN = 3;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MAX = 6;
   // Saved cuts win when RegionCuts.root has them, so the run repeats headless.
   // A strip with no saved cut still prompts, which is how the first pass fills
   // the file. Flip to kTRUE only to deliberately redraw over saved cuts.
-  gInstance.STRIP_SUM_SCATTER_CONFIG.REGION_CUT_REDRAW = kFALSE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REGION_CUT_REDRAW = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REJECT_NOISE = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REJECT_PILEUP = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.NOISE_THRESHOLD = 0.5;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.NOISE_MIN_STRIPS = 4;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.NOISE_MIN_STRIPS = 2;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_BEAM_UPSTREAM_OF_REAC = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_STRIP_16_BELOW_BEAM = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.END_STRIP_MAX = 1.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.PILEUP_THRESHOLD = 2;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS = kFALSE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS = kTRUE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.PARITY_ASYM_MAX = 0.15;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_X = 0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_Y = 1;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X = 5.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y = 5.0;
+
+  gInstance.CROSS_SECTION_CONFIG.TARGET_GAS = kHELIUM;
+  gInstance.CROSS_SECTION_CONFIG.GAS_PRESSURE_TORR = 400.0;
+  gInstance.CROSS_SECTION_CONFIG.BEAM_A = 37;
+  gInstance.CROSS_SECTION_CONFIG.BEAM_Z = 17;
+  gInstance.CROSS_SECTION_CONFIG.BEAM_ELEMENT = "Cl";
+  gInstance.CROSS_SECTION_CONFIG.TALYS_MODELS = {
+      {"TALYS HF, Avrigeanu", {"alphaomp 6"}},
+      {"TALYS HF, McFadden-Satchler", {"alphaomp 2"}}};
+  gInstance.CROSS_SECTION_CONFIG.BEAM_SIM_FILE = "traces_37Cl_beam.root";
+  gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MIN = 2;
+  gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MAX = 8;
+  gInstance.CROSS_SECTION_CONFIG.EFFECTIVE_ENERGY = kFALSE;
+  // Two channels on the same tagged sample: the 40K and 40Ar residues, each
+  // its own region cut, efficiency, TALYS curve and figure. No published
+  // table yet.
+  gInstance.CROSS_SECTION_CONFIG.CHANNELS = {
+      {"an", "(#alpha, n)", {"n"}, {}, ""},
+      {"ap", "(#alpha, p)", {"p"}, {}, ""}};
+  // 400 Torr only; the 450 Torr epoch stays out of the scatter and the
+  // cross section.
+  gInstance.CROSS_SECTION_CONFIG.EPOCHS = {"early", "late"};
 
   gInstance.STRIP0_MAX_ADC = 1000;
   gInstance.STRIP17_MAX_ADC = 10000;
@@ -97,48 +127,15 @@ void InitDatasetConfig() {
       {{0, 58}, "Grid"}, {{0, 59}, "Cathode"}, {{0, 60}, "R16"},
       {{0, 61}, "L16"},  {{0, 62}, "Strip17"}, {{0, 63}, "Strip0"}};
 
-  std::map<std::pair<Int_t, Int_t>, TString> solaris_map =
-      gInstance.channelMap64;
+  // Epochs carry the flat block above; only the name and the run list differ.
+  // Run 82 is the same detector at 450 Torr: built and calibrated like the
+  // rest, kept apart for the cross section (CROSS_SECTION_CONFIG.EPOCHS).
+  RunEpoch late = MakeEpoch("late", RunRange(97, 137));
+  //  RunEpoch Pressure450Torr = MakeEpoch("Pressure450Torr", {82});
+  //  RunEpoch early = MakeEpoch("early", RunRange(30, 53));
 
-  RunEpoch late;
-  late.name = "late";
-  late.source = kSolaris;
-  late.enabled = kTRUE;
-  for (Int_t i = 97; i < 138; i++)
-    late.runs.push_back(i);
-  late.max_files = -1;
-  late.n_boards = 1;
-  late.n_channels = 64;
-  late.channel_map = solaris_map;
-  late.timing_ref_board = 0;
-  late.timing_ref_board_channels = {8};
-  late.do_board_sync = kFALSE;
-  late.do_sort = kFALSE;
-  late.event_time_window_us = 8.0;
-  late.reference_channel = "Grid";
-  late.reference_channel_min_adc = 500;
-  late.reference_channel_max_adc = 4500;
-  late.dedup_strategy = kLARGEST_ENERGY;
-  late.has_cathode = kFALSE;
-  late.strip_e_min_adc = 0.0;
-  late.strip_e_max_adc = 4096.0;
-  late.cathode_max_adc = 16384.0;
-  late.grid_max_adc = 10000.0;
-  late.strip0_max_adc = 1000.0;
-  late.strip17_max_adc = 10000.0;
-  late.left_even_max_adc = 2500.0;
-  late.left_odd_max_adc = 8000.0;
-  late.right_even_max_adc = 8000.0;
-  late.right_odd_max_adc = 2500.0;
-
-  RunEpoch early = late;
-  early.name = "early";
-  early.enabled = kFALSE;
-  early.runs.clear();
-  for (Int_t i = 30; i <= 53; i++)
-    early.runs.push_back(i);
-
-  //  gInstance.EPOCHS.push_back(early);
+  // gInstance.EPOCHS.push_back(early);
+  // gInstance.EPOCHS.push_back(Pressure450Torr);
   gInstance.EPOCHS.push_back(late);
 }
 

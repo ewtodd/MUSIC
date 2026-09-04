@@ -22,8 +22,11 @@ void Save(Int_t reac, TCutG *cut_an, TCutG *cut_aa,
 // The per-cut file first, then the pre-split combined RegionCuts.root, so cuts
 // drawn before the split keep working until they are next replaced.
 TCutG *Load(const char *name, Int_t reac);
-// The attributed (a,n) count saved with the cut, or -1 if there is none.
-Double_t LoadAssigned(Int_t reac);
+// Only a cut drawn by hand (interactive strip-sum-scatter or the pre-split
+// RegionCuts.root), never one compute-regions fitted.
+TCutG *LoadDrawn(const char *name, Int_t reac);
+// The attributed count saved with a cut, or -1 if there is none.
+Double_t LoadAssigned(const char *name, Int_t reac);
 } // namespace RegionCutStore
 
 // One bivariate Gaussian component of a strip's scatter: amplitude, means,
@@ -45,6 +48,13 @@ struct RegionFit {
   Bool_t ok = kFALSE;
   TString why; // set when !ok
 };
+
+namespace RegionCutStore {
+// The fitted components, stored beside the (a,n) cut so a later step can
+// weight events by the mixture's own posterior instead of a geometric cut.
+void SaveFit(Int_t reac, const RegionFit &fit);
+Bool_t LoadFit(Int_t reac, RegionFit &fit);
+} // namespace RegionCutStore
 
 // Regions by a two-component bivariate Gaussian mixture fitted to the scatter
 // itself. This is ApJ 983:142's "two Gaussian peaks" carried into 2D: the two

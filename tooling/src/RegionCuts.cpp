@@ -58,8 +58,74 @@ void Save(Int_t reac, TCutG *cut_an, TCutG *cut_aa, Double_t n_an_assigned) {
   WriteOne("region_aa", reac, cut_aa, -1.0);
 }
 
-Double_t LoadAssigned(Int_t reac) {
+static const char *kFitKeys[14] = {
+    "fit_beam_amp", "fit_beam_mx",  "fit_beam_sx", "fit_beam_my", "fit_beam_sy",
+    "fit_beam_rho", "fit_reac_amp", "fit_reac_mx", "fit_reac_sx", "fit_reac_my",
+    "fit_reac_sy",  "fit_reac_rho", "fit_n_beam",  "fit_n_reac"};
+
+static void FitValues(const RegionFit &fit, Double_t *v) {
+  const Gauss2D *g[2] = {&fit.beam, &fit.reac};
+  for (Int_t k = 0; k < 2; k++) {
+    v[6 * k + 0] = g[k]->amp;
+    v[6 * k + 1] = g[k]->mx;
+    v[6 * k + 2] = g[k]->sx;
+    v[6 * k + 3] = g[k]->my;
+    v[6 * k + 4] = g[k]->sy;
+    v[6 * k + 5] = g[k]->rho;
+  }
+  v[12] = fit.n_beam;
+  v[13] = fit.n_reac;
+}
+
+void SaveFit(Int_t reac, const RegionFit &fit) {
   TString path = Path("region_an", reac);
+  TFile f(path, "UPDATE");
+  if (f.IsZombie()) {
+    std::cerr << "  [region] cannot open " << path << " to save the fit"
+              << std::endl;
+    return;
+  }
+  Double_t v[14];
+  FitValues(fit, v);
+  f.cd();
+  for (Int_t k = 0; k < 14; k++)
+    TParameter<Double_t>(kFitKeys[k], v[k])
+        .Write(kFitKeys[k], TObject::kOverwrite);
+  f.Close();
+}
+
+Bool_t LoadFit(Int_t reac, RegionFit &fit) {
+  TString path = Path("region_an", reac);
+  if (gSystem->AccessPathName(path))
+    return kFALSE;
+  TFile f(path, "READ");
+  if (f.IsZombie())
+    return kFALSE;
+  Double_t v[14];
+  for (Int_t k = 0; k < 14; k++) {
+    TParameter<Double_t> *p =
+        dynamic_cast<TParameter<Double_t> *>(f.Get(kFitKeys[k]));
+    if (!p)
+      return kFALSE;
+    v[k] = p->GetVal();
+  }
+  Gauss2D *g[2] = {&fit.beam, &fit.reac};
+  for (Int_t k = 0; k < 2; k++) {
+    g[k]->amp = v[6 * k + 0];
+    g[k]->mx = v[6 * k + 1];
+    g[k]->sx = v[6 * k + 2];
+    g[k]->my = v[6 * k + 3];
+    g[k]->sy = v[6 * k + 4];
+    g[k]->rho = v[6 * k + 5];
+  }
+  fit.n_beam = v[12];
+  fit.n_reac = v[13];
+  fit.ok = kTRUE;
+  return kTRUE;
+}
+
+Double_t LoadAssigned(const char *name, Int_t reac) {
+  TString path = Path(name, reac);
   if (gSystem->AccessPathName(path))
     return -1.0;
   TFile f(path, "READ");
@@ -93,6 +159,22 @@ TCutG *Load(const char *name, Int_t reac) {
   TCutG *cut = ReadFrom(Path(name, reac), name, name);
   if (cut)
     return cut;
+  return ReadFrom(LegacyPath(), Key(name, reac), name);
+}
+
+// Hand-drawn only. A per-cut file written by the interactive draw carries no
+// n_assigned; one written by compute-regions does and is skipped. Then the
+// pre-split RegionCuts.root, which only ever held drawn cuts.
+TCutG *LoadDrawn(const char *name, Int_t reac) {
+  TString path = Path(name, reac);
+  if (!gSystem->AccessPathName(path)) {
+    TFile f(path, "READ");
+    const Bool_t fitted = !f.IsZombie() && f.Get("n_assigned") != nullptr;
+    f.Close();
+    if (!fitted)
+      if (TCutG *cut = ReadFrom(path, name, name))
+        return cut;
+  }
   return ReadFrom(LegacyPath(), Key(name, reac), name);
 }
 

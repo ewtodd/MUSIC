@@ -127,6 +127,8 @@ Bool_t StripSumScatter::MeasureBeamNoise(TChain *chain, Double_t *jump_sigma,
       continue;
     if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REJECT_OFFBEAM && IsOffbeam(ev))
       continue;
+    if (IsParityAsymmetric(ev))
+      continue;
     deposit[0].push_back(ev.total[0]);
     for (Int_t s = 1; s < 18; s++) {
       diff[s].push_back(ev.total[s] - ev.total[s - 1]);
@@ -288,6 +290,22 @@ Bool_t StripSumScatter::IsOffbeam(const EnergyView &ev) {
     if (TMath::Abs(ev.total[s] - kBeamRef) >= kDist && ++n >= kMinStrips)
       return kTRUE;
   return kFALSE;
+}
+
+// Even strips against odd strips over the whole trace, before the tag; see
+// PARITY_ASYM_MAX. Strip 16 is even and strip 1 odd, so both means run over
+// eight strips; a residue's excess spreads over both parities alike and moves
+// the ratio by a few percent at most.
+Bool_t StripSumScatter::IsParityAsymmetric(const EnergyView &ev) {
+  const Double_t kMax = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PARITY_ASYM_MAX;
+  if (kMax <= 0.0)
+    return kFALSE;
+  Double_t odd = 0.0, even = 0.0;
+  for (Int_t s = 1; s <= 16; s++)
+    ((s % 2) ? odd : even) += ev.total[s];
+  if (odd <= 0.0)
+    return kTRUE;
+  return TMath::Abs(even / odd - 1.0) > kMax;
 }
 
 Double_t StripSumScatter::SumRange(const Double_t *total, Int_t lo, Int_t hi) {
@@ -1254,13 +1272,14 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
   // not is re-projected from its reservoir in a minute rather than refilled.
   TString s = Form(
       "v19 reac[%d,%d] bmult[%d,%d] jump[%.2fsig,%.3f] smooth=%d,%d "
-      "step=%.3f s17=%.3f gate[s%d,s%d,%.2f,%.2f,%d,%.3f,%.3f]",
+      "step=%.3f s17=%.3f gate[s%d,s%d,%.2f,%.2f,%d,%.3f,%.3f] par=%.3f",
       kReacMin, kReacMax, Constants::cfg.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_MAX,
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_COUNT_TO,
       kReacJumpNSigma, kReacJumpMax,
       Int_t(Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS),
       kSmoothHiStrip, kSmoothMaxStep, kEndStripMax, kGateStripX, kGateStripY,
-      kGateNSigmaX, kGateNSigmaY, kGateBins, kGateMin, kGateMax);
+      kGateNSigmaX, kGateNSigmaY, kGateBins, kGateMin, kGateMax,
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PARITY_ASYM_MAX);
   // The gate resolves through the measured noise, so the thresholds actually
   // applied are stamped too: a drift in the noise refills.
   s += " jmin[";
@@ -1544,23 +1563,34 @@ void StripSumScatter::SimTraceOverlay() {
   std::vector<RemixSim::SimFileSpec> specs = RemixSim::BuildFileSpecs();
   if (specs.empty())
     return;
+  // One file per class and strip, the _eres twin preferred where it exists
+  // (alphabetical order would otherwise leave the plain file in the map).
   std::map<Int_t, TString> aa_file, an_file; // reaction strip -> sim file
+  std::map<Int_t, Bool_t> aa_eres, an_eres;
   std::vector<TString> beam_files;
+  Bool_t beam_eres = kFALSE;
   for (Int_t i = 0; i < Int_t(specs.size()); i++) {
-    if (!RemixSim::IsEresTag(specs[i].tag))
-      std::cout << "No eres sim file for " << specs[i].tag << ", using standard"
-                << std::endl;
     TString base = RemixSim::TagWithoutStrip(specs[i].tag);
     base.ReplaceAll("_eres", "");
     TString file = RemixSim::SimRootPath(specs[i]);
     Int_t strip = RemixSim::ReactionStripOf(specs[i].tag);
-    if (base == "beam")
+    const Bool_t eres = RemixSim::IsEresTag(specs[i].tag);
+    if (base == "beam") {
+      if (beam_eres && !eres)
+        continue;
+      if (eres && !beam_eres)
+        beam_files.clear();
       beam_files.push_back(file);
-    else if (strip >= kReacMin && strip <= kReacMax) {
-      if (base == "aa")
-        aa_file[strip] = file;
-      else if (base == "an")
-        an_file[strip] = file;
+      beam_eres = beam_eres || eres;
+    } else if (strip >= kReacMin && strip <= kReacMax) {
+      std::map<Int_t, TString> &files = base == "aa" ? aa_file : an_file;
+      std::map<Int_t, Bool_t> &have_eres = base == "aa" ? aa_eres : an_eres;
+      if (base != "aa" && base != "an")
+        continue;
+      if (files.count(strip) && (have_eres[strip] || !eres))
+        continue;
+      files[strip] = file;
+      have_eres[strip] = eres;
     }
   }
 
@@ -1616,12 +1646,10 @@ TString StripSumScatter::SimFingerprint(
   const Int_t kXLo = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_LO;
   const Int_t kXHi = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.X_HI;
 
-  TString s = Form("v3 reac[%d,%d] x[%d,%d]", kReacMin, kReacMax, kXLo, kXHi);
+  // v4: one population per class and strip (the eres twin preferred), so
+  // caches that held every population twice are rebuilt.
+  TString s = Form("v4 reac[%d,%d] x[%d,%d]", kReacMin, kReacMax, kXLo, kXHi);
   for (Int_t i = 0; i < Int_t(specs.size()); i++) {
-    if (!RemixSim::IsEresTag(specs[i].tag))
-      std::cout << "No eres sim file for " << specs[i].tag << ", using standard"
-                << std::endl;
-
     TString f = RemixSim::SimRootPath(specs[i]);
     Long_t id = 0, flags = 0, mtime = 0;
     Long64_t size = -1;
@@ -1722,20 +1750,39 @@ void StripSumScatter::SimOverlay() {
       by_strip; // strip -> graphs (title=label)
   Bool_t loaded = LoadSimCache(fp, by_strip);
   if (!loaded) {
-    std::map<Int_t, std::vector<SimPop>> reacted;
-    std::vector<SimPop> refs;
+    // One population per class and strip. Every population has two control
+    // files, the plain one and its _eres twin with the measured widths, and
+    // both carry the same label; taking each file as a population drew every
+    // class twice. The eres file wins where it exists.
+    std::map<std::pair<TString, Int_t>, std::pair<SimPop, Bool_t>> chosen;
     for (Int_t i = 0; i < Int_t(specs.size()); i++) {
-      if (!RemixSim::IsEresTag(specs[i].tag))
-        std::cout << "No eres sim file for " << specs[i].tag
-                  << ", using standard" << std::endl;
+      TString base = RemixSim::TagWithoutStrip(specs[i].tag);
+      base.ReplaceAll("_eres", "");
+      const Int_t strip = RemixSim::ReactionStripOf(specs[i].tag);
+      const Bool_t eres = RemixSim::IsEresTag(specs[i].tag);
+      std::pair<TString, Int_t> key(base, strip);
+      if (chosen.count(key) && (chosen[key].second || !eres))
+        continue;
       SimPop p;
       p.file = RemixSim::SimRootPath(specs[i]);
       p.label = PrettyLabel(specs[i].tag);
-      Int_t strip = RemixSim::ReactionStripOf(specs[i].tag);
-      if (strip < 0)
-        refs.push_back(p);
+      chosen[key] = std::make_pair(p, eres);
+    }
+    std::map<Int_t, std::vector<SimPop>> reacted;
+    std::vector<SimPop> refs;
+    for (std::map<std::pair<TString, Int_t>,
+                  std::pair<SimPop, Bool_t>>::const_iterator it =
+             chosen.begin();
+         it != chosen.end(); ++it) {
+      if (!it->second.second)
+        std::cout << "No eres sim file for " << it->first.first
+                  << (it->first.second >= 0 ? Form("_s%d", it->first.second)
+                                            : "")
+                  << ", using standard" << std::endl;
+      if (it->first.second < 0)
+        refs.push_back(it->second.first);
       else
-        reacted[strip].push_back(p);
+        reacted[it->first.second].push_back(it->second.first);
     }
     Double_t gain[18];
     if (!SimBeamGains(gain))
@@ -2172,6 +2219,8 @@ SingleRunFillResult StripSumScatter::FillRunScatters(
       continue;
     if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REJECT_OFFBEAM && IsOffbeam(ev))
       continue;
+    if (IsParityAsymmetric(ev))
+      continue;
     // Both-ends multiplicity: counted on raw ADC so it sees the short end
     // even when IGNORE_SHORT_STRIPS zeroes it in the decode.
     if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_MAX >= 0) {
@@ -2420,23 +2469,24 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
   std::cout << "strip-sum-scatter: filling " << nTasks << " files on "
             << fill_workers << " workers" << std::endl;
 
+  // Every task's result is merged into the totals in TASK ORDER as soon as
+  // every task before it has finished, and freed on the spot. Holding all
+  // results until the end and merging afterwards kept fourteen scatters of
+  // XBINS x YBINS bins and a reservoir slice per file alive at once, then
+  // copied every slice into the total while the slices still existed: for a
+  // SOLARIS dataset of seventy files that is tens of GB at the moment of the
+  // merge, and the process was killed there. The order is kept so the pure-
+  // beam budget below is spent the same way whatever order the workers
+  // finish in, which makes the threaded result identical to sequential.
   std::vector<SingleRunFillResult> fills(nTasks);
-  RunIndexedParallel(nTasks, fill_workers, [&](Int_t t) {
-    Int_t i = tasks[t].run_idx;
-    TChain ch("events");
-    ch.Add(tasks[t].path);
-    if (ch.GetEntries() == 0)
-      return;
-    fills[t] = FillRunScatters(runOrder[i], &ch, activeGates,
-                               fits[i].series_gates, fits[i].pure_beam);
-  });
-
-  // Merge in task order, so the result does not depend on completion order.
+  std::vector<Bool_t> filled(nTasks, kFALSE);
+  Int_t next_merge = 0;
+  std::mutex merge_mutex;
   Long64_t totalGated = 0, totalSeen = 0;
   const Int_t kBeamReservoirCap =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TRACES_PER_CLASS * 10;
   Int_t nBeamKept = 0;
-  for (Int_t t = 0; t < nTasks; t++) {
+  auto merge = [&](Int_t t) {
     for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
       Int_t ri = ReacIndex(reac);
       if (ri < Int_t(fills[t].scatters.size()) && fills[t].scatters[ri])
@@ -2445,9 +2495,7 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
     // Pure-beam events are capped GLOBALLY, not per task. Each task applies
     // the same cap to its own slice, so without this the kept beam population
     // would scale with the number of events files -- hundreds of them for a
-    // CoMPASS run. Reaction-tagged events are never dropped. The budget is
-    // spent in task order, so which events survive does not depend on the
-    // order the workers happened to finish in.
+    // CoMPASS run. Reaction-tagged events are never dropped.
     for (Int_t k = 0; k < Int_t(fills[t].reservoir.size()); k++) {
       const TraceEvt &e = fills[t].reservoir[k];
       if (e.beam_flat) {
@@ -2467,7 +2515,24 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
     for (Int_t k = 0; k < Int_t(fills[t].scatters.size()); k++)
       delete fills[t].scatters[k];
     fills[t].scatters.clear();
-  }
+    std::vector<TraceEvt>().swap(fills[t].reservoir);
+  };
+  RunIndexedParallel(nTasks, fill_workers, [&](Int_t t) {
+    Int_t i = tasks[t].run_idx;
+    {
+      TChain ch("events");
+      ch.Add(tasks[t].path);
+      if (ch.GetEntries() > 0)
+        fills[t] = FillRunScatters(runOrder[i], &ch, activeGates,
+                                   fits[i].series_gates, fits[i].pure_beam);
+    }
+    std::lock_guard<std::mutex> lk(merge_mutex);
+    filled[t] = kTRUE;
+    while (next_merge < nTasks && filled[next_merge]) {
+      merge(next_merge);
+      next_merge++;
+    }
+  });
   m_nSeen = totalSeen;
   std::cout << "strip-sum-scatter: " << totalGated << " reaction-tagged of "
             << totalSeen << " events (" << m_nNormed

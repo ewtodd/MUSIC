@@ -171,10 +171,12 @@ int main() {
                  dE[X.XS_STRIP_MAX]) *
                         cm_frac -
                     kEcmMargin);
-  for (Int_t k = 0; k < Int_t(X.REFERENCE_XS.size()); k++) {
-    e_lo = TMath::Min(e_lo, X.REFERENCE_XS[k][0] - kEcmMargin);
-    e_hi = TMath::Max(e_hi, X.REFERENCE_XS[k][0] + kEcmMargin);
-  }
+  // ...widened to cover every channel's published table.
+  for (Int_t c = 0; c < Int_t(X.CHANNELS.size()); c++)
+    for (Int_t k = 0; k < Int_t(X.CHANNELS[c].reference_xs.size()); k++) {
+      e_lo = TMath::Min(e_lo, X.CHANNELS[c].reference_xs[k][0] - kEcmMargin);
+      e_hi = TMath::Max(e_hi, X.CHANNELS[c].reference_xs[k][0] + kEcmMargin);
+    }
   const Double_t ecm_lo =
       kEcmStep * std::floor(TMath::Max(kEcmStep, e_lo) / kEcmStep);
   const Double_t ecm_hi = kEcmStep * std::ceil(e_hi / kEcmStep);

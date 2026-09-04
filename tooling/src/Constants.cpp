@@ -33,9 +33,10 @@ void CrossSectionConfig::SetDefaults() {
 
   XS_STRIP_MIN = 3;
   XS_STRIP_MAX = 15;
+  EFFECTIVE_ENERGY = kTRUE;
+  EPOCHS.clear();
 
-  REFERENCE_XS.clear();
-  REFERENCE_LABEL = "";
+  CHANNELS.clear();
 }
 
 void StripSumScatterConfig::SetDefaults() {
@@ -77,6 +78,7 @@ void StripSumScatterConfig::SetDefaults() {
   REJECT_OFFBEAM = kFALSE;
   OFFBEAM_DIST = 0.3;
   OFFBEAM_MIN_STRIPS = 4;
+  PARITY_ASYM_MAX = 0.0;
 
   TRIGGER_NSIGMA = 5.0;
   TRIGGER_CFD_FRAC = 0.30;
@@ -229,6 +231,76 @@ const RunEpoch *EpochForRun(Int_t run) {
   return nullptr;
 }
 
+RunEpoch MakeEpoch(const TString &name, const std::vector<Int_t> &runs) {
+  RunEpoch ep;
+  ep.name = name;
+  ep.runs = runs;
+  ep.source = cfg.USE_SOLARIS_DATA ? kSolaris : kCoMPASS;
+  ep.n_boards = cfg.N_BOARDS;
+  ep.n_channels = cfg.N_CHANNELS;
+  ep.channel_map =
+      !cfg.channelMap64.empty() ? cfg.channelMap64 : cfg.channelMap;
+  ep.timing_ref_board = cfg.TIMING_REF_BOARD;
+  ep.timing_ref_board_channels = cfg.TIMING_REF_BOARD_CHANNELS;
+  ep.do_board_sync = cfg.TIMING_DO_BOARD_SYNC;
+  ep.do_sort = cfg.TIMING_DO_SORT;
+  ep.event_time_window_us = cfg.EVENT_TIME_WINDOW_US;
+  ep.reference_channel = cfg.REFERENCE_CHANNEL;
+  ep.reference_channel_min_adc = cfg.REFERENCE_CHANNEL_MIN_ADC;
+  ep.reference_channel_max_adc = cfg.REFERENCE_CHANNEL_MAX_ADC;
+  ep.dedup_strategy = cfg.DEDUP_STRATEGY;
+  ep.has_cathode = cfg.HAS_CATHODE;
+  ep.strip_e_min_adc = cfg.STRIP_E_MIN_ADC;
+  ep.strip_e_max_adc = cfg.STRIP_E_MAX_ADC;
+  ep.cathode_max_adc = cfg.CATHODE_MAX_ADC;
+  ep.grid_max_adc = cfg.GRID_MAX_ADC;
+  ep.strip0_max_adc = cfg.STRIP0_MAX_ADC;
+  ep.strip17_max_adc = cfg.STRIP17_MAX_ADC;
+  ep.left_even_max_adc = cfg.LEFT_EVEN_MAX_ADC;
+  ep.left_odd_max_adc = cfg.LEFT_ODD_MAX_ADC;
+  ep.right_even_max_adc = cfg.RIGHT_EVEN_MAX_ADC;
+  ep.right_odd_max_adc = cfg.RIGHT_ODD_MAX_ADC;
+  return ep;
+}
+
+std::vector<Int_t> RunRange(Int_t first, Int_t last) {
+  std::vector<Int_t> runs;
+  for (Int_t r = first; r <= last; r++)
+    runs.push_back(r);
+  return runs;
+}
+
+// Runs for a binary that runs with no active epoch: the enabled epochs named
+// in CROSS_SECTION_CONFIG.EPOCHS, or all enabled epochs when that is empty.
+// Computed once; the config does not change after static init.
+static const std::vector<Int_t> &EpochUnionRuns() {
+  static std::vector<Int_t> runs;
+  static Bool_t built = kFALSE;
+  if (built)
+    return runs;
+  built = kTRUE;
+  const std::vector<TString> &want = cfg.CROSS_SECTION_CONFIG.EPOCHS;
+  for (Int_t w = 0; w < Int_t(want.size()); w++) {
+    Bool_t found = kFALSE;
+    for (Int_t e = 0; e < Int_t(cfg.EPOCHS.size()) && !found; e++)
+      found = cfg.EPOCHS[e].name == want[w];
+    if (!found)
+      std::cerr << "WARNING: CROSS_SECTION_CONFIG.EPOCHS names \"" << want[w]
+                << "\" but no such epoch is declared." << std::endl;
+  }
+  for (Int_t e = 0; e < Int_t(cfg.EPOCHS.size()); e++) {
+    const RunEpoch &ep = cfg.EPOCHS[e];
+    if (!ep.enabled)
+      continue;
+    Bool_t wanted = want.empty();
+    for (Int_t w = 0; w < Int_t(want.size()) && !wanted; w++)
+      wanted = ep.name == want[w];
+    if (wanted)
+      runs.insert(runs.end(), ep.runs.begin(), ep.runs.end());
+  }
+  return runs;
+}
+
 Int_t ActiveNBoards() {
   return gActiveEpoch ? gActiveEpoch->n_boards : cfg.N_BOARDS;
 }
@@ -306,7 +378,11 @@ Double_t ActiveRightOddMaxAdc() {
 }
 
 const std::vector<Int_t> &ActiveRunNumbers() {
-  return gActiveEpoch ? gActiveEpoch->runs : cfg.RUN_NUMBERS;
+  if (gActiveEpoch)
+    return gActiveEpoch->runs;
+  if (cfg.RUN_NUMBERS.empty() && !cfg.EPOCHS.empty())
+    return EpochUnionRuns();
+  return cfg.RUN_NUMBERS;
 }
 const TString &ActiveFileTag() {
   static const TString kNone = "";

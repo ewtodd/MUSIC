@@ -34,15 +34,17 @@ void InitDatasetConfig() {
   gInstance.MAX_FUSED_WORKERS = 16;
   gInstance.MAX_GPU_CONCURRENT_SORTS = 20;
 
+  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_X = 0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_Y = 1;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X = 5.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y = 5.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_MAX = 3;
   gInstance.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_COUNT_TO = 16;
   gInstance.STRIP_SUM_SCATTER_CONFIG.ALT_DECODE_REGION_TRACES = kFALSE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS = kTRUE;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN = 3;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX = 15;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 5;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X = 3.0;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y = 3.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN = 2;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX = 12;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 2;
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS = 6;
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_WINDOW_LAST_STRIP = 14;
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MIN = 13;
@@ -51,7 +53,7 @@ void InitDatasetConfig() {
   gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MAX = 10;
   gInstance.STRIP_SUM_SCATTER_CONFIG.XBINS = 1500;
   gInstance.STRIP_SUM_SCATTER_CONFIG.YBINS = 2000;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.REGION_CUT_REDRAW = kFALSE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REGION_CUT_REDRAW = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REAC_JUMP_NSIGMA = 1.0;
   // compute-regions (a separate, read-only pass over the scatter cache)
   // fits a bivariate Gaussian mixture per strip and saves these ellipses as
@@ -82,22 +84,32 @@ void InitDatasetConfig() {
       {"TALYS HF, Avrigeanu", {"alphaomp 6"}},
       {"TALYS HF, McFadden-Satchler", {"alphaomp 2"}}};
   gInstance.CROSS_SECTION_CONFIG.BEAM_SIM_FILE = "traces_87Rb_beam.root";
-  gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MIN = 3;
-  gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MAX = 9;
-  // ApJ 983:142 Table 2: effective centre-of-mass energy [MeV], sigma(a,xn)
-  // [mb], and the quadrature sum of its statistical and systematic
-  // uncertainties [mb]. Ten strips, 13.01 down to 8.09 MeV.
-  gInstance.CROSS_SECTION_CONFIG.REFERENCE_LABEL =
-      "Foug#grave{e}res et al. (2025)";
-  // Per row: E_cm,eff, its +/- uncertainties (the strip's extent about it,
-  // asymmetric because the thick-target-yield correction puts E_eff above
-  // the strip's midpoint), sigma, its uncertainty.
-  gInstance.CROSS_SECTION_CONFIG.REFERENCE_XS = {
-      {13.01, 0.26, 0.28, 420.0, 17.0}, {12.49, 0.24, 0.30, 355.0, 19.0},
-      {11.94, 0.25, 0.30, 291.0, 11.0}, {11.41, 0.23, 0.32, 192.0, 8.0},
-      {10.87, 0.22, 0.33, 109.0, 6.0},  {10.32, 0.22, 0.33, 67.4, 3.8},
-      {9.77, 0.21, 0.44, 32.9, 2.0},    {9.22, 0.19, 0.38, 10.7, 1.0},
-      {8.66, 0.18, 0.39, 3.77, 0.66},   {8.09, 0.18, 0.39, 0.92, 0.31}};
+  gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MIN = 2;
+  gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MAX = 11;
+  // One channel: the inclusive (a,xn), (a,n) + (a,2n), against ApJ 983:142
+  // Table 2 -- effective centre-of-mass energy [MeV] with its +/-
+  // uncertainties (the strip's extent about it, asymmetric because the
+  // thick-target-yield correction puts E_eff above the midpoint), sigma(a,xn)
+  // [mb] and the quadrature sum of its statistical and systematic
+  // uncertainties [mb]. Ten strips, 13.01 down to 8.09 MeV: rows are strips
+  // 2 to 11 (the published analysis tree has A2..A11).
+  gInstance.CROSS_SECTION_CONFIG.CHANNELS = {
+      {"an",
+       "(#alpha, xn)",
+       {"n", "2n"},
+       {
+           {13.01, 0.26, 0.28, 420.0, 17.0},
+           {12.49, 0.24, 0.30, 355.0, 19.0},
+           {11.94, 0.25, 0.30, 291.0, 11.0},
+           {11.41, 0.23, 0.32, 192.0, 8.0},
+           {10.87, 0.22, 0.33, 109.0, 6.0},
+           {10.32, 0.22, 0.33, 67.4, 3.8},
+           {9.77, 0.21, 0.44, 32.9, 2.0},
+           {9.22, 0.19, 0.38, 10.7, 1.0},
+           {8.66, 0.18, 0.39, 3.77, 0.66},
+           {8.09, 0.18, 0.39, 0.92, 0.31},
+       },
+       "Foug#grave{e}res et al. (2025)"}};
 
   gInstance.STRIP_DE_MIN_NORMED = 0;
   gInstance.STRIP_DE_MAX_NORMED = 4;

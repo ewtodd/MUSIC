@@ -83,6 +83,7 @@ int main() {
                      fit.reac.sy, fit.reac.rho, fit.n_reac, nAn, nAa)
               << std::endl;
     RegionCutStore::Save(reac, an, aa, fit.n_reac);
+    RegionCutStore::SaveFit(reac, fit);
     RegionCutFinder::SaveFigures(h, reac, fit, an, aa, "compute_regions");
     delete an;
     delete aa;

@@ -93,6 +93,15 @@ struct StripSumScatterConfig {
   Bool_t REJECT_OFFBEAM;
   Double_t OFFBEAM_DIST;
   Int_t OFFBEAM_MIN_STRIPS;
+  // Reject events whose even strips and odd strips disagree by more than this
+  // fraction, |mean(even 2..16) / mean(odd 1..16) - 1|, before the tag. A beam
+  // particle or a residue reads the same on both parities to within the
+  // noise; an event that arrives on the pole-zero undershoot of the previous
+  // pulse reads low on every channel of the group with the wrong pole-zero
+  // (the R channels in the SOLARIS 37Cl runs), a sawtooth at 0.65 on even
+  // strips and 1.0 on odd. Applied to the beam denominator too, so it
+  // cancels. 0 or less: off.
+  Double_t PARITY_ASYM_MAX;
 
   Double_t TRIGGER_NSIGMA;
   Double_t TRIGGER_CFD_FRAC;
@@ -150,6 +159,33 @@ struct StripSumScatterConfig {
 
 // One TALYS calculation: what the plot calls it, and the input lines that
 // select it (see CrossSectionConfig::TALYS_MODELS).
+// One measured reaction channel; see CrossSectionConfig::CHANNELS.
+struct CrossSectionChannel {
+  // Names the region cut (region_<name>), the tag-efficiency records and the
+  // output figure. "an", "ap".
+  TString name;
+  // The reaction as it appears in the plot title after the dataset name,
+  // e.g. "(#alpha, n)". Empty: derived from talys_exits -- a single "n" gives
+  // "(#alpha, n)", all-neutron exits give "(#alpha, xn)", anything else
+  // joins the exits with commas.
+  TString label;
+  // Which of the residual channels TALYS wrote make up this channel's curve,
+  // as exit channels by name: what leaves the compound nucleus (beam +
+  // alpha), with an optional multiplicity digit, e.g. {"n", "2n"} for
+  // (a,xn), {"n"} for (a,n) alone, {"p"} for (a,p), "g" for radiative
+  // capture. The residue is the compound minus what left, so "n" on 37Cl is
+  // 40K and "p" is 40Ar. Read at plot time, so changing it never needs a
+  // TALYS rerun. A name that does not parse stops the run.
+  std::vector<TString> talys_exits;
+  // Published values to compare against, if any, one row per point: the
+  // effective centre-of-mass energy [MeV] with its upward and downward
+  // uncertainties [MeV] (the strip's extent, asymmetric about that energy;
+  // zero when the table gives none), then the cross section [mb] with its
+  // total uncertainty [mb]. Empty when there is nothing to compare to.
+  std::vector<std::vector<Double_t>> reference_xs;
+  TString reference_label;
+};
+
 struct TalysModel {
   TString label;
   std::vector<TString> keywords;
@@ -200,13 +236,28 @@ struct CrossSectionConfig {
   Int_t XS_STRIP_MIN;
   Int_t XS_STRIP_MAX;
 
-  // Published values to compare against, if any, one row per point: the
-  // effective centre-of-mass energy [MeV] with its upward and downward
-  // uncertainties [MeV] (the strip's extent, asymmetric about that energy;
-  // zero when the table gives none), then the cross section [mb] with its
-  // total uncertainty [mb]. Left empty when there is nothing to compare to.
-  std::vector<std::vector<Double_t>> REFERENCE_XS;
-  TString REFERENCE_LABEL;
+  // Report each strip at its effective centre-of-mass energy (Szegedi et al.
+  // 2021: the energy at which the first TALYS model's cross section equals
+  // its average over the strip, with the spread across models as an energy
+  // systematic), or, when off, at the strip's midpoint with the strip's
+  // extent as the only energy error. Off also means the TALYS shape never
+  // enters the measured points.
+  Bool_t EFFECTIVE_ENERGY;
+
+  // Epochs whose runs feed the cross-section chain (strip-sum-scatter,
+  // compute-regions, cross-section), by name. Those binaries run with no
+  // active epoch, so this is what their run list is built from. Empty: every
+  // enabled epoch. Ignored by a dataset that uses the flat RUN_NUMBERS list.
+  // An epoch at another pressure is kept for event building and calibration
+  // but left out here, since the gas density below is a single number.
+  std::vector<TString> EPOCHS;
+
+  // The reaction channels measured on this dataset. Everything up to the
+  // tag is shared -- a jump is a jump whatever the residue -- and everything
+  // after it is per channel: the region cut (region_<name>), the count in it,
+  // the tag-efficiency record, the TALYS curve, the label, the published
+  // table, the figure (cross_section_<name>).
+  std::vector<CrossSectionChannel> CHANNELS;
 
   void SetDefaults();
 };
@@ -222,7 +273,9 @@ public:
 
   TString COMPASS_BASE_DIR;
   // Flat run list, used when EPOCHS is empty. When EPOCHS is populated the
-  // pipeline walks the epochs instead and this is ignored.
+  // pipeline walks the epochs instead and this is ignored; binaries that run
+  // with no active epoch then take the runs of the epochs named in
+  // CROSS_SECTION_CONFIG.EPOCHS (all enabled ones when that is empty).
   std::vector<Int_t> RUN_NUMBERS;
   std::vector<RunEpoch> EPOCHS;
   Int_t N_CHUNKS;
@@ -329,6 +382,14 @@ const RunEpoch *GetActiveEpoch();
 // tagged epoch reuses another era's run numbers and is addressed by tag, never
 // by number alone.
 const RunEpoch *EpochForRun(Int_t run);
+// An epoch carrying the flat cfg block (hardware layout, timing, reference
+// channel, dedup, ADC caps, channel map) with this name and run list, so a
+// dataset states its detector settings once and its epochs as one line each.
+// Override fields on the result for an epoch that genuinely differs. Call
+// after the flat block is set.
+RunEpoch MakeEpoch(const TString &name, const std::vector<Int_t> &runs);
+// Consecutive run numbers first..last inclusive, for MakeEpoch.
+std::vector<Int_t> RunRange(Int_t first, Int_t last);
 // Output-name prefix of the active epoch ("" when none, so existing filenames
 // are unchanged).
 const TString &ActiveFileTag();
