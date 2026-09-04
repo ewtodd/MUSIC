@@ -79,6 +79,7 @@ void StripSumScatterConfig::SetDefaults() {
   OFFBEAM_DIST = 0.3;
   OFFBEAM_MIN_STRIPS = 4;
   PARITY_ASYM_MAX = 0.0;
+  PLOT_PARITY_REJECTED_GRID = kFALSE;
 
   TRIGGER_NSIGMA = 5.0;
   TRIGGER_CFD_FRAC = 0.30;

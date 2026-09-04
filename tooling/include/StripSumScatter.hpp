@@ -199,6 +199,14 @@ private:
 
   void PlotScatters();
 
+  // Diagnostic (PLOT_PARITY_REJECTED_GRID): grid #DeltaE of events that pass
+  // the cheap pre-tag cuts and are then rejected by the parity cut. Saves both
+  // an a.u. view (decoded grid) and an ADC view (raw trigger channel), each on
+  // a log-y axis. Reads the Grid branch directly (a self-contained pass), so it
+  // works regardless of whether the scatter cache has already been filled.
+  void PlotParityRejectedGrid(const std::vector<Int_t> &run_order,
+                              std::map<Int_t, TChain *> &chains);
+
   void InteractiveOverlay(Int_t reac);
 
   static void EnableEventBranches(TChain *chain);

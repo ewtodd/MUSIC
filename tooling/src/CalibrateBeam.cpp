@@ -568,11 +568,13 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
 //   * LONG side anchor  = beam peak of the long side (histogram mode). The
 //     per-channel anchor from ReduceToAnchors is exactly this (the beam
 //     dominates the spectrum), so it is reused.
-//   * SHORT side anchor = C_long/|slope| of the charge-sharing ridge; see
-//     RidgeShortAnchor. The short end is never observed collecting the full
-//     deposit -- the beam is collimated onto the long end -- so the anchor is
-//     reached by extrapolating the ridge to the short axis rather than by
-//     finding a peak.
+//   * SHORT side anchor = short-axis crossing of the charge-sharing ridge,
+//     reached by extrapolating the ridge line to long = 0 (C_short =
+//     -intercept/slope); see RidgeShortAnchor. The short end is never observed
+//     collecting the full deposit -- the beam is collimated onto the long end
+//     -- so the anchor comes from the ridge rather than from finding a peak. A
+//     DC offset/pedestal moves the line's intercept off C_long, and using the
+//     free intercept here (rather than assuming it equals C_long) absorbs it.
 //   * gain = TARGET / anchor per side, with TARGET = 1.0 a.u. (the notebook
 //     uses 1000 ADC; only the overall scale differs).
 //
@@ -610,11 +612,14 @@ const Int_t kGmBins = 512;
 // the 2-particle band falls into the single-particle window once
 // short > ~0.55*C_short, so the fit is capped well below that.
 const Double_t kRidgeShortMaxFrac =
-    0.25;                           // cap on short, as a fraction of C_long
+    0.5;                            // cap on short, as a fraction of C_long
 const Double_t kRidgeBandLo = 0.30; // single-particle band, x C_long
 const Double_t kRidgeBandHi = 1.45;
 const Int_t kRidgeSlices = 60;
 const Long64_t kRidgeMinPerSlice = 200;
+// Absolute noise floor per slice when the per-slice minimum is relaxed for
+// thinly-spread ridges: below this a slice median is dominated by shot noise.
+const Long64_t kRidgeNoiseFloor = 20;
 const Int_t kRidgeMinPts = 6;
 // C_short/C_long is a preamp gain ratio, so it is order unity; outside this
 // range the ridge fit has failed in a way the intercept test cannot see.
@@ -632,20 +637,75 @@ struct RidgeFit {
   Double_t slope = 0.0, intercept = 0.0;
   Double_t c_long = 0.0, c_short = 0.0;
   Bool_t fitted = kFALSE; // a line was fitted (it may still be rejected)
+  // Diagnostic: how far a strip got before the fit, so a "not measurable"
+  // log line can say which guard rejected it instead of only slope/intercept.
+  Long64_t n_gated = 0;        // pairs handed to RidgeShortAnchor
+  Long64_t n_short_window = 0; // stayed inside the short window
+  Long64_t n_long_band = 0;    // also inside the long band
+  Int_t n_slices = 0;          // slices with >= kRidgeMinPerSlice
+  Long64_t min_per_slice = 0;  // adaptive per-slice minimum used this strip
+  const char *fail = "";       // guarded reason when it returned 0
 };
 
-// Slope of the single-particle charge-sharing ridge, returning C_short via
-// C_short = C_long/|slope|. Returns 0 when the ridge is not measurable.
+// Theil-Sen robust line: slope = median of pairwise slopes, intercept = median
+// residual. Unlike OLS ("pol1" via a chi-square fit) a single outlying slice
+// median cannot bend the slope: it is the intercept-correcting companion to the
+// fact that a slice median is itself a robust estimate. Returns kFALSE when the
+// slice set is too small or degenerate (all-same x).
+Bool_t TheilSenLine(const std::vector<Double_t> &x,
+                    const std::vector<Double_t> &y, Double_t &slope,
+                    Double_t &intercept) {
+  const Int_t n = Int_t(x.size());
+  if (n < 2)
+    return kFALSE;
+  std::vector<Double_t> slopes;
+  slopes.reserve(n * (n - 1) / 2);
+  for (Int_t i = 0; i < n; i++)
+    for (Int_t j = i + 1; j < n; j++) {
+      Double_t dx = x[j] - x[i];
+      if (dx == 0.0)
+        continue;
+      slopes.push_back((y[j] - y[i]) / dx);
+    }
+  if (slopes.empty())
+    return kFALSE;
+  std::sort(slopes.begin(), slopes.end());
+  const Int_t m = Int_t(slopes.size());
+  slope =
+      (m % 2 == 1) ? slopes[m / 2] : 0.5 * (slopes[m / 2 - 1] + slopes[m / 2]);
+  std::vector<Double_t> resid;
+  resid.reserve(n);
+  for (Int_t i = 0; i < n; i++)
+    resid.push_back(y[i] - slope * x[i]);
+  std::sort(resid.begin(), resid.end());
+  const Int_t r = Int_t(resid.size());
+  intercept =
+      (r % 2 == 1) ? resid[r / 2] : 0.5 * (resid[r / 2 - 1] + resid[r / 2]);
+  return kTRUE;
+}
+
+// Slope of the single-particle charge-sharing ridge, returning C_short at the
+// fitted line's short-axis crossing, C_short = -intercept/slope (equivalently
+// C_long/|slope| when the intercept sits exactly at C_long). Returns 0 when the
+// ridge is not measurable.
 Double_t RidgeShortAnchor(const std::vector<Float_t> &v_short,
                           const std::vector<Float_t> &v_long, Double_t c_long,
                           Double_t &slope_out, Double_t &intercept_out,
                           RidgeFit *dbg = nullptr) {
   slope_out = 0.0;
   intercept_out = 0.0;
-  if (dbg)
+  if (dbg) {
     dbg->c_long = c_long;
-  if (c_long <= 0 || v_short.size() != v_long.size() || v_short.size() < 500)
+    dbg->n_gated = Long64_t(v_short.size());
+  }
+  if (c_long <= 0 || v_short.size() != v_long.size() || v_short.size() < 500) {
+    if (dbg)
+      dbg->fail = c_long <= 0 ? "c_long<=0"
+                  : v_short.size() != v_long.size()
+                      ? "size mismatch"
+                      : "fewer than 500 gated pairs";
     return 0.0;
+  }
   const Double_t hi = kRidgeShortMaxFrac * c_long;
   const Double_t lo = 0.04 * c_long;
   std::vector<std::vector<Double_t>> slice(kRidgeSlices);
@@ -653,24 +713,50 @@ Double_t RidgeShortAnchor(const std::vector<Float_t> &v_short,
     Double_t sh = Double_t(v_short[j]), lg = Double_t(v_long[j]);
     if (sh < lo || sh >= hi)
       continue;
+    if (dbg)
+      dbg->n_short_window++;
     if (lg <= kRidgeBandLo * c_long || lg >= kRidgeBandHi * c_long)
       continue;
+    if (dbg)
+      dbg->n_long_band++;
     Int_t b = Int_t((sh - lo) / (hi - lo) * kRidgeSlices);
     if (b >= 0 && b < kRidgeSlices)
       slice[b].push_back(lg);
   }
   std::vector<Double_t> x, y, ey;
-  for (Int_t b = 0; b < kRidgeSlices; b++) {
-    if (Long64_t(slice[b].size()) < kRidgeMinPerSlice)
-      continue;
-    std::sort(slice[b].begin(), slice[b].end());
-    Double_t med = slice[b][slice[b].size() / 2];
-    Double_t iqr =
-        slice[b][slice[b].size() * 3 / 4] - slice[b][slice[b].size() / 4];
-    x.push_back(lo + (b + 0.5) * (hi - lo) / kRidgeSlices);
-    y.push_back(med);
-    ey.push_back(1.253 * (iqr / 1.349) /
-                 TMath::Sqrt(Double_t(slice[b].size())));
+  {
+    // Per-slice minimum. Try the strict floor first (kRidgeMinPerSlice): this
+    // is what odd strips pass with, so their fit is byte-for-byte unchanged. If
+    // it fails to fill kRidgeMinPts slices, relax -- a strip whose ridge is
+    // spread thinly over many short bins (the even strips here: beam off-axis
+    // left, they share far more, so ~50/bin instead of >200) is being starved
+    // by a population-independent constant. Halve the floor and retry until
+    // kRidgeMinPts slices fill or the noise floor is hit, so a thinly spread
+    // ridge still fits without letting a couple-count slice through.
+    Long64_t min_per_slice = kRidgeMinPerSlice;
+    for (;;) {
+      x.clear();
+      y.clear();
+      ey.clear();
+      for (Int_t b = 0; b < kRidgeSlices; b++) {
+        if (Long64_t(slice[b].size()) < min_per_slice)
+          continue;
+        std::sort(slice[b].begin(), slice[b].end());
+        Double_t med = slice[b][slice[b].size() / 2];
+        Double_t iqr =
+            slice[b][slice[b].size() * 3 / 4] - slice[b][slice[b].size() / 4];
+        x.push_back(lo + (b + 0.5) * (hi - lo) / kRidgeSlices);
+        y.push_back(med);
+        ey.push_back(1.253 * (iqr / 1.349) /
+                     TMath::Sqrt(Double_t(slice[b].size())));
+      }
+      if (Int_t(x.size()) >= kRidgeMinPts || min_per_slice <= kRidgeNoiseFloor)
+        break;
+      // Halve the floor and retry.
+      min_per_slice = TMath::Max(kRidgeNoiseFloor, min_per_slice / 2);
+    }
+    if (dbg)
+      dbg->min_per_slice = min_per_slice;
   }
   if (dbg) {
     dbg->x = x;
@@ -678,15 +764,23 @@ Double_t RidgeShortAnchor(const std::vector<Float_t> &v_short,
     dbg->ey = ey;
     dbg->lo = lo;
     dbg->hi = hi;
+    dbg->n_slices = Int_t(x.size());
   }
-  if (Int_t(x.size()) < kRidgeMinPts)
+  if (Int_t(x.size()) < kRidgeMinPts) {
+    if (dbg)
+      dbg->fail = "fewer than kRidgeMinPts filled slices";
     return 0.0;
-  TGraphErrors g(Int_t(x.size()), &x[0], &y[0], nullptr, &ey[0]);
-  TF1 fit("f_ridge", "pol1", x.front(), x.back());
-  if (g.Fit(&fit, "QN") != 0)
+  }
+  // Robust regression: median of pairwise slopes, so an outlying slice median
+  // (e.g. the 2-/3-particle bands or a low-long background) cannot bend the
+  // slope the way the chi-square "pol1" fit could. Returns kFALSE on a
+  // degenerate slice set.
+  Double_t slope = 0.0, inter = 0.0;
+  if (!TheilSenLine(x, y, slope, inter)) {
+    if (dbg)
+      dbg->fail = "degenerate slice set (TheilSenLine)";
     return 0.0;
-  Double_t slope = fit.GetParameter(1);
-  Double_t inter = fit.GetParameter(0);
+  }
   slope_out = slope;
   intercept_out = inter;
   if (dbg) {
@@ -694,15 +788,26 @@ Double_t RidgeShortAnchor(const std::vector<Float_t> &v_short,
     dbg->intercept = inter;
     dbg->fitted = kTRUE;
     if (slope < 0)
-      dbg->c_short = c_long / TMath::Abs(slope);
+      dbg->c_short = -inter / slope;
   }
-  if (slope >= 0)
+  if (slope >= 0) {
+    if (dbg)
+      dbg->fail = "slope >= 0";
     return 0.0;
+  }
   // The line must pass through C_long on the long axis; a large departure means
-  // the band selection did not isolate the single-particle ridge.
-  if (inter < 0.80 * c_long || inter > 1.20 * c_long)
+  // the band selection did not isolate the single-particle ridge. The window is
+  // kept loose enough to admit a genuine intercept offset down to 0.80 C_long.
+  if (inter < 0.80 * c_long || inter > 1.20 * c_long) {
+    if (dbg)
+      dbg->fail = "intercept outside [0.80, 1.20]*C_long";
     return 0.0;
-  return c_long / TMath::Abs(slope);
+  }
+  // Short anchor from the fitted line itself: where it crosses the short axis
+  // (long = 0), i.e. -intercept/slope. Using the free intercept rather than
+  // assuming it sits exactly at C_long absorbs a DC offset/pedestal; while the
+  // intercept is inside the sanity window, this is the honest crossing.
+  return -inter / slope;
 }
 
 // One plot per strip under <plot_subdir>/ridge, named ridge_s<NN>: the
@@ -854,9 +959,17 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
                   << "  short_anchor=" << Form("%.1f", peak_short) << " ADC"
                   << std::endl;
       else
-        std::cerr << "  strip " << s
-                  << ": ridge not measurable (slope=" << Form("%.3f", slope)
-                  << ", intercept=" << Form("%.1f", inter) << ")" << std::endl;
+        std::cerr << "  strip " << s << ": ridge not measurable "
+                  << "(slope=" << Form("%.3f", slope)
+                  << ", intercept=" << Form("%.1f", inter) << ")"
+                  << (ridge_dbg[s].fail[0] ? Form(" [%s]", ridge_dbg[s].fail)
+                                           : "")
+                  << " gated=" << Form("%lld", ridge_dbg[s].n_gated)
+                  << " short_win=" << Form("%lld", ridge_dbg[s].n_short_window)
+                  << " long_band=" << Form("%lld", ridge_dbg[s].n_long_band)
+                  << " slices=" << ridge_dbg[s].n_slices
+                  << " min_per_slice=" << ridge_dbg[s].min_per_slice
+                  << std::endl;
     }
 
     if (peak_short <= 0)

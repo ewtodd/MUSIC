@@ -103,6 +103,17 @@ struct StripSumScatterConfig {
   // cancels. 0 or less: off.
   Double_t PARITY_ASYM_MAX;
 
+  // Diagnostic only: when set, run an extra pass over the events (gated by
+  // PARITY_ASYM_MAX > 0) that fills a histogram of the Grid #DeltaE of events
+  // that pass the cheap pre-tag cuts (all strips fired, pileup, noise, offbeam)
+  // and are then rejected by the parity cut, and save BOTH a decoded a.u. view
+  // (grid_adc / 16384, [0,1]) and a raw ADC view ([0, GRID_MAX_ADC]), each with
+  // a log-y axis. Purely visual; does not change what is tagged and is NOT part
+  // of the cache fingerprint (the reservoir keeps only tagged + beam events, so
+  // it cannot be rebuilt from cache anyway). Requires the Grid branch to be
+  // enabled. Off by default.
+  Bool_t PLOT_PARITY_REJECTED_GRID;
+
   Double_t TRIGGER_NSIGMA;
   Double_t TRIGGER_CFD_FRAC;
   Int_t PLATEAU_POST;

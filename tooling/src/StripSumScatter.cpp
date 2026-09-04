@@ -159,6 +159,12 @@ void StripSumScatter::EnableEventBranches(TChain *chain) {
   // Absent in files built before the branch existed; harmless to enable.
   if (chain->GetBranch("SeedTs"))
     chain->SetBranchStatus("SeedTs", 1);
+  // The parity-rejected grid diagnostic reads the Grid trigger channel. Enable
+  // it only when that plot is requested so the common update path stays
+  // branch-light (the grid is a Short_t; reading it otherwise is wasted I/O).
+  if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PLOT_PARITY_REJECTED_GRID &&
+      chain->GetBranch("Grid"))
+    chain->SetBranchStatus("Grid", 1);
 }
 
 Bool_t StripSumScatter::AllStripsFired(const EnergyView &ev) {
@@ -2573,6 +2579,87 @@ void StripSumScatter::PlotScatters() {
   }
 }
 
+// Diagnostic: the Grid #DeltaE of events that pass the cheap pre-tag cuts and
+// are then rejected by the parity cut. Self-contained pass over the chains
+// (not the fill's cuts), so it works on a cached dataset too. Two views of the
+// same population are saved: the decoded Grid signal in a.u. ([0,1]) and the
+// raw Grid branch in ADC. Purely visual: does not change what is tagged or the
+// cache. Both are drawn on a log-y axis (PlotSaveOptions::kLOG).
+void StripSumScatter::PlotParityRejectedGrid(
+    const std::vector<Int_t> &run_order, std::map<Int_t, TChain *> &chains) {
+  const StripSumScatterConfig &C = Constants::cfg.STRIP_SUM_SCATTER_CONFIG;
+  if (!C.PLOT_PARITY_REJECTED_GRID)
+    return;
+  if (!(C.PARITY_ASYM_MAX > 0.0)) {
+    std::cout << "strip-sum-scatter: PLOT_PARITY_REJECTED_GRID is set but "
+                 "PARITY_ASYM_MAX <= 0; no parity cut to reject events, "
+                 "skipping the grid diagnostic."
+              << std::endl;
+    return;
+  }
+
+  const Double_t grid_max_adc = Constants::ActiveGridMaxAdc();
+
+  // a.u. view: the decoded grid (grid_adc / 16384 when calibrated), which is
+  // what the rest of the analysis works in. ADC view: the raw trigger channel.
+  TH1F *h_au = new TH1F("grid_parity_rejected_au",
+                        ";Grid #DeltaE [a.u.];Counts", 400, 0.0, 1.0);
+  TH1F *h_adc =
+      new TH1F("grid_parity_rejected_adc", ";Grid #DeltaE [ADC];Counts", 400,
+               0.0, grid_max_adc > 0.0 ? grid_max_adc : 16384.0);
+  h_au->SetDirectory(nullptr);
+  h_adc->SetDirectory(nullptr);
+
+  Long64_t nRejected = 0;
+  for (Int_t i = 0; i < Int_t(run_order.size()); i++) {
+    TChain *chain = chains[run_order[i]];
+    if (!chain)
+      continue;
+    EnergyView ev;
+    ev.Attach(chain);
+    EnableEventBranches(chain);
+    const Long64_t n = chain->GetEntries();
+    for (Long64_t j = 0; j < n; j++) {
+      chain->GetEntry(j);
+      ev.Decode();
+      if (!AllStripsFired(ev) || IsPileup(ev) || IsNoise(ev))
+        continue;
+      if (C.REJECT_OFFBEAM && IsOffbeam(ev))
+        continue;
+      if (IsParityAsymmetric(ev)) {
+        h_au->Fill(ev.grid);
+        h_adc->Fill(ev.grid_adc);
+        nRejected++;
+      }
+    }
+    chain->ResetBranchAddresses();
+  }
+
+  std::cout << "strip-sum-scatter: parity-rejected grid diagnostic: "
+            << nRejected << " events rejected by the parity cut." << std::endl;
+  if (nRejected == 0) {
+    delete h_au;
+    delete h_adc;
+    return;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(g_plot_mutex);
+    TCanvas *c_au = PlottingUtils::GetConfiguredCanvas(kFALSE);
+    PlottingUtils::ConfigureAndDrawHistogram(h_au, kBlue + 1);
+    PlottingUtils::SaveFigure(c_au, "grid_parity_rejected_au",
+                              "strip_sum_scatter", PlotSaveOptions::kLOG);
+    delete c_au;
+    TCanvas *c_adc = PlottingUtils::GetConfiguredCanvas(kFALSE);
+    PlottingUtils::ConfigureAndDrawHistogram(h_adc, kBlue + 1);
+    PlottingUtils::SaveFigure(c_adc, "grid_parity_rejected_adc",
+                              "strip_sum_scatter", PlotSaveOptions::kLOG);
+    delete c_adc;
+  }
+  delete h_au;
+  delete h_adc;
+}
+
 void StripSumScatter::InteractiveOverlay(Int_t reac) {
   const Int_t kReacMin =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
@@ -2819,6 +2906,11 @@ void StripSumScatter::Run() {
 
   // Batch plotting (always done).
   PlotScatters();
+
+  // Optional diagnostic: grid of events rejected by the parity cut. Reads the
+  // Grid branch directly, so it works whether or not the scatter cache was
+  // freshly filled. Self-gated on PLOT_PARITY_REJECTED_GRID.
+  PlotParityRejectedGrid(run_order, chain_by_run);
 
   // Optional sim overlays.
   if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.RERUN_SIM) {

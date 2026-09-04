@@ -13,7 +13,7 @@ void InitDatasetConfig() {
   gInstance.SOL_BASE_DIR = "/labdata/MUSIC/New-37Cl/data_raw/";
   gInstance.SOL_SPLIT_DIR = "/labdata/MUSIC/New-37Cl/data_split/";
   gInstance.SOL_N_SPLIT_WORKERS = 32;
-  gInstance.SOL_SPLIT_CHUNK_SECONDS = 45;
+  gInstance.SOL_SPLIT_CHUNK_SECONDS = 300;
   gInstance.COMPASS_BASE_DIR = "/labdata/MUSIC/37Cl/";
 
   gInstance.N_CHUNKS = -1;
@@ -24,19 +24,21 @@ void InitDatasetConfig() {
   gInstance.TIMING_REF_BOARD = 0;
   gInstance.TIMING_REF_BOARD_CHANNELS = {8};
 
-  gInstance.SAVE_PLOTS = kFALSE;
+  gInstance.SAVE_PLOTS = kTRUE;
   gInstance.SKIP_EXISTING = kTRUE;
   gInstance.SAVE_SAMPLE_TRACES = 10;
 
   gInstance.HAS_CATHODE = kFALSE;
   gInstance.REFERENCE_CHANNEL = "Grid";
-  gInstance.EVENT_TIME_WINDOW_US = 8.0;
-  gInstance.DEDUP_STRATEGY = kDISCARD;
+  gInstance.REFERENCE_CHANNEL_MIN_ADC = 1200;
+  gInstance.REFERENCE_CHANNEL_MAX_ADC = 2600;
+  gInstance.EVENT_TIME_WINDOW_US = 5.0;
+  gInstance.DEDUP_STRATEGY = kLARGEST_ENERGY;
 
   gInstance.TIMING_DO_BOARD_SYNC = kFALSE;
   gInstance.TIMING_DO_SORT = kFALSE;
 
-  gInstance.IGNORE_STRIP_0 = kTRUE;
+  gInstance.IGNORE_STRIP_0 = kFALSE;
   gInstance.IGNORE_STRIP_17 = kTRUE;
   gInstance.MAX_FUSED_WORKERS = 32;
 
@@ -45,7 +47,7 @@ void InitDatasetConfig() {
   gInstance.STRIP_SUM_SCATTER_CONFIG.RERUN_SIM = kFALSE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS = 4;
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_WINDOW_LAST_STRIP = 14;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 6;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 2;
 
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_LO = 1;
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_HI = 16;
@@ -56,9 +58,6 @@ void InitDatasetConfig() {
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MAX = 19;
   gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MIN = 3;
   gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MAX = 6;
-  // Saved cuts win when RegionCuts.root has them, so the run repeats headless.
-  // A strip with no saved cut still prompts, which is how the first pass fills
-  // the file. Flip to kTRUE only to deliberately redraw over saved cuts.
   gInstance.STRIP_SUM_SCATTER_CONFIG.REGION_CUT_REDRAW = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REJECT_NOISE = kTRUE;
@@ -71,6 +70,7 @@ void InitDatasetConfig() {
   gInstance.STRIP_SUM_SCATTER_CONFIG.PILEUP_THRESHOLD = 2;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.PARITY_ASYM_MAX = 0.15;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.PLOT_PARITY_REJECTED_GRID = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_X = 0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_Y = 1;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X = 5.0;
@@ -130,11 +130,9 @@ void InitDatasetConfig() {
   // Epochs carry the flat block above; only the name and the run list differ.
   // Run 82 is the same detector at 450 Torr: built and calibrated like the
   // rest, kept apart for the cross section (CROSS_SECTION_CONFIG.EPOCHS).
-  RunEpoch late = MakeEpoch("late", RunRange(97, 137));
-  //  RunEpoch Pressure450Torr = MakeEpoch("Pressure450Torr", {82});
-  //  RunEpoch early = MakeEpoch("early", RunRange(30, 53));
+  RunEpoch late = MakeEpoch("late", RunRange(97, 99)); // 137));
+  // RunEpoch Pressure450Torr = MakeEpoch("Pressure450Torr", {82});
 
-  // gInstance.EPOCHS.push_back(early);
   // gInstance.EPOCHS.push_back(Pressure450Torr);
   gInstance.EPOCHS.push_back(late);
 }

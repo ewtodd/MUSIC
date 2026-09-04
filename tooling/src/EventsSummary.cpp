@@ -1,4 +1,5 @@
 #include "EventsSummary.hpp"
+#include <TLine.h>
 
 void CreateSummaryHistograms(SummaryHistograms &h,
                              const SummaryHistConfig &cfg) {
@@ -107,11 +108,28 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
     c->cd();
     PlottingUtils::ConfigureAndDraw2DHistogram(h.h2_long_vs_short[s], c);
     h.h2_long_vs_short[s]->GetYaxis()->SetTitleOffset(1.3);
+    // Normed only: the charge-sharing line long + short = 1 a.u. (for a beam
+    // event the two ends carry the full deposit between them). Drawn as the
+    // y = -x + 1 gridline, i.e. short=0,long=1 -> short=1,long=0. Detached from
+    // the pad before deletion so the pad does not double-free it on c->Delete.
+    TLine *ridge = nullptr;
+    if (plot_suffix == "_normed") {
+      ridge = new TLine(1.0, 0.0, 0.0, 1.0);
+      ridge->SetLineColor(kRed + 1);
+      ridge->SetLineStyle(2);
+      ridge->SetLineWidth(2);
+      ridge->Draw("SAME");
+    }
     if (Constants::cfg.SAVE_PLOTS)
       PlottingUtils::SaveFigure(c, TString("long_vs_short_s") + s + plot_suffix,
                                 subdir, PlotSaveOptions::kLINEAR);
     out_file->cd();
     c->Write(h.h2_long_vs_short[s]->GetName(), TObject::kOverwrite);
+    if (ridge) {
+      if (TVirtualPad *p = c->GetPad(0))
+        p->GetListOfPrimitives()->Remove(ridge);
+      delete ridge;
+    }
     delete c;
   }
 
