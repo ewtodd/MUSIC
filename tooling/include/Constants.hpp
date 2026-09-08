@@ -345,6 +345,12 @@ public:
 
   Double_t STRIP_DE_OVERVIEW_MIN_NORMED;
   Double_t STRIP_DE_OVERVIEW_MAX_NORMED;
+  // n-sigma of the per-strip beam gate in the beam calibration: strip s is
+  // gated by the ellipse on the (strip s-1, strip s) raw totals, which is what
+  // defines that strip's beam sample.
+  Double_t BEAM_GATE_NSIGMA_X;
+  Double_t BEAM_GATE_NSIGMA_Y;
+
   Double_t STRIP_DE_MIN_NORMED;
   Double_t STRIP_DE_MAX_NORMED;
   Double_t CATHODE_E_MAX_NORMED;

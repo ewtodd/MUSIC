@@ -16,7 +16,7 @@ void InitDatasetConfig() {
   gInstance.SOL_SPLIT_CHUNK_SECONDS = 300;
   gInstance.COMPASS_BASE_DIR = "/labdata/MUSIC/37Cl/";
 
-  gInstance.N_CHUNKS = -1;
+  gInstance.N_CHUNKS = 1;
   gInstance.SIM_BEAM_FILE = "traces_37Cl_beam.root";
 
   gInstance.N_BOARDS = 1;
@@ -30,14 +30,16 @@ void InitDatasetConfig() {
 
   gInstance.HAS_CATHODE = kFALSE;
   gInstance.REFERENCE_CHANNEL = "Grid";
-  gInstance.REFERENCE_CHANNEL_MIN_ADC = 1200;
-  gInstance.REFERENCE_CHANNEL_MAX_ADC = 2600;
+  gInstance.REFERENCE_CHANNEL_MIN_ADC = 1000;
+  gInstance.REFERENCE_CHANNEL_MAX_ADC = 3000;
   gInstance.EVENT_TIME_WINDOW_US = 5.0;
   gInstance.DEDUP_STRATEGY = kLARGEST_ENERGY;
 
   gInstance.TIMING_DO_BOARD_SYNC = kFALSE;
   gInstance.TIMING_DO_SORT = kFALSE;
 
+  gInstance.BEAM_GATE_NSIGMA_X = 3;
+  gInstance.BEAM_GATE_NSIGMA_Y = 3;
   gInstance.IGNORE_STRIP_0 = kFALSE;
   gInstance.IGNORE_STRIP_17 = kTRUE;
   gInstance.MAX_FUSED_WORKERS = 32;
@@ -47,7 +49,7 @@ void InitDatasetConfig() {
   gInstance.STRIP_SUM_SCATTER_CONFIG.RERUN_SIM = kFALSE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS = 4;
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_WINDOW_LAST_STRIP = 14;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 2;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 4;
 
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_LO = 1;
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_HI = 16;
@@ -96,7 +98,7 @@ void InitDatasetConfig() {
       {"ap", "(#alpha, p)", {"p"}, {}, ""}};
   // 400 Torr only; the 450 Torr epoch stays out of the scatter and the
   // cross section.
-  gInstance.CROSS_SECTION_CONFIG.EPOCHS = {"early", "late"};
+  gInstance.CROSS_SECTION_CONFIG.EPOCHS = {"late"};
 
   gInstance.STRIP0_MAX_ADC = 1000;
   gInstance.STRIP17_MAX_ADC = 10000;

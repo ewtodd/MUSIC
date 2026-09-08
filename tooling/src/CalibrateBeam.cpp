@@ -2,8 +2,16 @@
 #include <Rtypes.h>
 
 const Int_t kMaxChannels = 35;
-const Double_t kEllipseNSigmaX = 3;
-const Double_t kEllipseNSigmaY = 3;
+// Raw total of one strip. Strips 0 and 17 are single-ended guards; 1-16 are
+// split L/R and their total is the sum of both ends.
+inline Double_t StripTotalAdc(const UShort_t *l, const UShort_t *r, Int_t s) {
+  return (s == 0 || s == 17) ? Double_t(l[s]) : Double_t(l[s]) + Double_t(r[s]);
+}
+
+// The strip whose total is paired with strip s to gate it: the one before it,
+// except strips 0 and 1 which share the (0, 1) pair because there is nothing
+// before strip 0.
+inline Int_t GatePartner(Int_t s) { return s <= 1 ? 0 : s - 1; }
 const Long64_t kMinSamples = 200;
 const Long64_t kSampleCap = 20000;
 // (L, R) pair cap for the L/R gain-matching passes. Larger than kSampleCap
@@ -91,9 +99,14 @@ inline Double_t ApplyCal(const ChannelCal &c, Double_t adc) {
   return Gain(c) * adc;
 }
 
-BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
-                                 const TString &plot_subdir,
-                                 Bool_t save_plot = kTRUE) {
+// The beam gate for one strip: a 2D Gaussian on the (strip sx, strip sy) raw
+// totals. Gating a strip on itself and its neighbour selects single-particle
+// events in THAT strip; the gate is on totals, so it says nothing about how
+// the charge divides between the two ends, which is what the anchor fit reads.
+BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
+                             const TString &run_label,
+                             const TString &plot_subdir,
+                             Bool_t save_plot = kTRUE) {
   BeamFit2D out;
 
   TString sub = FileSet::EventsName(spec) + ".root";
@@ -120,25 +133,27 @@ BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
   // it clamped sigma to 128 ADC, hiding the true beam width and washing out
   // correlation (rho ≈ 0.09 even though strip1/strip2 track the same beam).
   const Int_t kBeamGateNBins = 1024;
-  TH2F *h = new TH2F(Form("h2_stp2_vs_stp1_%s", run_label.Data()),
-                     ";Strip1 #DeltaE [ADC];Strip2 #DeltaE [ADC]",
-                     kBeamGateNBins, 0.0, Constants::ActiveStripEMaxAdc(),
-                     kBeamGateNBins, 0.0, Constants::ActiveStripEMaxAdc());
+  TH2F *h =
+      new TH2F(Form("h2_gate_s%d_s%d_%s", sx, sy, run_label.Data()),
+               Form(";Strip%d #DeltaE [ADC];Strip%d #DeltaE [ADC]", sx, sy),
+               kBeamGateNBins, 0.0, Constants::ActiveStripEMaxAdc(),
+               kBeamGateNBins, 0.0, Constants::ActiveStripEMaxAdc());
   h->SetDirectory(nullptr);
   Long64_t n = tree->GetEntries();
   for (Long64_t j = 0; j < n; j++) {
     tree->GetEntry(j);
-    Int_t stp1 = Int_t(left_0_17_adc[1]) + Int_t(rightdE_adc[1]);
-    Int_t stp2 = Int_t(left_0_17_adc[2]) + Int_t(rightdE_adc[2]);
-    if (stp1 > 0 && stp2 > 0)
-      h->Fill(Double_t(stp1), Double_t(stp2));
+    const Double_t tx = StripTotalAdc(left_0_17_adc, rightdE_adc, sx);
+    const Double_t ty = StripTotalAdc(left_0_17_adc, rightdE_adc, sy);
+    if (tx > 0.0 && ty > 0.0)
+      h->Fill(tx, ty);
   }
   sf->Close();
   delete sf;
 
   if (h->GetEntries() < 100) {
-    std::cerr << "  " << run_label
-              << ": too few events for Strip2-vs-Strip1 beam gate" << std::endl;
+    std::cerr << "  " << run_label << ": too few events for the strip " << sy
+              << " beam gate (strips " << sx << " vs " << sy << ")"
+              << std::endl;
     delete h;
     return out;
   }
@@ -197,9 +212,10 @@ BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
   out.sigma_y = m.sigma_y;
   out.rho = m.rho;
   out.ok = kTRUE;
-  std::cout << "  beam gate (Strip2 vs Strip1): mu=(" << out.mu_x << ","
-            << out.mu_y << ") sigma=(" << out.sigma_x << "," << out.sigma_y
-            << ") rho=" << out.rho << std::endl;
+  std::cout << "  beam gate strip " << sy << " (strips " << sx << " vs " << sy
+            << "): mu=(" << out.mu_x << "," << out.mu_y << ") sigma=("
+            << out.sigma_x << "," << out.sigma_y << ") rho=" << out.rho
+            << std::endl;
 
   if (save_plot) {
     TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
@@ -216,7 +232,8 @@ BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
     Double_t lambda1 = 0.5 * (sum + det);
     Double_t lambda2 = 0.5 * (sum - det);
     Double_t theta = 0.5 * TMath::ATan2(2.0 * sxy, diff) * 180.0 / TMath::Pi();
-    Double_t n = 0.5 * (kEllipseNSigmaX + kEllipseNSigmaY);
+    Double_t n = 0.5 * (Constants::cfg.BEAM_GATE_NSIGMA_X +
+                        Constants::cfg.BEAM_GATE_NSIGMA_Y);
     TEllipse *e = new TEllipse(out.mu_x, out.mu_y, n * TMath::Sqrt(lambda1),
                                n * TMath::Sqrt(lambda2), 0, 360, theta);
     e->SetFillStyle(0);
@@ -224,7 +241,8 @@ BeamFit2D FindBeamGateStp2VsStp1(const FileSpec &spec, const TString &run_label,
     e->SetLineWidth(2);
     e->Draw();
     if (Constants::cfg.SAVE_PLOTS)
-      PlottingUtils::SaveFigure(cv, "beam_gate_stp2_vs_stp1", plot_subdir,
+      PlottingUtils::SaveFigure(cv, Form("beam_gate_s%02d", sy),
+                                plot_subdir + "/beam_gate",
                                 PlotSaveOptions::kLINEAR);
     delete cv;
   }
@@ -468,14 +486,21 @@ struct StripPairSamples {
 // 2-pass calibration"). Defined before CollectAnchorSamplesOneSubfile because
 // the shoulder slice is selected during sample collection.
 
+// Every strip carries its own beam gate, on its own total and its neighbour's
+// (GatePartner). A strip is therefore anchored on events that were beam-like
+// THERE, rather than on events that were beam-like at strips 1 and 2 and
+// whatever they happened to be doing further down the chamber.
 void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
                                     const std::vector<ChannelCal> &chans,
-                                    const BeamFit2D &beam,
+                                    const BeamFit2D gate[18],
                                     std::vector<std::vector<Float_t>> &samples,
                                     StripPairSamples pairs[18]) {
   Int_t n_chans = Int_t(chans.size());
   samples.assign(n_chans, std::vector<Float_t>());
-  if (!beam.ok)
+  Bool_t any = kFALSE;
+  for (Int_t s = 0; s <= 17; s++)
+    any = any || gate[s].ok;
+  if (!any)
     return;
 
   TString sub = FileSet::EventsName(spec) + ".root";
@@ -519,16 +544,29 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
         }
       }
     }
-    Double_t x = Double_t(left_0_17_adc[1]) + Double_t(rightdE_adc[1]);
-    Double_t y = Double_t(left_0_17_adc[2]) + Double_t(rightdE_adc[2]);
-    if (x <= 0 || y <= 0)
-      continue;
-    if (!BeamFitUtils::InEllipseXY(beam, x, y, kEllipseNSigmaX,
-                                   kEllipseNSigmaY))
-      continue;
+    // Which strips this event is beam-like in, each judged by its own gate.
+    Bool_t pass[18] = {kFALSE};
+    for (Int_t s = 1; s <= 17; s++) {
+      if (!gate[s].ok)
+        continue;
+      const Double_t x =
+          StripTotalAdc(left_0_17_adc, rightdE_adc, GatePartner(s));
+      const Double_t y = StripTotalAdc(left_0_17_adc, rightdE_adc, s);
+      if (x <= 0.0 || y <= 0.0)
+        continue;
+      pass[s] = BeamFitUtils::InEllipseXY(gate[s], x, y,
+                                          Constants::cfg.BEAM_GATE_NSIGMA_X,
+                                          Constants::cfg.BEAM_GATE_NSIGMA_Y);
+    }
+    // Strip 0 shares strip 1's gate, so it has to share strip 1's verdict too.
+    // The ellipse was fitted on the (strip 0, strip 1) plane; GatePartner(0) is
+    // 0, so testing it strip-0-against-itself puts strip 0's value on strip 1's
+    // axis, lands every event outside, and leaves the guard with no beam sample
+    // at all -- which zeroes its gain and then fails AllStripsFired downstream.
+    pass[0] = pass[1];
     if (pairs) {
       for (Int_t s = 1; s <= 16; s++) {
-        if (Long64_t(pairs[s].gated_long.size()) >= kPairCap)
+        if (!pass[s] || Long64_t(pairs[s].gated_long.size()) >= kPairCap)
           continue;
         Bool_t l_is_long = (LongSide(s) == 'L');
         Int_t long_v =
@@ -545,6 +583,10 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
       if (Long64_t(samples[i].size()) >= kSampleCap)
         continue;
       const ChannelCal &c = chans[i];
+      // The cathode has no strip of its own, so it rides on strip 1's gate.
+      const Int_t s = (c.side == 'C') ? 1 : c.strip;
+      if (s < 0 || s > 17 || !pass[s])
+        continue;
       Int_t v = 0;
       if (c.side == 'S' || c.side == 'L')
         v = Int_t(left_0_17_adc[c.strip]);
@@ -1818,13 +1860,29 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
   TString plot_subdir = "beam_calibration/" + file_label;
   std::cout << "Beam calibration: " << file_label << std::endl;
 
-  BeamFit2D beam;
+  // One gate per strip, on that strip's total against its neighbour's. A
+  // strip whose gate cannot be fitted is left out of the calibration rather
+  // than dragging the whole subfile down with it.
+  BeamFit2D gate[18];
+  Int_t n_gates = 0;
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
-    beam = FindBeamGateStp2VsStp1(spec, file_label, plot_subdir);
+    for (Int_t s = 1; s <= 17; s++) {
+      gate[s] =
+          FindBeamGateStrips(spec, GatePartner(s), s, file_label, plot_subdir);
+      if (gate[s].ok)
+        n_gates++;
+      else
+        std::cerr << "  " << file_label << ": strip " << s
+                  << " beam gate failed; that strip is not calibrated here"
+                  << std::endl;
+    }
+    // Strip 0 shares strip 1's gate: there is no strip before it, so the
+    // (0, 1) pair is the only one available to either.
+    gate[0] = gate[1];
   }
-  if (!beam.ok) {
-    std::cerr << "  " << file_label << ": Strip2-vs-Strip1 beam gate failed"
+  if (n_gates == 0) {
+    std::cerr << "  " << file_label << ": every per-strip beam gate failed"
               << std::endl;
     return;
   }
@@ -1832,7 +1890,7 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
   std::vector<ChannelCal> chans = chans_template;
   std::vector<std::vector<Float_t>> samples;
   StripPairSamples pairs[18];
-  CollectAnchorSamplesOneSubfile(spec, chans, beam, samples, pairs);
+  CollectAnchorSamplesOneSubfile(spec, chans, gate, samples, pairs);
   std::vector<TF1 *> peak_fits;
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
