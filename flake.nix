@@ -3,8 +3,12 @@
   inputs = {
     nixpkgs.follows = "utils/nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
+    # Deliberately does NOT follow our nixpkgs: overriding it changes the
+    # derivation hash and forces a local rebuild of the CUDA-overlaid ROOT that
+    # cache.ethanwtodd.com cannot then satisfy. Our nixpkgs follows this input's
+    # instead, so the whole tree stays on one pin.
     utils = {
-      url = "/home/e-work/Analysis-Utilities";
+      url = "github:ewtodd/Analysis-Utilities";
     };
     # TALYS, driven by talys-xs for the Hauser-Feshbach curve on the
     # cross-section plot. Its store path is compiled into the tooling.
