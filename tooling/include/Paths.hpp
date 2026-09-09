@@ -7,27 +7,57 @@
 #include <TSystem.h>
 #include <iostream>
 
+/**
+ * @brief Where the active dataset lives, and where its output goes.
+ *
+ * The two are deliberately different kinds of value. The dataset directory is
+ * baked in at build time, because a binary belongs to exactly one dataset. The
+ * results directory is read at run time, because where processed output lands
+ * is a per-machine deployment choice that should be redirectable without a
+ * rebuild.
+ */
 class Paths {
 public:
-  // Absolute path to the active dataset directory (analysis/<iso>), read from
-  // the MUSIC_DATASET_DIR baked in at build by the Makefile. Fatal-exits if
-  // unset. Prints the tooling banner once, on first call.
+  /**
+   * @brief Absolute path to the active dataset directory, `analysis/<iso>`.
+   *
+   * Read from `MUSIC_DATASET_DIR`, baked in at build time by the Makefile.
+   *
+   * @return The dataset directory, without a trailing slash.
+   *
+   * @warning Fatally exits the process if the variable is unset. A binary with
+   *          no dataset has nothing to operate on, and continuing would write
+   *          output to an arbitrary location.
+   *
+   * @note Prints the tooling banner on first call, once per process.
+   */
   static TString DatasetDir();
 
-  // Dataset isotope name (e.g. "37Cl"), from the build-time MUSIC_DATASET_NAME.
+  /// @brief The dataset's isotope name, e.g. `"37Cl"`.
+  /// @return The name from the build-time `MUSIC_DATASET_NAME`.
   static TString DatasetName();
 
-  // Absolute path to the directory that holds GENERATED outputs (root_files,
-  // plots) for the active dataset. Read at runtime from the MUSIC_RESULTS_DIR
-  // env var; falls back to DatasetDir() when unset, so default behaviour writes
-  // outputs in-repo exactly as before. Unlike DatasetDir() this is a runtime
-  // (not build-time) value on purpose: where processed output lands is a
-  // per-machine deployment choice, redirectable without a rebuild.
+  /**
+   * @brief Absolute path to the directory receiving generated output.
+   *
+   * Covers `root_files` and `plots`. Read at run time from
+   * `MUSIC_RESULTS_DIR`, falling back to DatasetDir() when unset — so the
+   * default writes output in-repo.
+   *
+   * @return The results directory, without a trailing slash.
+   *
+   * @note Set `MUSIC_RESULTS_DIR` to send output to a scratch drive without
+   *       rebuilding. Running from the dev shell points it back at the in-repo
+   *       dataset directory, which is writable.
+   */
   static TString ResultsDir();
 
-  // Wordmark, printed once before anything else so a log opens with the
-  // project name rather than a GPU probe. Public because it has to run ahead
-  // of the lazy PrintBanner, which fires from DatasetDir().
+  /**
+   * @brief Print the project wordmark.
+   *
+   * Public so it can run ahead of the lazy banner that DatasetDir() prints, so
+   * that a log opens with the project name rather than with a GPU probe.
+   */
   static void PrintLogo();
 
 private:

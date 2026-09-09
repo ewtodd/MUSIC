@@ -54,3 +54,10 @@ analysis/*/root_files/talys/
 *.respoint*
 *.res.tendl.*
 *.inp
+
+# generated API reference
+/docs/
+
+# Documentation sources, not generated notes — the blanket *.md above would eat
+# these. The narrative pages are inputs to the doxygen site and are tracked.
+!doc/pages/*.md

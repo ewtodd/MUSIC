@@ -1,0 +1,195 @@
+# Doxygen configuration for MUSIC.
+#
+# Only settings that differ from the doxygen defaults are listed here. A full
+# `doxygen -g` dump would be ~2700 lines and would start emitting obsolete-tag
+# warnings the first time doxygen is bumped in nixpkgs; this stays readable and
+# forward-compatible instead.
+#
+# @VARIABLE@ placeholders are substituted by CMake (configure_file, @ONLY) or by
+# the sed rules in the Makefile's `docs` target. Do not run doxygen against this
+# file directly.
+
+#---------------------------------------------------------------------------
+# Project
+#---------------------------------------------------------------------------
+
+PROJECT_NAME           = "MUSIC"
+PROJECT_NUMBER         = "@DOC_VERSION@"
+PROJECT_BRIEF          = "Analysis for the MUSIC active-target ionization chamber"
+OUTPUT_DIRECTORY       = "@DOC_OUTPUT_DIR@"
+OUTPUT_LANGUAGE        = English
+
+#---------------------------------------------------------------------------
+# Input
+#---------------------------------------------------------------------------
+
+# doc/pages/index.md is listed first so USE_MDFILE_AS_MAINPAGE has an
+# unambiguous target. The repository README is deliberately absent: it is a
+# short pointer to this site for people browsing GitHub, and duplicating it here
+# would give the site two competing front doors.
+INPUT                  = "@DOC_SOURCE_DIR@/doc/pages" \
+                         "@DOC_SOURCE_DIR@/tooling/include" \
+                         "@DOC_SOURCE_DIR@/tooling/src" \
+                         "@DOC_SOURCE_DIR@/tooling/mains" \
+                         "@DOC_SOURCE_DIR@/tooling/gpu"
+
+# python/ is deliberately absent: doxygen's Python output is strictly worse than
+# what a Python-native tool would produce. analysis/ is absent too — the tracked
+# part of it is one per-dataset Constants.cpp override and a set of LISE tables,
+# which are experiment inputs rather than API.
+# *.md is required for the narrative pages under doc/pages to be picked up by
+# the directory scan. Without it doxygen silently produces no pages at all: a
+# file named directly in INPUT bypasses these patterns, so the main page still
+# renders and the omission only surfaces as unresolved \subpage references.
+FILE_PATTERNS          = *.hpp \
+                         *.h \
+                         *.cpp \
+                         *.cu \
+                         *.md
+RECURSIVE              = YES
+STRIP_FROM_PATH        = "@DOC_SOURCE_DIR@"
+STRIP_FROM_INC_PATH    = "@DOC_SOURCE_DIR@/tooling/include"
+USE_MDFILE_AS_MAINPAGE = "@DOC_SOURCE_DIR@/doc/pages/index.md"
+
+# The README's intra-page links are GitHub-style heading anchors
+# ([...](#fittingutils-and-roofitutils)). Without this doxygen mints its own
+# anchor scheme and those links fail to resolve.
+MARKDOWN_ID_STYLE      = GITHUB
+IMAGE_PATH             = "@DOC_SOURCE_DIR@/tooling/assets"
+INPUT_ENCODING         = UTF-8
+
+# .cu is not a language doxygen knows; the kernels are ordinary C++ once the
+# execution-space qualifiers are stripped (see PREDEFINED below).
+EXTENSION_MAPPING      = cu=C++
+
+#---------------------------------------------------------------------------
+# Extraction
+#---------------------------------------------------------------------------
+
+# EXTRACT_ALL emits declarations that carry no doc comment yet. The headers are
+# currently unannotated, so without this the output would be nearly empty. It
+# stays correct once annotation lands: undocumented entities keep appearing in
+# the index instead of silently vanishing from the reference.
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = NO
+EXTRACT_ANON_NSPACES   = NO
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = NO
+
+# First sentence of a /** */ or /// block is the brief; the rest is the detail.
+JAVADOC_AUTOBRIEF      = YES
+MULTILINE_CPP_IS_BRIEF = NO
+TAB_SIZE               = 2
+
+#---------------------------------------------------------------------------
+# Preprocessing
+#---------------------------------------------------------------------------
+
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+SEARCH_INCLUDES        = YES
+
+# ClassDef*/ClassImp are rootcling macros that expand to a block of generated
+# members. Left alone, doxygen either fails to parse the class or documents
+# machinery that is not part of the API. The __device__/__global__/__host__
+# qualifiers are stripped so gpu/*.cu parses as plain C++.
+#
+# The GPU path is reached through dlopen at runtime rather than a compile-time
+# switch, so there is no build macro to predefine here.
+PREDEFINED             = ClassDef(name,id)= \
+                         ClassDefOverride(name,id)= \
+                         ClassDefNV(name,id)= \
+                         ClassImp(name)= \
+                         __device__= \
+                         __global__= \
+                         __host__= \
+                         __restrict__=
+
+#---------------------------------------------------------------------------
+# HTML output
+#---------------------------------------------------------------------------
+
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+HTML_OUTPUT            = html
+
+# Layout required by doxygen-awesome-css's sidebar-only variant. All three
+# values are load-bearing: the theme is documented as incompatible with
+# FULL_SIDEBAR = YES, and it needs the treeview it replaces.
+GENERATE_TREEVIEW      = YES
+DISABLE_INDEX          = NO
+FULL_SIDEBAR           = NO
+
+# Must be LIGHT even though the site is dark. Since doxygen 1.9.5 this setting
+# injects doxygen's own colour system, which fights the theme; LIGHT keeps it
+# neutral and lets doc/theme/custom.css paint everything.
+HTML_COLORSTYLE        = LIGHT
+
+# Order matters — base theme, then the sidebar layout it builds on, then the
+# Kanagawa palette last so its :root block wins.
+HTML_EXTRA_STYLESHEET  = "@DOC_AWESOME_DIR@/doxygen-awesome.css" \
+                         "@DOC_AWESOME_DIR@/doxygen-awesome-sidebar-only.css" \
+                         "@DOC_SOURCE_DIR@/doc/theme/custom.css"
+
+HTML_DYNAMIC_SECTIONS  = YES
+SEARCHENGINE           = YES
+
+# Doxygen 1.14 added a right-hand outline panel, on by default. The
+# sidebar-only theme lays out around its own navigation and does not reserve
+# room for it, so the panel renders clipped against the viewport edge. The
+# theme's navigation already covers what it offers.
+PAGE_OUTLINE_PANEL     = NO
+
+# Native copy-to-clipboard on code blocks (doxygen 1.17). Supersedes the
+# theme's doxygen-awesome-fragment-copy-button.js extension, so no custom
+# HTML_HEADER is needed to get it.
+HTML_COPY_CLIPBOARD    = YES
+
+# Cross-linked source listings. Worth far more than usual here: the three
+# Interactive*Editor classes and RooFitUtils are large enough that jumping from
+# a declaration to its definition is the main way anyone reads them.
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = NO
+VERBATIM_HEADERS       = YES
+
+#---------------------------------------------------------------------------
+# Graphs (graphviz)
+#---------------------------------------------------------------------------
+
+HAVE_DOT               = @DOC_HAVE_DOT@
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = YES
+CLASS_GRAPH            = YES
+COLLABORATION_GRAPH    = YES
+INCLUDE_GRAPH          = YES
+INCLUDED_BY_GRAPH      = NO
+# Call graphs across a 3000-line translation unit produce diagrams nobody can
+# read and dominate the build time. Off by default; turn on per-function with
+# \callgraph if a specific routine warrants it.
+CALL_GRAPH             = NO
+CALLER_GRAPH           = NO
+DOT_GRAPH_MAX_NODES    = 100
+MAX_DOT_GRAPH_DEPTH    = 3
+
+#---------------------------------------------------------------------------
+# Diagnostics
+#---------------------------------------------------------------------------
+
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_DOC_ERROR      = YES
+
+# Off while the headers are being annotated. Flip to YES once coverage is
+# complete — at that point it becomes a live gate, as in Analysis-Utilities,
+# where an undocumented public declaration fails `nix build .#docs`.
+WARN_IF_UNDOCUMENTED   = NO
+
+# Only fires on entities that are documented but have an undocumented
+# parameter, so it is silent on the unannotated headers and catches
+# half-finished blocks as annotation proceeds.
+WARN_NO_PARAMDOC       = YES
+WARN_LOGFILE           = "@DOC_OUTPUT_DIR@/doxygen-warnings.log"

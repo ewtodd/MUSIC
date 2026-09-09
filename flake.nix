@@ -94,6 +94,9 @@
             nativeBuildInputs = with pkgs; [
               pkg-config
               clang-tools
+              # API docs: scripts/build_docs.sh
+              doxygen
+              graphviz
             ];
             buildInputs = [
               analysis-utils
@@ -128,6 +131,10 @@
               }"
               flake_root="$PWD"
               git_root="$(git -C "$flake_root" rev-parse --show-toplevel)"
+
+              # doxygen-awesome-css ships only data files, so it cannot be
+              # found on PATH; scripts/build_docs.sh reads this.
+              export DOXYGEN_AWESOME_CSS="${pkgs.doxygen-awesome-css}/share/doxygen-awesome-css"
 
               # --- dataset selection ---
               export MUSIC_DATASET="${dataset}"
@@ -209,6 +216,44 @@
               cp -r analysis/${dataset}/config/* $out/analysis/${dataset}/config/
             '';
           };
+        # The API reference. Dataset-independent: it documents tooling/, which
+        # is identical across datasets, so there is one docs output rather than
+        # one per dataset.
+        docs = pkgs.stdenv.mkDerivation {
+          name = "music-docs";
+          src = ./.;
+
+          nativeBuildInputs = with pkgs; [
+            doxygen
+            graphviz
+            git
+          ];
+
+          dontConfigure = true;
+
+          buildPhase = ''
+            runHook preBuild
+            export DOXYGEN_AWESOME_CSS="${pkgs.doxygen-awesome-css}/share/doxygen-awesome-css"
+            bash scripts/build_docs.sh "$PWD/docs"
+
+            # A warning here means a broken \ref, a malformed doc block, or a
+            # parameter that no longer exists. Failing the build is what keeps
+            # the published site honest, and gives CI the check for free.
+            if [ -s docs/doxygen-warnings.log ]; then
+              echo "doxygen emitted warnings:" >&2
+              cat docs/doxygen-warnings.log >&2
+              exit 1
+            fi
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out
+            cp -r docs/html/. $out/
+            runHook postInstall
+          '';
+        };
       in
       {
         devShells = {
@@ -221,6 +266,7 @@
           "87Rb" = mkPackage "87Rb";
           "37Cl" = mkPackage "37Cl";
           default = mkPackage "37Cl";
+          inherit docs;
         };
       }
     );
