@@ -45,6 +45,9 @@ struct RegionFit {
   // whatever tail lies under it, and the beam's real tail is far heavier than
   // its Gaussian, so no model subtraction recovers it.
   Double_t n_beam = 0.0, n_reac = 0.0;
+  // kFALSE for a beam-only fit (ridge-band regions): `reac` is then a copy of
+  // the beam with zero amplitude and nothing draws or counts it.
+  Bool_t has_reac = kTRUE;
   Bool_t ok = kFALSE;
   TString why; // set when !ok
 };
@@ -71,6 +74,23 @@ RegionFit FitMixture(TH2F *scatter, Int_t reac, Double_t x_lo, Double_t x_hi,
 // Closed polygon of the component's nsigma Mahalanobis contour.
 TCutG *EllipseCut(const char *name, const Gauss2D &g, Double_t nsigma,
                   Int_t npts = 64);
+
+// The beam-like component alone, pinned from its core exactly as FitMixture
+// does, with no reaction component (has_reac = kFALSE). For the ridge-band
+// region mode, where the (a,n) population is not a compact island.
+RegionFit FitBeam(TH2F *scatter, Int_t reac, Double_t x_lo, Double_t x_hi,
+                  Double_t y_lo, Double_t y_hi);
+
+// Height of (x, y) above the beam ridge in units of the beam's conditional
+// width sigma_y sqrt(1 - rho^2): the residual of y about the ridge line.
+Double_t AboveRidge(const Gauss2D &beam, Double_t x, Double_t y);
+
+// Closed polygon of the band nsig_lo..nsig_hi above the beam ridge across the
+// window in x, clipped to the window in y. The (a,n) region in the
+// AN_REGION_RIDGE_BAND mode.
+TCutG *RidgeBandCut(const char *name, const Gauss2D &beam, Double_t nsig_lo,
+                    Double_t nsig_hi, Double_t x_lo, Double_t x_hi,
+                    Double_t y_lo, Double_t y_hi);
 
 // Scatter events whose bin centre lies inside the cut (window only).
 Double_t CountInside(TH2F *scatter, TCutG *cut, const RegionFit &fit);

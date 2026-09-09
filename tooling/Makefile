@@ -122,7 +122,7 @@ CFG_SRC := $(DATASET_CFG_SRC)
  $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp $(CFG_SRC) $(HEADERS) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c -o $@ $(abspath $<)
 
-$(DATASET_CFG_OBJ): $(DATASET_CFG_SRC) | $(BUILD_DIR)
+$(DATASET_CFG_OBJ): $(DATASET_CFG_SRC) $(HEADERS) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c -o $@ $(abspath $<)
 
  $(BUILD_DIR)/%.o: $(MAIN_DIR)/%.cpp $(CFG_SRC) $(HEADERS) | $(BUILD_DIR)

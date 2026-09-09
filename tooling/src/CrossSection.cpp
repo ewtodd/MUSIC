@@ -429,6 +429,39 @@ Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
   // estimates' disagreement is the region systematic, because that
   // disagreement is exactly the overlap ambiguity.
   const Double_t n_raw = CountInCut(h, cut, 1.0);
+  const Bool_t band =
+      C.AN_REGION_MODE == StripSumScatterConfig::AN_REGION_RIDGE_BAND;
+  RegionFit band_fit;
+  if (band && RegionCutStore::LoadFit(reac, band_fit) && band_fit.ok) {
+    // A ridge band is not a Gaussian's ellipse: its count is what it holds,
+    // with no enclosed-fraction correction. The region systematic is the
+    // change in count when the band's lower edge moves by one conditional
+    // sigma either way, since that edge is where the beam tail ends.
+    pt.n_reac = n_raw;
+    pt.sigma = pt.n_reac / norm;
+    pt.stat = pt.n_reac > 0.0 ? pt.sigma / std::sqrt(pt.n_reac) : 0.0;
+    Double_t lo = pt.sigma, hi = pt.sigma;
+    for (Int_t k = -1; k <= 1; k += 2) {
+      TCutG *alt = RegionCutFinder::RidgeBandCut(
+          "region_an_alt", band_fit.beam, C.AN_RIDGE_NSIGMA_LO + k,
+          C.AN_RIDGE_NSIGMA_HI, band_fit.x_lo, band_fit.x_hi, band_fit.y_lo,
+          band_fit.y_hi);
+      const Double_t s = CountInCut(h, alt, 1.0) / norm;
+      delete alt;
+      lo = TMath::Min(lo, s);
+      hi = TMath::Max(hi, s);
+    }
+    pt.sys = 0.5 * (hi - lo);
+    std::cout << Form("   %2d    [%5.2f, %5.2f]      %6.2f   %6.0f  %9.0f   "
+                      "%7.1f +- %.1f (%.1f stat, %.1f region; band %.1f..%.1f "
+                      "sigma above the ridge, edge +-1 sigma)",
+                      reac, pt.e_in, pt.e_out, pt.e_eff, pt.n_reac, pt.n_denom,
+                      pt.sigma, pt.Err(), pt.stat, pt.sys, C.AN_RIDGE_NSIGMA_LO,
+                      C.AN_RIDGE_NSIGMA_HI)
+              << std::endl;
+    delete cut;
+    return kTRUE;
+  }
   const Double_t est_geo = n_raw / Enclosed(C.AN_REGION_NSIGMA);
   const Double_t n_assigned = RegionCutStore::LoadAssigned(region, reac);
   const Bool_t have_fit = n_assigned >= 0.0;

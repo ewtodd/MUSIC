@@ -74,6 +74,17 @@ struct StripSumScatterConfig {
   // downstream knows the difference.
   Double_t AN_REGION_NSIGMA;
   Double_t AA_REGION_NSIGMA;
+  // How compute-regions defines the (a,n) region. MIXTURE: the ellipse of
+  // the mixture's reaction component, for a compact island beyond the beam
+  // (87Rb). RIDGE_BAND: everything between AN_RIDGE_NSIGMA_LO and _HI
+  // conditional sigma above the beam ridge, free in x across the window, for
+  // a reaction cloud that spreads along x and sits below the beam in total
+  // energy (37Cl, where the neutron carries energy out). The (a,a') region
+  // is the beam ellipse in both.
+  enum AnRegionMode { AN_REGION_MIXTURE, AN_REGION_RIDGE_BAND };
+  AnRegionMode AN_REGION_MODE;
+  Double_t AN_RIDGE_NSIGMA_LO;
+  Double_t AN_RIDGE_NSIGMA_HI;
 
   // Tolerance in sigma of each strip's measured beam spread
   // (StripSumScatter::StripSigma). Part of the tagging, so a change refills.
@@ -314,6 +325,29 @@ public:
   Bool_t TIMING_DO_SORT;
 
   Bool_t REJECT_FLAGGED_EVENTS;
+
+  // Pole-zero pulse-history correction on the raw hits, before event
+  // building (see PulseHistory.hpp). The kernel is measured per subfile on
+  // its own beam-like events; MIN_EVENTS is the smallest sample that is
+  // trusted, BEAM_LO/HI the window (x the channel's beam peak) every long
+  // end must sit in for an event to count as beam, and APPLY_MAX_US how far
+  // back the correction looks (the undershoot is gone by 40 us; beyond ~100
+  // us the fitted bins are degenerate with the intercept).
+  Bool_t PULSE_HISTORY_CORRECTION;
+  Long64_t PULSE_HISTORY_MIN_EVENTS;
+  Double_t PULSE_HISTORY_BEAM_LO;
+  Double_t PULSE_HISTORY_BEAM_HI;
+  // Looser window for the long ends of the chain whose kernel is being
+  // fitted; the tight one above applies to the other chain. Tight on both
+  // would cut off the large undershoots the kernel exists to describe.
+  Double_t PULSE_HISTORY_OWN_LO;
+  Double_t PULSE_HISTORY_OWN_HI;
+  Double_t PULSE_HISTORY_APPLY_MAX_US;
+  // Kernel bands in the previous pulse's amplitude, in units of the channel's
+  // beam peak: 1 is one kernel linear in the amplitude; N > 1 fits one kernel
+  // per band [0, 0.5), [0.5, 1.5), ..., [N-1.5, inf), i.e. single beam, twice,
+  // three times the beam pulse, so a nonlinear undershoot can be followed.
+  Int_t PULSE_HISTORY_AMP_BINS;
 
   Bool_t IGNORE_SHORT_STRIPS;
   Bool_t IGNORE_STRIP_0;

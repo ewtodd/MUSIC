@@ -240,15 +240,11 @@ Double_t WidthAtMax(TH1D *h, Double_t &at) {
                     (h->GetBinCenter(hi) - h->GetBinCenter(lo)) / 2.355);
 }
 
-// Height of (x, y) above the beam ridge, in units of the beam's conditional
-// width: the residual of y about the ridge line y(x), divided by
-// sigma_y * sqrt(1 - rho^2). The reaction island lives at u ~ 4; the ridge
-// itself, whatever its x, is at u ~ 0. This is the separation a plain y
-// projection washes out.
-Double_t AboveRidge(const Gauss2D &b, Double_t x, Double_t y) {
-  return ((y - b.my) - b.rho * (b.sy / b.sx) * (x - b.mx)) /
-         (b.sy * std::sqrt(1.0 - b.rho * b.rho));
-}
+// Height above the ridge: RegionCutFinder::AboveRidge, declared in the header
+// so cross-section can rebuild a band. The reaction island lives at u ~ 4;
+// the ridge itself, whatever its x, is at u ~ 0. This is the separation a
+// plain y projection washes out.
+using RegionCutFinder::AboveRidge;
 
 // The fitted mixture evaluated per bin over the window, in a copy of the
 // scatter, so it can be projected and contoured exactly like the data.
@@ -260,9 +256,52 @@ TH2F *ModelHist(TH2F *scatter, const RegionFit &fit, Int_t reac) {
   for (Int_t i = ax->FindBin(fit.x_lo); i <= ax->FindBin(fit.x_hi); i++)
     for (Int_t j = ay->FindBin(fit.y_lo); j <= ay->FindBin(fit.y_hi); j++) {
       Double_t x = ax->GetBinCenter(i), y = ay->GetBinCenter(j);
-      m->SetBinContent(i, j, Bigaus(fit.beam, x, y) + Bigaus(fit.reac, x, y));
+      m->SetBinContent(i, j,
+                       Bigaus(fit.beam, x, y) +
+                           (fit.has_reac ? Bigaus(fit.reac, x, y) : 0.0));
     }
   return m;
+}
+
+// The beam-like component from its core: the maximum and FWHM of each
+// projection seed a +-2 sigma box, and the box's moments give the component.
+// No minimiser: on a peak of 1e5 counts per bin Minuit's bigaus fit runs the
+// amplitude to its bound and walks the mean out of the window, while the
+// moments are exact. Returns kFALSE (with why) on an empty core.
+Bool_t BeamFromCore(TH2F *scatter, Int_t reac, Int_t bx0, Int_t bx1, Int_t by0,
+                    Int_t by1, Gauss2D &beam, TString &why) {
+  TAxis *ax = scatter->GetXaxis(), *ay = scatter->GetYaxis();
+  const Double_t bwx = ax->GetBinWidth(1), bwy = ay->GetBinWidth(1);
+  TH1D *px = scatter->ProjectionX(Form("rcf_px_%d", reac), by0, by1);
+  TH1D *py = scatter->ProjectionY(Form("rcf_py_%d", reac), bx0, bx1);
+  px->SetDirectory(nullptr);
+  py->SetDirectory(nullptr);
+  px->GetXaxis()->SetRange(bx0, bx1);
+  py->GetXaxis()->SetRange(by0, by1);
+  Double_t mx0 = 0.0, my0 = 0.0;
+  const Double_t sx0 = WidthAtMax(px, mx0), sy0 = WidthAtMax(py, my0);
+  delete px;
+  delete py;
+  Double_t sw = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+  for (Int_t i = ax->FindBin(mx0 - 2 * sx0); i <= ax->FindBin(mx0 + 2 * sx0);
+       i++)
+    for (Int_t j = ay->FindBin(my0 - 2 * sy0); j <= ay->FindBin(my0 + 2 * sy0);
+         j++) {
+      Double_t w = scatter->GetBinContent(i, j);
+      Double_t x = ax->GetBinCenter(i), y = ay->GetBinCenter(j);
+      sw += w;
+      sx += w * x;
+      sy += w * y;
+      sxx += w * x * x;
+      syy += w * y * y;
+      sxy += w * x * y;
+    }
+  if (!(sw > 0)) {
+    why = "empty beam core";
+    return kFALSE;
+  }
+  beam = MomentsToGauss(sw, sx, sy, sxx, syy, sxy, bwx, bwy);
+  return kTRUE;
 }
 
 } // namespace
@@ -281,46 +320,9 @@ RegionFit FitMixture(TH2F *scatter, Int_t reac, Double_t x_lo, Double_t x_hi,
   const Int_t by0 = ay->FindBin(y_lo), by1 = ay->FindBin(y_hi);
   const Double_t bwx = ax->GetBinWidth(1), bwy = ay->GetBinWidth(1);
 
-  // Seeds for the beam-like component: the maximum and FWHM of each
-  // projection, and the correlation from the moments of the core.
-  TH1D *px = scatter->ProjectionX(Form("rcf_px_%d", reac), by0, by1);
-  TH1D *py = scatter->ProjectionY(Form("rcf_py_%d", reac), bx0, bx1);
-  px->SetDirectory(nullptr);
-  py->SetDirectory(nullptr);
-  px->GetXaxis()->SetRange(bx0, bx1);
-  py->GetXaxis()->SetRange(by0, by1);
-  Double_t mx0 = 0.0, my0 = 0.0;
-  const Double_t sx0 = WidthAtMax(px, mx0), sy0 = WidthAtMax(py, my0);
-  Double_t sw = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, peak = 0;
-  for (Int_t i = ax->FindBin(mx0 - 2 * sx0); i <= ax->FindBin(mx0 + 2 * sx0);
-       i++)
-    for (Int_t j = ay->FindBin(my0 - 2 * sy0); j <= ay->FindBin(my0 + 2 * sy0);
-         j++) {
-      Double_t w = scatter->GetBinContent(i, j);
-      Double_t x = ax->GetBinCenter(i), y = ay->GetBinCenter(j);
-      sw += w;
-      sx += w * x;
-      sy += w * y;
-      sxx += w * x * x;
-      syy += w * y * y;
-      sxy += w * x * y;
-      if (w > peak)
-        peak = w;
-    }
-  (void)peak;
-  if (!(sw > 0)) {
-    fit.why = "empty beam core";
-    delete px;
-    delete py;
+  Gauss2D beam;
+  if (!BeamFromCore(scatter, reac, bx0, bx1, by0, by1, beam, fit.why))
     return fit;
-  }
-  // Beam-like component straight from its core's moments. No minimiser: on a
-  // peak of 1e5 counts per bin Minuit's bigaus fit runs the amplitude to its
-  // bound and walks the mean out of the window, while the moments are exact.
-  Gauss2D beam = MomentsToGauss(sw, sx, sy, sxx, syy, sxy, bwx, bwy);
-
-  delete px;
-  delete py;
 
   // Reaction seed. The island is both above the ridge (u ~ 4) and beyond the
   // beam in x, while the beam's own tail above the ridge spreads over the
@@ -380,7 +382,7 @@ RegionFit FitMixture(TH2F *scatter, Int_t reac, Double_t x_lo, Double_t x_hi,
   // and cap the reaction component swallows the beam's non-Gaussian halo and
   // ends up as a wide blob on the ridge; the prior is what keeps a bin four
   // sigma down the beam tail with the beam.
-  Double_t n_beam = sw, n_reac = 0.0;
+  Double_t n_beam = 0.0, n_reac = 0.0;
   Double_t total = 0.0;
   for (Int_t i = bx0; i <= bx1; i++)
     for (Int_t j = by0; j <= by1; j++)
@@ -463,6 +465,50 @@ RegionFit FitMixture(TH2F *scatter, Int_t reac, Double_t x_lo, Double_t x_hi,
   return fit;
 }
 
+Double_t AboveRidge(const Gauss2D &b, Double_t x, Double_t y) {
+  return ((y - b.my) - b.rho * (b.sy / b.sx) * (x - b.mx)) /
+         (b.sy * std::sqrt(1.0 - b.rho * b.rho));
+}
+
+RegionFit FitBeam(TH2F *scatter, Int_t reac, Double_t x_lo, Double_t x_hi,
+                  Double_t y_lo, Double_t y_hi) {
+  RegionFit fit;
+  fit.x_lo = x_lo;
+  fit.x_hi = x_hi;
+  fit.y_lo = y_lo;
+  fit.y_hi = y_hi;
+  fit.has_reac = kFALSE;
+  TAxis *ax = scatter->GetXaxis(), *ay = scatter->GetYaxis();
+  if (!BeamFromCore(scatter, reac, ax->FindBin(x_lo), ax->FindBin(x_hi),
+                    ay->FindBin(y_lo), ay->FindBin(y_hi), fit.beam, fit.why))
+    return fit;
+  fit.reac = fit.beam;
+  fit.reac.amp = 0.0;
+  fit.ok = kTRUE;
+  return fit;
+}
+
+TCutG *RidgeBandCut(const char *name, const Gauss2D &beam, Double_t nsig_lo,
+                    Double_t nsig_hi, Double_t x_lo, Double_t x_hi,
+                    Double_t y_lo, Double_t y_hi) {
+  // y on the ridge line at x, plus n conditional sigma; clipped to the window.
+  auto edge = [&](Double_t x, Double_t n) {
+    const Double_t y = beam.my +
+                       beam.rho * (beam.sy / beam.sx) * (x - beam.mx) +
+                       n * beam.sy * std::sqrt(1.0 - beam.rho * beam.rho);
+    return TMath::Max(y_lo, TMath::Min(y_hi, y));
+  };
+  TCutG *c = new TCutG(name, 5);
+  c->SetPoint(0, x_lo, edge(x_lo, nsig_lo));
+  c->SetPoint(1, x_hi, edge(x_hi, nsig_lo));
+  c->SetPoint(2, x_hi, edge(x_hi, nsig_hi));
+  c->SetPoint(3, x_lo, edge(x_lo, nsig_hi));
+  c->SetPoint(4, x_lo, edge(x_lo, nsig_lo));
+  c->SetLineColor(kBlack);
+  c->SetLineWidth(2);
+  return c;
+}
+
 TCutG *EllipseCut(const char *name, const Gauss2D &g, Double_t nsigma,
                   Int_t npts) {
   // Mahalanobis contour at nsigma, via the Cholesky factor of the covariance.
@@ -511,16 +557,18 @@ void SaveFigures(TH2F *scatter, Int_t reac, const RegionFit &fit, TCutG *an,
     std::vector<TCutG *> tmp;
     for (Int_t k = 1; k <= 3; k++) {
       TCutG *eb = EllipseCut(Form("cb%d_%d", k, reac), fit.beam, k);
-      TCutG *er = EllipseCut(Form("cr%d_%d", k, reac), fit.reac, k);
       eb->SetLineColor(cBeam);
-      er->SetLineColor(cReac);
       eb->SetLineStyle(2);
-      er->SetLineStyle(2);
       eb->SetLineWidth(1);
-      er->SetLineWidth(1);
       eb->Draw("L SAME");
-      er->Draw("L SAME");
       tmp.push_back(eb);
+      if (!fit.has_reac)
+        continue;
+      TCutG *er = EllipseCut(Form("cr%d_%d", k, reac), fit.reac, k);
+      er->SetLineColor(cReac);
+      er->SetLineStyle(2);
+      er->SetLineWidth(1);
+      er->Draw("L SAME");
       tmp.push_back(er);
     }
     if (aa) {

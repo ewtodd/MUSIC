@@ -16,15 +16,13 @@ void InitDatasetConfig() {
   gInstance.SOL_SPLIT_CHUNK_SECONDS = 300;
   gInstance.COMPASS_BASE_DIR = "/labdata/MUSIC/37Cl/";
 
-  gInstance.N_CHUNKS = 1;
+  gInstance.N_CHUNKS = -1;
   gInstance.SIM_BEAM_FILE = "traces_37Cl_beam.root";
 
   gInstance.N_BOARDS = 1;
   gInstance.N_CHANNELS = 64;
-  gInstance.TIMING_REF_BOARD = 0;
-  gInstance.TIMING_REF_BOARD_CHANNELS = {8};
 
-  gInstance.SAVE_PLOTS = kTRUE;
+  gInstance.SAVE_PLOTS = kFALSE;
   gInstance.SKIP_EXISTING = kTRUE;
   gInstance.SAVE_SAMPLE_TRACES = 10;
 
@@ -35,21 +33,23 @@ void InitDatasetConfig() {
   gInstance.EVENT_TIME_WINDOW_US = 5.0;
   gInstance.DEDUP_STRATEGY = kLARGEST_ENERGY;
 
-  gInstance.TIMING_DO_BOARD_SYNC = kFALSE;
-  gInstance.TIMING_DO_SORT = kFALSE;
+  // The long-end channels undershoot after every previous pulse (pole-zero
+  // mismatch, ~12 us recovery); at 46 kHz that is most of the even-strip
+  // width. Measured and removed per subfile before event building.
+  gInstance.PULSE_HISTORY_CORRECTION = kTRUE;
 
   gInstance.BEAM_GATE_NSIGMA_X = 3;
   gInstance.BEAM_GATE_NSIGMA_Y = 3;
-  gInstance.IGNORE_STRIP_0 = kFALSE;
+  gInstance.IGNORE_STRIP_0 = kTRUE;
   gInstance.IGNORE_STRIP_17 = kTRUE;
-  gInstance.MAX_FUSED_WORKERS = 32;
+  gInstance.MAX_FUSED_WORKERS = 16;
 
   gInstance.STRIP_SUM_SCATTER_CONFIG.MAX_STRIP_SUM_WORKERS = 8;
 
   gInstance.STRIP_SUM_SCATTER_CONFIG.RERUN_SIM = kFALSE;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS = 4;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS = 6;
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_WINDOW_LAST_STRIP = 14;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 4;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 5;
 
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_LO = 1;
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_HI = 16;
@@ -58,9 +58,17 @@ void InitDatasetConfig() {
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX = 8;
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MIN = 13;
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MAX = 19;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MIN = 3;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MAX = 6;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MIN = 4;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MAX = 9;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REGION_CUT_REDRAW = kTRUE;
+  // The (a,n) cloud sits above the ridge and to the LEFT of the beam in
+  // total energy (the neutron leaves with some), spread over ~2 a.u. in x:
+  // not an island a Gaussian component can hold. Region = the band above
+  // the ridge; the beam tail is heavier than Gaussian out to ~5 sigma.
+  gInstance.STRIP_SUM_SCATTER_CONFIG.AN_REGION_MODE =
+      StripSumScatterConfig::AN_REGION_RIDGE_BAND;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.AN_RIDGE_NSIGMA_LO = 5.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.AN_RIDGE_NSIGMA_HI = 15.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REJECT_NOISE = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REJECT_PILEUP = kTRUE;
@@ -132,7 +140,7 @@ void InitDatasetConfig() {
   // Epochs carry the flat block above; only the name and the run list differ.
   // Run 82 is the same detector at 450 Torr: built and calibrated like the
   // rest, kept apart for the cross section (CROSS_SECTION_CONFIG.EPOCHS).
-  RunEpoch late = MakeEpoch("late", RunRange(97, 99)); // 137));
+  RunEpoch late = MakeEpoch("late", RunRange(97, 137));
   // RunEpoch Pressure450Torr = MakeEpoch("Pressure450Torr", {82});
 
   // gInstance.EPOCHS.push_back(Pressure450Torr);

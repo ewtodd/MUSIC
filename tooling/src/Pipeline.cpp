@@ -1,4 +1,5 @@
 #include "Pipeline.hpp"
+#include "PulseHistory.hpp"
 
 std::mutex fused_log_mutex;
 
@@ -81,7 +82,10 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
   std::chrono::steady_clock::time_point t_total =
       std::chrono::steady_clock::now();
   std::chrono::steady_clock::time_point t0;
-  Double_t t_parse = 0, t_timing = 0, t_apply = 0, t_events = 0, t_cal = 0;
+  Double_t t_parse = 0, t_timing = 0, t_apply = 0, t_events = 0, t_cal = 0,
+           t_history = 0;
+  PulseHistory::Result history;
+  Bool_t history_done = kFALSE;
 
   // SKIP_EXISTING skips the expensive data processing (binary read, timing,
   // event build, calibration) when the events file already exists -- but the
@@ -186,6 +190,21 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
                 << std::endl;
     }
 
+    // Pole-zero pulse-history correction on the long ends, measured on this
+    // subfile's own beam-like events. Before the build, since it changes the
+    // energies the builder dedups on.
+    if (Constants::cfg.PULSE_HISTORY_CORRECTION) {
+      t0 = std::chrono::steady_clock::now();
+      std::vector<Int_t> groups = PulseHistory::BuildGroupMap();
+      if (PulseHistory::Measure(hits, groups, history, file_label))
+        PulseHistory::Apply(hits, groups, history);
+      PulseHistory::SavePlots(history, file_label);
+      history_done = kTRUE;
+      t_history = FusedSecSince(t0);
+      std::lock_guard<std::mutex> lock(fused_log_mutex);
+      std::cout << PulseHistory::Report(history, file_label);
+    }
+
     t0 = std::chrono::steady_clock::now();
     Bool_t build_ok = EventBuilder::BuildEventsFromSortedHits(
         hits, slot_map, FileSet::EventsName(spec), file_label);
@@ -203,6 +222,9 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
                 << std::endl;
       return kFALSE;
     }
+    if (history_done)
+      PulseHistory::WriteToEventsFile(FileSet::EventsName(spec) + ".root",
+                                      history);
   }
 
   // Calibration reads the events file (freshly built or pre-existing) and
@@ -231,7 +253,8 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
     std::cout << std::fixed << std::setprecision(1) << "[done] " << file_label
               << " total=" << total << "s  parse=" << t_parse
               << "  timing=" << t_timing << "  apply=" << t_apply
-              << "  events=" << t_events << "  cal=" << t_cal << std::endl;
+              << "  history=" << t_history << "  events=" << t_events
+              << "  cal=" << t_cal << std::endl;
   }
   return kTRUE;
 }
