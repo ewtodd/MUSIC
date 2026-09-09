@@ -183,10 +183,10 @@ QUIET                  = YES
 WARNINGS               = YES
 WARN_IF_DOC_ERROR      = YES
 
-# Off while the headers are being annotated. Flip to YES once coverage is
-# complete — at that point it becomes a live gate, as in Analysis-Utilities,
-# where an undocumented public declaration fails `nix build .#docs`.
-WARN_IF_UNDOCUMENTED   = NO
+# Every extracted entity is documented, so this is a live coverage gate rather
+# than noise: adding an undocumented public declaration fails `nix build .#docs`
+# and therefore fails the published site. Keep it at YES.
+WARN_IF_UNDOCUMENTED   = YES
 
 # Only fires on entities that are documented but have an undocumented
 # parameter, so it is silent on the unannotated headers and catches

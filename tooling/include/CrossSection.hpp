@@ -1,29 +1,34 @@
 #ifndef CROSS_SECTION_HPP
 #define CROSS_SECTION_HPP
-// Absolute cross section per reaction strip, for every channel the dataset
-// declares (CrossSectionConfig::CHANNELS).
-//
-// A read-only pass over the scatter cache and the region cuts. For each
-// channel and strip
-//
-//   sigma = N_reac / (N_beam * n_gas * L_strip)
-//
-// where N_reac is the number of reactions of that channel at that strip and
-// N_beam the number of beam particles that reached it under every cut a
-// reaction there also had to pass, so those cuts cancel in the ratio.
-//
-// N_reac comes from one of two places. When the tag-efficiency store has a
-// record for the channel and strip, it is that record's count unfolded by its
-// efficiency and by the migration from the strip before (see
-// TagEfficiency.hpp for the contract). Otherwise it is the count the mixture
-// fit attributed to the reaction component, uncorrected, with the
-// fit-versus-core disagreement as the region systematic.
-//
-// Beam energies come from the simulated unreacted beam, calibrated against
-// the measured per-strip energy loss, so each strip's centre-of-mass energy is
-// the simulation's rather than a nominal dE/dx table's. Each channel's TALYS
-// curve is the sum of the residual channels its exit list names, and its
-// shape sets that channel's effective energies.
+/**
+ * @file CrossSection.hpp
+ * @brief Absolute cross section per reaction strip, for every declared channel.
+ *
+ * A read-only pass over the scatter cache and the region cuts, covering every
+ * channel in `CrossSectionConfig::CHANNELS`. For each channel and strip:
+ *
+ *     sigma = N_reac / (N_beam * n_gas * L_strip)
+ *
+ * where `N_reac` is the number of reactions of that channel at that strip, and
+ * `N_beam` the number of beam particles that reached it **under every cut a
+ * reaction there also had to pass** — so those cuts cancel in the ratio rather
+ * than needing their own efficiency.
+ *
+ * `N_reac` comes from one of two places:
+ *
+ * - When the tag-efficiency store holds a record for the channel and strip, it
+ *   is that record's count, unfolded by its efficiency and by the migration
+ *   from the strip before. See TagEfficiency.hpp for the contract.
+ * - Otherwise it is the count the mixture fit attributed to the reaction
+ *   component, uncorrected, with the fit-versus-core disagreement taken as the
+ *   region systematic.
+ *
+ * Beam energies come from the simulated unreacted beam, calibrated against the
+ * measured per-strip energy loss, so each strip's centre-of-mass energy is the
+ * simulation's rather than a nominal dE/dx table's — see BeamEnergies. Each
+ * channel's TALYS curve is the sum of the residual channels its exit list
+ * names, and its shape sets that channel's effective energies.
+ */
 #include <Rtypes.h>
 #include <TString.h>
 #include <map>
@@ -36,19 +41,45 @@ class TGraph;
 class TH2F;
 struct CrossSectionChannel;
 
+/**
+ * @brief Computes and reports the absolute cross sections.
+ *
+ * Read-only with respect to the analysis products it consumes: it evaluates the
+ * current cache, cuts and efficiency store, and changes none of them.
+ */
 class CrossSection {
 public:
-  // Runs every channel: the table, the comparison to the published values,
-  // the figure per channel and, with more than one channel, the combined
-  // figure. kFALSE when a prerequisite is missing.
+  /**
+   * @brief Run every channel and write the tables and figures.
+   *
+   * Produces the table, the comparison against published values, one figure per
+   * channel, and — when more than one channel is configured — the combined
+   * figure.
+   *
+   * @return `kFALSE` when a prerequisite is missing, with the reason printed.
+   */
   Bool_t Run();
 
-  // Residue (Z, A) left by an exit channel named as in
-  // CrossSectionChannel::talys_exits, for an alpha on (z_beam, a_beam).
-  // kFALSE when the name does not parse.
+  /**
+   * @brief Residual nucleus left by a named exit channel.
+   *
+   * For an alpha on a beam nucleus, given an exit named as in
+   * `CrossSectionChannel::talys_exits`.
+   *
+   * @param exit   Exit channel name.
+   * @param z_beam Beam proton number.
+   * @param a_beam Beam mass number.
+   * @param[out] z Residue proton number.
+   * @param[out] a Residue mass number.
+   *
+   * @return `kFALSE` when the name does not parse, leaving the outputs unset.
+   */
   static Bool_t ExitResidue(const TString &exit, Int_t z_beam, Int_t a_beam,
                             Int_t &z, Int_t &a);
-  // The channel's label, or one derived from its exits when it has none.
+  /// @brief Display label for a channel.
+  /// @param ch Channel to label.
+  /// @return Its configured label, or one derived from its exit list when it
+  ///         has none.
   static TString Label(const CrossSectionChannel &ch);
 
 private:

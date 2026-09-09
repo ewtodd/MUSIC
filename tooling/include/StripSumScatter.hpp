@@ -41,131 +41,220 @@
 #include <thread>
 #include <vector>
 
+/**
+ * @file StripSumScatter.hpp
+ * @brief The reaction search: strip-sum scatters, beam gating and tagging.
+ *
+ * Builds, per reaction strip, a two-dimensional scatter in which beam-like and
+ * reaction events separate, then tags reactions in it. The scatters and a
+ * reservoir of tagged events are cached, so retuning a display window or a
+ * region cut costs a reprojection rather than another pass over the data.
+ */
+
+/// @brief A pair of strips whose sums form one classification plane.
 struct GateSpec {
-  Int_t sx;
-  Int_t sy;
+  Int_t sx; ///< Strip whose sum forms the x axis.
+  Int_t sy; ///< Strip whose sum forms the y axis.
 };
 
-// Beam classification ellipses: entrance (s0,s1 or s1,s2, per config's
-// PURE_BEAM_GATE) AND exit (s16,s17 or s15,s16). An event is "pure beam"
-// only if it passes both ellipses.
+/**
+ * @brief The fixed window every strip-sum scatter is built over.
+ *
+ * Building to a fixed range is what lets the display windows be retuned without
+ * refilling.
+ *
+ * The axes get different ceilings because they sum different numbers of strips:
+ * x runs over `X_LO..X_HI` (16 strips, so it reaches about 20), while y covers
+ * only `POST_TRIGGER_SUM_STRIPS` after the trigger (6, so it never approaches
+ * 40). Giving y its own lower ceiling doubles its resolution at the same bin
+ * count — which matters, because y is the axis the reaction populations
+ * separate along, and its display windows are much narrower than x's.
+ */
 namespace ScatterBuildRange {
-// Every strip-sum scatter is built over this fixed window, so the display
-// windows can be retuned without refilling. The axes get different ceilings
-// because they sum different numbers of strips: x runs over X_LO..X_HI (16
-// strips, so it reaches ~20), while y covers only POST_TRIGGER_SUM_STRIPS
-// after the trigger (6, so it never approaches 40). Giving y its own, lower
-// ceiling doubles its resolution at the same bin count -- which matters,
-// because y is the axis the reaction populations separate along and its
-// display windows are much narrower than x's.
-const Double_t kXMin = 0.0;
-const Double_t kXMax = 40.0;
-const Double_t kYMin = 0.0;
-const Double_t kYMax = 20.0;
+const Double_t kXMin = 0.0;  ///< Lower x bound of the build window.
+const Double_t kXMax = 40.0; ///< Upper x bound; x sums 16 strips.
+const Double_t kYMin = 0.0;  ///< Lower y bound.
+const Double_t kYMax =
+    20.0; ///< Upper y bound; y sums the post-trigger strips only.
 } // namespace ScatterBuildRange
 
+/**
+ * @brief The classification ellipses defining a pure-beam event.
+ *
+ * An entrance ellipse and an exit ellipse. An event is pure beam only if it
+ * passes **both** — entering like beam and leaving like beam.
+ */
 struct BeamEllipses {
-  BeamFit2D s0_s1;
-  BeamFit2D s1_s2;
-  BeamFit2D s16_s17;
-  BeamFit2D s15_s16;
-  Bool_t ok;
-  Bool_t use_s15_s16;
+  BeamFit2D s0_s1;    ///< Entrance ellipse on strips 0 and 1.
+  BeamFit2D s1_s2;    ///< Alternative entrance ellipse, per `PURE_BEAM_GATE`.
+  BeamFit2D s16_s17;  ///< Exit ellipse on strips 16 and 17.
+  BeamFit2D s15_s16;  ///< Alternative exit ellipse.
+  Bool_t ok;          ///< Whether the fits succeeded.
+  Bool_t use_s15_s16; ///< Which exit ellipse is in force.
 };
 
+/**
+ * @brief One tagged event, kept in the reservoir.
+ *
+ * The reservoir holds every tagged event, so a change to the scatter plane or
+ * its axes needs only a reprojection rather than another full pass over the
+ * events files.
+ */
 struct TraceEvt {
-  Float_t total[18];
-  Float_t total_adc[18]; // raw (un-normalized) ADC sum per strip
-  // Calibrated a.u. of each half of a split strip, kept separately and
-  // independently of IGNORE_SHORT_STRIPS (which is a decode-time switch and
-  // zeroes one half of EnergyView::left/right). Reconstructed from the raw
-  // ADC and the per-channel gains, so one calibration can be rendered under
-  // either decode.
-  Float_t long_au[18];
-  Float_t short_au[18];
-  UInt_t reac_mask;
-  Bool_t beam_flat;
-  Int_t both_mult; // # split strips (1-16) with BOTH ends above threshold
-  // Timestamp of the Grid hit that seeded the event, from the events tree.
-  // Unique per event and independent of how runs are split into files, so a
-  // cached event can be joined back to its source record. 0 when the source
-  // predates the SeedTs branch.
+  Float_t total[18];     ///< Calibrated per-strip totals.
+  Float_t total_adc[18]; ///< Raw, un-normalised ADC sum per strip.
+  /// @name Split-strip halves, in calibrated units
+  /// Kept separately and independently of `IGNORE_SHORT_STRIPS`, which is a
+  /// decode-time switch that zeroes one half of `EnergyView::left`/`right`.
+  /// Reconstructed from the raw ADC and the per-channel gains, so one
+  /// calibration can be rendered under either decode.
+  /// @{
+  Float_t long_au[18];  ///< Long end of each split strip.
+  Float_t short_au[18]; ///< Short end.
+  /// @}
+
+  UInt_t reac_mask; ///< Bit per reaction strip this event was tagged at.
+  Bool_t beam_flat; ///< Whether the trace looked flat, i.e. beam-like.
+  Int_t both_mult;  ///< Split strips (1-16) with both ends above threshold.
+  /// Timestamp of the grid hit that seeded the event, from the events tree.
+  /// Unique per event and independent of how runs are split into files, so a
+  /// cached event joins back to its source record. Zero when the source
+  /// predates the seed-timestamp branch.
   ULong64_t seed_ts;
 };
 
-// Per-run results, so both fill phases can run one worker per run and merge
-// afterwards in run order -- which keeps the threaded result identical to the
-// sequential one.
+/**
+ * @brief One run's fitted beam gates.
+ *
+ * Both fill phases run one worker per run and merge afterwards **in run
+ * order**, which is what keeps the threaded result bit-identical to the
+ * sequential one.
+ */
 struct SingleRunFitResult {
-  BeamEllipses pure_beam;
-  std::vector<BeamFit2D> series_gates;
-  Bool_t ok;
+  BeamEllipses pure_beam;              ///< Entrance and exit ellipses.
+  std::vector<BeamFit2D> series_gates; ///< One gate per active GateSpec.
+  Bool_t ok;                           ///< Whether the fits succeeded.
+  /// @brief Construct unfitted.
   SingleRunFitResult() : ok(kFALSE) {}
 };
 
+/**
+ * @brief One run's filled scatters, reservoir and normalisation counts.
+ */
 struct SingleRunFillResult {
-  // Private clones, one per reaction strip; owned by the caller after merge.
+  /// Private clones, one per reaction strip. **Owned by the caller after the
+  /// merge.**
   std::vector<TH2F *> scatters;
-  std::vector<TraceEvt> reservoir;
-  Long64_t gated;
-  Long64_t seen;
-  // Events surviving every cut applied before reaction tagging: the beam
-  // gates, pileup/noise/offbeam rejection and the both-ends multiplicity.
-  // Every tagged event passed exactly this selection, so it is the
-  // denominator in which those efficiencies cancel.
+  std::vector<TraceEvt> reservoir; ///< Tagged events from this run.
+  Long64_t gated;                  ///< Events passing the beam gates.
+  Long64_t seen;                   ///< Events examined.
+  /// Events surviving every cut applied before reaction tagging: the beam
+  /// gates, the pileup, noise and off-beam rejection, and the both-ends
+  /// multiplicity. Every tagged event passed exactly this selection, which is
+  /// what makes it the denominator in which those efficiencies cancel.
   Long64_t normed;
-  // Per-strip denominator, indexed by ReacIndex: beam particles that reached
-  // that strip under exactly the conditions a reaction there would have had to
-  // satisfy -- every strip fired, and strips 1..reac-1 beam-like. Those
-  // conditions are strip-dependent (strip 5 must have four strips upstream
-  // look like beam where strip 3 needs two), so a single denominator would
-  // leave that efficiency uncancelled and bias the excitation function.
+  /// Per-strip denominator: beam particles that reached that strip under
+  /// exactly the conditions a reaction there would have had to satisfy — every
+  /// strip fired, and strips `1..reac-1` beam-like.
+  ///
+  /// Those conditions are strip-dependent: strip 5 needs four upstream strips
+  /// to look like beam where strip 3 needs two. A single flat denominator would
+  /// leave that efficiency uncancelled and bias the excitation function.
   std::vector<Long64_t> normed_at;
-  // Events tagged at each reaction strip, indexed by ReacIndex.
+  /// Events tagged at each reaction strip, indexed the same way.
   std::vector<Long64_t> tagged;
+  /// @brief Construct with zeroed counters.
   SingleRunFillResult() : gated(0), seen(0), normed(0) {}
 };
 
+/// @brief One simulated population to overlay on the data.
 struct SimPop {
-  TString file;
-  TString label;
+  TString file;  ///< Simulation ROOT file.
+  TString label; ///< Legend label.
 };
 
+/**
+ * @brief Builds the strip-sum scatters, tags reactions, and draws the results.
+ *
+ * The entry point behind the `strip-sum-scatter` binary. Fills per-strip
+ * scatters from the events files, caches them alongside a reservoir of tagged
+ * events, and draws the regions and trace overlays.
+ *
+ * @note The cache carries a fingerprint of every configuration knob that
+ *       changes its contents — filters, gates, strip spans — so editing any of
+ *       them rebuilds it automatically on the next run. There is no
+ *       cache-clearing step to remember.
+ */
 class StripSumScatter {
 public:
+  /// @brief Construct with empty scatters and no cache loaded.
   StripSumScatter();
+  /// @brief Frees the scatters and the reservoir.
   ~StripSumScatter();
 
-  // Main entry point called from main_strip_sum_scatter.cpp
+  /**
+   * @brief Build or load the scatters, tag reactions, and draw everything.
+   *
+   * The entry point called from `main_strip_sum_scatter.cpp`.
+   */
   void Run();
 
-  // The scatter cache this configuration reads and writes; compute-regions
-  // reads the same file, so the name lives here and nowhere else.
+  /**
+   * @brief Filename of the scatter cache for this configuration.
+   * @note `compute-regions` reads the same file, so the name is defined here
+   *       and nowhere else.
+   */
   static TString CacheName();
 
-  // The scatter plane's coordinates of one event's normed strip totals, for
-  // reaction strip `reac`: x the sum over X_LO..X_HI, y the sum over the
-  // post-trigger window. Every consumer of a region cut goes through this, so
-  // the fill, the overlay and the cross section can never disagree about
-  // where an event sits.
+  /**
+   * @brief Where an event sits in the scatter plane for a given reaction strip.
+   *
+   * x is the sum over `X_LO..X_HI`; y is the sum over the post-trigger window.
+   *
+   * @param total Calibrated per-strip totals for the event.
+   * @param reac  Reaction strip index.
+   * @param[out] x Plane x coordinate.
+   * @param[out] y Plane y coordinate.
+   *
+   * @note Every consumer of a region cut goes through this, which is what stops
+   *       the fill, the overlay and the cross section from ever disagreeing
+   *       about where an event sits.
+   */
   static void PlaneXY(const Double_t *total, Int_t reac, Double_t &x,
                       Double_t &y);
-  // The post-trigger window summed onto y for reaction strip `reac`:
-  // YLoOf..YHiOf inclusive, per the POST_TRIGGER_SUM_STRIPS /
-  // POST_WINDOW_LAST_STRIP / POST_WINDOW_STRIPS rule.
+  /// @brief First strip of the post-trigger window summed onto y.
+  /// @param reac Reaction strip index.
+  /// @return The strip index, inclusive, per the `POST_TRIGGER_SUM_STRIPS` /
+  ///         `POST_WINDOW_LAST_STRIP` / `POST_WINDOW_STRIPS` rule.
   static Int_t YLoOf(Int_t reac);
+  /// @brief Last strip of the post-trigger window, inclusive.
+  /// @param reac Reaction strip index.
   static Int_t YHiOf(Int_t reac);
-  // The beam's noise, measured by MeasureBeamNoise and stamped in the cache:
-  // JumpSigma is the sigma of total[s] - total[s-1] (jump_sigma_s<N>),
-  // StripSigma the sigma of total[s] itself (strip_sigma_s<N>). Set once
-  // before any tagging and read-only after, so the worker threads share them
-  // safely.
+  /**
+   * @name Measured beam noise
+   *
+   * Measured once from the data and stamped into the cache. Set before any
+   * tagging begins and read-only afterwards, which is what makes them safe to
+   * share across the worker threads without synchronisation.
+   * @{
+   */
+
+  /// @brief Sigma of the strip-to-strip difference `total[s] - total[s-1]`.
+  /// @param strip Strip index.
   static Double_t JumpSigma(Int_t strip);
+  /// @brief Sigma of a strip's own deposit.
+  /// @param strip Strip index.
   static Double_t StripSigma(Int_t strip);
+  /// @brief Install the jump sigmas. Call before tagging starts.
+  /// @param sigma 18 values, one per strip.
   static void SetJumpSigma(const Double_t *sigma);
+  /// @brief Install the per-strip sigmas. Call before tagging starts.
+  /// @param sigma 18 values, one per strip.
   static void SetStripSigma(const Double_t *sigma);
-  // Minimum jump for a tag at `reac`: REAC_JUMP_NSIGMA times JumpSigma(reac).
+  /// @brief Minimum jump for a tag: `REAC_JUMP_NSIGMA * JumpSigma(reac)`.
+  /// @param reac Reaction strip index.
   static Double_t JumpMin(Int_t reac);
+  /// @}
 
 private:
   static Double_t s_jumpSigma[18];
@@ -294,8 +383,17 @@ private:
   static TString PrettyLabel(const TString &tag);
 
 public:
-  // Shared with tag-efficiency, which pushes bootstrapped traces through the
-  // same tag as the scatter.
+  /**
+   * @brief Whether an event is tagged as a reaction at a given strip.
+   *
+   * @param ev   Decoded event.
+   * @param reac Reaction strip index.
+   * @return `kTRUE` if the event is tagged there.
+   *
+   * @note Public because TagEfficiency pushes bootstrapped traces through this
+   *       same tag. An efficiency measured against a different selection than
+   *       the one that produced the count would not apply to it.
+   */
   static Bool_t PassesReaction(const EnergyView &ev, Int_t reac);
 
 private:

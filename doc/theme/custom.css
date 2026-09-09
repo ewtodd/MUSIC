@@ -127,4 +127,34 @@ html.dark-mode {
 html,
 body {
     background-color: var(--kanagawa-base00);
+    /* HTML_COLORSTYLE is LIGHT (the theme requires it), so without this the
+     * browser paints scrollbars and form controls light against a dark page. */
+    color-scheme: dark;
+}
+
+/* Doxygen's @name group headers (tr.groupHeader) carry no themed background,
+ * so they render as a light bar across a dark member table. Style them as a
+ * section label instead. */
+/* The member table carries a light background from doxygen's own stylesheet.
+ * Opaque member cells normally hide it, so it only became visible once the
+ * group header row was made transparent — as a sliver in the border-spacing
+ * gap at each edge. */
+table.memberdecls {
+    background-color: transparent;
+}
+
+tr.groupHeader,
+tr.groupHeader > td {
+    background-color: var(--kanagawa-base00);
+    border: none;
+}
+tr.groupHeader > td {
+    padding-top: var(--spacing-medium);
+}
+.groupHeader {
+    color: var(--kanagawa-base06);
+    font-weight: 600;
+    border-bottom: 1px solid var(--kanagawa-base03);
+    padding-bottom: 4px;
+    margin-top: var(--spacing-small);
 }
