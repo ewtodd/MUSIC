@@ -1,4 +1,5 @@
-"""Experimental event loading and preprocessing for the blind pipeline.
+"""Experimental event loading and preprocessing for the blind and VLM
+pipelines.
 
 Per subfile the events tree's raw ADC is calibrated per channel (OffsetLeft /
 OffsetRight subtracted from an end that fired, then GainLeft / GainRight /
@@ -84,6 +85,56 @@ def _with_unsegmented(seg, strip0, strip17):
         np.broadcast_to(strip17, (n, )).reshape(n, 1)
     ],
                           axis=1)
+
+
+def load_seed_ts(path, max_events=None):
+    """Per-event SeedTs for one events file, as uint64, cached beside the
+    leaf-array caches.
+
+    The event builder writes SeedTs/l on every event, and the upstream
+    comparison joins on it -- so carrying it alongside a classification is
+    what makes "did we identify the SAME events as the published build" a
+    question that can be answered rather than argued about.
+
+    Read here rather than through analysis_utilities.io, because neither of
+    its loaders fits: load_leaf_array_data takes fixed-size ARRAY leaves and
+    rejects a scalar, while load_tree_data's auto-detect would bind the
+    18-element Left_0_17_dE/RightdE leaves into one-element buffers. The
+    cache file carries its own suffix so it cannot collide with the
+    *_leafarrays.npz the traces use, and is invalidated the same way -- by
+    the source file being newer.
+    """
+    import ROOT
+
+    cache = None
+    if config.CACHE_DIR is not None:
+        stem = os.path.splitext(os.path.basename(path))[0]
+        cache = config.CACHE_DIR / f"{stem}_seedts.npy"
+        if cache.is_file() and \
+                os.path.getmtime(path) <= cache.stat().st_mtime:
+            ts = np.load(cache)
+            return ts if max_events is None else ts[:max_events]
+
+    f = ROOT.TFile.Open(path)
+    if not f or f.IsZombie():
+        raise FileNotFoundError(f"cannot open {path}")
+    tree = f.Get("events")
+    if not tree:
+        f.Close()
+        raise RuntimeError(f"no events tree in {path}")
+    n = tree.GetEntries()
+    if max_events is not None:
+        n = min(n, max_events)
+    tree.SetBranchStatus("*", 0)
+    tree.SetBranchStatus("SeedTs", 1)
+    ts = np.empty(n, dtype=np.uint64)
+    for i in range(n):
+        tree.GetEntry(i)
+        ts[i] = np.uint64(tree.SeedTs)
+    f.Close()
+    if cache is not None and max_events is None:
+        np.save(cache, ts)
+    return ts
 
 
 def _load_calibrated_lr(path, max_events_per_file=None):
@@ -179,17 +230,25 @@ def _both_fired(left, right, thresh):
     return fired
 
 
-def load_experimental_totals(max_files=None, max_events_per_file=None):
+def load_experimental_totals(max_files=None,
+                             max_events_per_file=None,
+                             with_seed_ts=False):
     """Calibrated per-strip totals from the experimental events files, with
     ZERO selection -- every event is returned (the blind pipeline's own
     first stage is the filter). Returns (totals, both): totals is the summed
     per-strip view (already in a.u., beam ~ 1, so downstream uses UNIT
-    gains); both is the per-strip both-channel fired mask (n, 18)."""
+    gains); both is the per-strip both-channel fired mask (n, 18).
+
+    With with_seed_ts the per-event SeedTs is returned as a third array in
+    the same row order -- the join key against the published build. The
+    default keeps the two-value signature blind_an.step0_reservoir unpacks.
+    """
     files = list_event_files()
     if max_files is not None:
         files = files[:max_files]
     out = []
     both_out = []
+    ts_out = []
     for path in files:
         left, right, both, strip_factor, strip_offset = _load_calibrated_lr(
             path, max_events_per_file)
@@ -197,9 +256,21 @@ def load_experimental_totals(max_files=None, max_events_per_file=None):
               "(zero cuts)")
         out.append(_assemble_totals(left, right, strip_factor, strip_offset))
         both_out.append(both)
+        if with_seed_ts:
+            ts = load_seed_ts(path, max_events_per_file)
+            if ts.shape[0] != left.shape[0]:
+                raise RuntimeError(
+                    f"{os.path.basename(path)}: {ts.shape[0]} SeedTs against "
+                    f"{left.shape[0]} events -- the join key would not line "
+                    "up with the traces")
+            ts_out.append(ts)
     if not out:
         raise RuntimeError("no experimental events loaded")
-    return np.concatenate(out), np.concatenate(both_out)
+    totals = np.concatenate(out)
+    both = np.concatenate(both_out)
+    if not with_seed_ts:
+        return totals, both
+    return totals, both, np.concatenate(ts_out)
 
 
 def max_normalize(totals, gain):

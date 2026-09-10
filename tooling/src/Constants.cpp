@@ -53,6 +53,7 @@ void CrossSectionConfig::SetDefaults() {
   };
 
   BEAM_SIM_FILE = "";
+  TAG_EFFICIENCY_FILE = "";
 
   XS_STRIP_MIN = 3;
   XS_STRIP_MAX = 15;

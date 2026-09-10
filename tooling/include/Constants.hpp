@@ -397,6 +397,14 @@ struct CrossSectionConfig {
   /// the dataset's sim_root_files directory.
   TString BEAM_SIM_FILE;
 
+  /// Which tag-efficiency store the identified events are read from, as a
+  /// basename under the results `root_files/` directory. The records carry
+  /// both the count and the efficiency it belongs to, so pointing this at a
+  /// different file swaps the whole tagging method -- the bootstrap tag, a
+  /// VLM classifier, anything that honours the TagEfficiencyRecord contract
+  /// -- without touching the cross section. Empty means "tag_efficiency.root".
+  TString TAG_EFFICIENCY_FILE;
+
   /// Reaction strips for which to calculate a cross-section.
   Int_t XS_STRIP_MIN;
   Int_t XS_STRIP_MAX;

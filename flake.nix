@@ -29,7 +29,7 @@
       system:
       let
         isLaptop = false;
-        includePython = false;
+        includePython = true;
         lib = nixpkgs.lib;
         pkgs = import nixpkgs {
           inherit system;
@@ -58,11 +58,27 @@
                           python-final.typing-extensions
                         ];
                       });
+                      # accelerate's MultiCPUTester spawns worker
+                      # processes, which torch.multiprocessing cannot do in
+                      # the nix sandbox; the other 238 tests pass. Disable
+                      # the file rather than the whole checkPhase.
+                      accelerate = python-prev.accelerate.overridePythonAttrs (old: {
+                        disabledTestPaths = (old.disabledTestPaths or [ ]) ++ [
+                          "tests/test_cpu.py"
+                        ];
+                      });
                       torch-bin = python-prev.torch-bin.overridePythonAttrs (old: {
                         pythonRelaxDeps = (old.pythonRelaxDeps or [ ]) ++ [
                           "setuptools"
                         ];
                       });
+                      # transformers and accelerate depend on `torch`, while
+                      # the shell below asks for `torch-bin`. Without this,
+                      # buildEnv is handed two different torch-2.12.0 store
+                      # paths and refuses with a conflicting-subpath error.
+                      # Aliasing collapses the set onto one derivation.
+                      torch = python-final.torch-bin;
+                      torchvision = python-final.torchvision-bin;
                     })
                   ];
                 })
@@ -118,6 +134,16 @@
                   torch-bin
                   xgboost
                   analysis-utils-py
+                  # VLM event classification (python/vlm.py). transformers 5.5
+                  # is the first release carrying gemma4; this nixpkgs pin has
+                  # 5.5.4, so the model loads with no overlay.
+                  transformers
+                  accelerate
+                  safetensors
+                  pillow
+                  # AutoProcessor for gemma4 instantiates Gemma4VideoProcessor
+                  # even for a still image, and that hard-requires torchvision.
+                  torchvision
                 ]
               ))
             ]

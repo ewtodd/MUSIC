@@ -378,3 +378,55 @@ def matrix_hist(matrix, row_labels, col_labels, name, x_title, y_title,
     c = R.PlottingUtils.GetConfiguredCanvas(R.kFALSE)
     h.Draw("COLZ TEXT")
     R.PlottingUtils.SaveFigure(c, name, subdir, R.PlotSaveOptions.kLINEAR)
+
+
+def efficiency_vs_strip(strips, values, errors, name, y_title,
+                        subdir=config.PLOT_SUBDIR, label="", second=None):
+    """Per-strip efficiency (or purity) with binomial error bars.
+
+    `strips`, `values`, `errors` are equal-length sequences; the y-axis is
+    pinned to 0..1 so runs are comparable at a glance. `second` optionally
+    adds a red dashed comparison series as (label, values, errors) -- used to
+    put the (a,a') mis-tag rate next to the (a,n) efficiency, since the two
+    together are what decides whether a tag is usable."""
+    R = _root()
+    x = np.asarray(strips, dtype=np.float64)
+    y = np.asarray(values, dtype=np.float64)
+    e = np.asarray(errors, dtype=np.float64)
+    if x.size == 0:
+        return
+    c = R.PlottingUtils.GetConfiguredCanvas(R.kFALSE)
+    g = R.TGraphErrors(x.size, x, y, np.zeros(x.size), e)
+    g.SetTitle("")
+    g.GetXaxis().SetTitle("reaction strip")
+    g.GetYaxis().SetTitle(y_title)
+    g.GetHistogram().SetMinimum(0.0)
+    g.GetHistogram().SetMaximum(1.05)
+    g.SetLineColor(R.kAzure + 2)
+    g.SetMarkerColor(R.kAzure + 2)
+    g.SetLineWidth(3)
+    g.SetMarkerStyle(20)
+    g.Draw("ALP")
+    keep = [g]
+    leg = R.PlottingUtils.AddLegend()
+    leg.AddEntry(g, "(#alpha,n) efficiency", "lp")
+    if second is not None:
+        slabel, sy, se = second
+        g2 = R.TGraphErrors(x.size, x,
+                            np.asarray(sy, dtype=np.float64),
+                            np.zeros(x.size),
+                            np.asarray(se, dtype=np.float64))
+        g2.SetLineColor(R.kRed + 1)
+        g2.SetMarkerColor(R.kRed + 1)
+        g2.SetLineWidth(3)
+        g2.SetLineStyle(2)
+        g2.SetMarkerStyle(21)
+        g2.Draw("LP SAME")
+        keep.append(g2)
+        leg.AddEntry(g2, slabel, "lp")
+    leg.Draw()
+    if label:
+        text = R.PlottingUtils.AddText(label, 0.42, 0.45)
+        text.Draw()
+        keep.append(text)
+    R.PlottingUtils.SaveFigure(c, name, subdir, R.PlotSaveOptions.kLINEAR)
