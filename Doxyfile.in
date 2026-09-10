@@ -124,14 +124,21 @@ FULL_SIDEBAR           = NO
 
 # Must be LIGHT even though the site is dark. Since doxygen 1.9.5 this setting
 # injects doxygen's own colour system, which fights the theme; LIGHT keeps it
-# neutral and lets doc/theme/custom.css paint everything.
+# neutral and lets the published stylesheet paint everything.
 HTML_COLORSTYLE        = LIGHT
 
-# Order matters — base theme, then the sidebar layout it builds on, then the
-# Kanagawa palette last so its :root block wins.
+# Order matters — base theme, then the sidebar layout it builds on.
+#
+# There is deliberately no third, project-owned stylesheet here. The published
+# reference at docs.ethanwtodd.com is themed by the website repository
+# (github.com/ewtodd/website), which takes this project as a flake input and
+# adds its own stylesheet to the generated output when it assembles that host.
+# Keeping the design out of this repository is what lets it be changed in one
+# place for every project that uses it rather than once per project. A build
+# from here is therefore plain doxygen-awesome, which is the right signal: this
+# is the output you read warnings against, not the output that gets published.
 HTML_EXTRA_STYLESHEET  = "@DOC_AWESOME_DIR@/doxygen-awesome.css" \
-                         "@DOC_AWESOME_DIR@/doxygen-awesome-sidebar-only.css" \
-                         "@DOC_SOURCE_DIR@/doc/theme/custom.css"
+                         "@DOC_AWESOME_DIR@/doxygen-awesome-sidebar-only.css"
 
 HTML_DYNAMIC_SECTIONS  = YES
 SEARCHENGINE           = YES
