@@ -437,7 +437,6 @@ class EventClassifier:
     def __init__(self, model_id=None, token_budget=None, letter_order=None,
                  builder=None):
         import torch
-        from transformers import AutoModelForImageTextToText
 
         self._torch = torch
         self.builder = builder or PromptBuilder(model_id, token_budget,
@@ -447,12 +446,7 @@ class EventClassifier:
         self.class_token_ids = self.builder.class_token_ids
         print(f"vlm: loading {self.model_id} "
               f"({config.VLM_DTYPE}, {config.VLM_DEVICE})")
-        self.model = AutoModelForImageTextToText.from_pretrained(
-            self.model_id,
-            dtype=getattr(torch, config.VLM_DTYPE),
-            device_map=config.VLM_DEVICE,
-            attn_implementation=config.VLM_ATTN,
-            token=_hf_token())
+        self.model = self._load_model()
         self.model.eval()
         self._logits_kwarg = self._resolve_logits_kwarg()
         if self.builder.n_image_tokens < 0:
@@ -505,6 +499,57 @@ class EventClassifier:
         print(f"  prefix cache: built at batch {batch}, "
               f"{state['start']} tokens shared per event; verifying on the "
               "first real batch")
+
+    def _load_model(self):
+        """Load the checkpoint, quantized if config.VLM_LOAD_IN asks.
+
+        The auto class differs across the ladder: the E-series cards name
+        AutoModelForImageTextToText, while 12B is the Unified (encoder-free)
+        variant and names AutoModelForMultimodalLM. Both are tried rather
+        than hard-coding one, so moving a rung does not need a code change.
+        """
+        import torch
+        import transformers
+
+        kw = {
+            "device_map": config.VLM_DEVICE,
+            "attn_implementation": config.VLM_ATTN,
+            "token": _hf_token(),
+        }
+        want = getattr(config, "VLM_LOAD_IN", None)
+        if want:
+            from transformers import BitsAndBytesConfig
+            if want == "8bit":
+                kw["quantization_config"] = BitsAndBytesConfig(
+                    load_in_8bit=True)
+            elif want == "4bit":
+                kw["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=getattr(torch, config.VLM_DTYPE))
+            else:
+                raise ValueError(f"VLM_LOAD_IN={want!r}; want '8bit', "
+                                 "'4bit' or None")
+            # device_map must let accelerate place the quantized shards.
+            kw["device_map"] = "auto"
+        else:
+            kw["dtype"] = getattr(torch, config.VLM_DTYPE)
+
+        last = None
+        for name in ("AutoModelForImageTextToText",
+                     "AutoModelForMultimodalLM"):
+            cls = getattr(transformers, name, None)
+            if cls is None:
+                continue
+            try:
+                model = cls.from_pretrained(self.model_id, **kw)
+                print(f"  loaded via {name}"
+                      + (f", {want}" if want else ", bf16"))
+                return model
+            except (ValueError, KeyError, TypeError) as exc:
+                last = exc
+        raise RuntimeError(
+            f"no auto class could load {self.model_id}: {last}")
 
     def _report_timing(self):
         """Where the wall clock actually goes, as a share of the three
@@ -751,7 +796,21 @@ class EventClassifier:
                     out = self.model(**tail, use_cache=True, **kw)
                 return out.logits[:, -1, :].float()
             finally:
-                cache.crop(cut)  # rewind so the next batch reuses the prefix
+                # Rewind so the next batch reuses the prefix. A sliding-window
+                # layer refuses to be cropped once it has seen more tokens
+                # than its window (512 for Gemma 4), so this works only while
+                # prefix + suffix stays under it -- at max_soft_tokens 70 that
+                # is 389 + 62, at 140 it is 455 + 120 and it does not. The
+                # forward already completed, so this batch's result stands;
+                # the cache is simply dropped for every batch after it.
+                try:
+                    cache.crop(cut)
+                except Exception as exc:
+                    print(f"  prefix cache: DISABLED after use, "
+                          f"{type(exc).__name__}: {exc}")
+                    self._prefix = None
+                    self._prefix_batch = -1
+                    self._prefix_unverified = None
         finally:
             if timed:
                 torch.cuda.synchronize()
@@ -775,9 +834,16 @@ class EventClassifier:
         if (self._prefix_unverified is not None
                 and images.shape[0] == self._prefix_batch):
             pending, self._prefix_unverified = self._prefix_unverified, None
-            if self._verify_prefix_cache(pending, images):
+            try:
+                ok = self._verify_prefix_cache(pending, images)
+            except Exception as exc:
+                print(f"  prefix cache: DISABLED, {type(exc).__name__}: "
+                      f"{exc}")
+                ok = False
+            if ok and self._prefix_batch > 0:
                 self._prefix = pending
             else:
+                self._prefix = None
                 self._prefix_batch = -1
         state = (self._prefix
                  if images.shape[0] == self._prefix_batch else None)

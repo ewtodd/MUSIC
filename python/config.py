@@ -151,7 +151,20 @@ VLM_MODEL_LADDER = (
     "google/gemma-4-E4B-it",
     "google/gemma-4-12B-it",
 )
-VLM_MODEL = VLM_MODEL_LADDER[0]
+VLM_MODEL = VLM_MODEL_LADDER[2]
+
+# E2B result, so the ladder is not being climbed on a hunch: on 200 events
+# matched at plateau +0.056 and differing ONLY in end level (0.79 vs 1.02 --
+# the (a,n) collapse), the separation in p(an) was +0.022, +0.022, -0.001,
+# -0.045 across four render/budget configurations. No trend, no
+# discrimination. The patch grid was 30x24 even at the lowest budget (1.33
+# columns per strip), so resolution was never the constraint.
+
+# 11.95B in bf16 is ~24 GB and will not fit a 24 GB card alongside
+# activations. "8bit" is ~12 GB and the safer choice for a discrimination
+# that was already marginal; "4bit" is ~6.5 GB if that still does not fit.
+# None loads bf16, for a card with room.
+VLM_LOAD_IN = "8bit"
 # Gemma is a gated repo. vlm.py reads the token from $HF_TOKEN when that is
 # set, and otherwise from this file -- one line, gitignored.
 VLM_HF_TOKEN_FILE = REPO_ROOT / "hftoken"
