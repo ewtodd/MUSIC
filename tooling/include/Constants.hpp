@@ -71,8 +71,79 @@ struct StripSumScatterConfig {
   Int_t REACTION_STRIP_MIN;
   Int_t REACTION_STRIP_MAX;
 
+  /// Smoothness after the reaction: every strip-to-strip step from reac+1 to
+  /// REQUIRE_SMOOTHNESS_END_STRIP must be under REQUIRE_SMOOTHNESS_NSIGMA
+  /// times that strip's measured strip-to-strip beam noise
+  /// (StripSumScatter::JumpSigma), so the cut carries between datasets. The
+  /// published 87Rb macros used 1.2 in their beam = 12 units, 0.10 in beam
+  /// units, about 2.5 sigma of that data's noise; copied unconverted as 1.2
+  /// it was a dead cut. Gated by REQUIRE_SMOOTHNESS. Part of the tagging, so
+  /// a change refills.
   Int_t REQUIRE_SMOOTHNESS_END_STRIP;
-  Double_t REQUIRE_SMOOTHNESS_MAX_STEP;
+  Double_t REQUIRE_SMOOTHNESS_NSIGMA;
+  /// The tail-shape conditions of the published 87Rb per-strip macros
+  /// (TracesVisu2.C at A9-A11), each in sigma of the measured noise so the
+  /// same setting means the same thing on every dataset, and each off at 0 or
+  /// less. Numerator only, like END_STRIP_MAX: they describe the residue, not
+  /// the beam, so they do not enter the per-strip denominator.
+  /// Smoothness continued from REQUIRE_SMOOTHNESS_END_STRIP+1 to the last
+  /// strip with its own, looser, step in JumpSigma of each strip (macros:
+  /// 1.5/12 over strips 13-17, ~3.5 sigma of the 87Rb noise).
+  Double_t TAIL_SMOOTHNESS_NSIGMA;
+  /// Falling tail: from TAIL_FALL_FROM_STRIP to the last strip no
+  /// strip-to-strip rise above TAIL_RISE_NSIGMA x JumpSigma of the strip
+  /// (macros: any rise above 0.1/12 from strip 14 on, ~0.2 sigma). A residue
+  /// produced at a late strip is slowing and its deposit falls; a beam
+  /// particle on a pole-zero undershoot, or pileup, does not. FROM_STRIP 0 or
+  /// less: off.
+  Int_t TAIL_FALL_FROM_STRIP;
+  Double_t TAIL_RISE_NSIGMA;
+  /// Start the falling-tail check at the trace's own peak instead of a fixed
+  /// strip: the maximum deposit over the post window reac .. YHiOf(reac),
+  /// after which a residue only declines. Adapts to the reaction strip, so
+  /// it removes a trace that returns to the beam and rises again before its
+  /// stop, which a fixed start strip lets through at early reactions. Takes
+  /// precedence over TAIL_FALL_FROM_STRIP; needs TAIL_RISE_NSIGMA > 0.
+  Bool_t TAIL_FALL_AFTER_PEAK;
+  /// No return: after the post-window peak, once the trace has come back
+  /// down to within TAIL_RETURN_NSIGMA x StripSigma above the beam it must
+  /// not rise above TAIL_RERISE_NSIGMA x StripSigma above the beam again. A
+  /// residue stays above the beam until it stops; a tag that returns to the
+  /// beam and climbs again is a beam particle with a later disturbance. Two
+  /// thresholds so noise around the beam level cannot toggle it. RERISE 0 or
+  /// less: off.
+  Double_t TAIL_RETURN_NSIGMA;
+  Double_t TAIL_RERISE_NSIGMA;
+  /// Per-strip ceilings downstream of the reaction, strip -> sigma below the
+  /// beam in that strip's measured spread (StripSumScatter::StripSigma):
+  /// total[s] < 1 - nsigma x StripSigma(s). Applied on top of END_STRIP_MAX
+  /// (macros: strip 16 below 11.9/12 and strip 17 below 11.3-11.5/12, i.e.
+  /// 0.4 and 1.5-2.5 sigma of the 87Rb spread). Empty: off.
+  std::map<Int_t, Double_t> LATE_STRIP_BELOW_NSIGMA;
+  /// Zigzag veto: with d[k] = total[k] - total[k-1], reject when for any k in
+  /// ZIGZAG_FROM_STRIP .. ZIGZAG_TO_STRIP-1 the derivative changes sign
+  /// between d[k] and d[k+1] and the swing |d[k+1] - d[k]| exceeds
+  /// ZIGZAG_SWING_NSIGMA x sqrt(3) x JumpSigma(k), the swing's width for
+  /// independent strip noise (macros at A10/A11: strips 11-15, 0.9/12, ~1
+  /// sigma). A single-strip spike veto. NSIGMA 0 or less: off.
+  Int_t ZIGZAG_FROM_STRIP;
+  Int_t ZIGZAG_TO_STRIP;
+  Double_t ZIGZAG_SWING_NSIGMA;
+  /// Persistence of the excess: every strip from reac+1 to reac+
+  /// POST_ABOVE_STRIPS (capped at the last strip) must sit more than
+  /// POST_ABOVE_NSIGMA x StripSigma(s) above the beam, total[s] > 1 + nsigma
+  /// x StripSigma(s). A noise tag is one strip high and its neighbours are
+  /// not; a residue stays high for several strips (macros at A5-A8: strips
+  /// reac+1 .. 9-12 above 12.5-12.65, i.e. 4 strips at ~1.2 sigma of the
+  /// 87Rb spread). NSIGMA or STRIPS 0 or less: off.
+  Double_t POST_ABOVE_NSIGMA;
+  Int_t POST_ABOVE_STRIPS;
+  /// Divide the plane y by the event's own mean deposit over strips 1 ..
+  /// reac-1, as the published macros did (their `ratio`), so per-event beam
+  /// energy and gain jitter cancel instead of widening the beam ridge. Keeps
+  /// y in strips-worth units (beam = 1 per strip). Part of the built
+  /// quantity, so a change re-projects; the region cuts must be refit.
+  Bool_t Y_RATIO_TO_UPSTREAM;
 
   /// Minimum jump at the reaction strip for a tag, in sigma of the measured
   /// strip-to-strip beam noise (StripSumScatter::JumpSigma). Part of the
@@ -110,9 +181,27 @@ struct StripSumScatterConfig {
   /// conditional sigma above the beam ridge, free in x across the window, for
   /// a reaction cloud that spreads along x and sits below the beam in total
   /// energy (37Cl, where the neutron carries energy out). The (a,a') region
-  /// is the beam ellipse in both.
-  enum AnRegionMode { AN_REGION_MIXTURE, AN_REGION_RIDGE_BAND };
+  /// is the beam ellipse in both. ALL_TAGGED: no fit at all -- every event
+  /// the tag leaves is the reaction, the region is the whole build window
+  /// and the cross section takes the tagged count with no enclosed-fraction
+  /// correction and no region systematic. For strips where the tag
+  /// conditions alone isolate the residues; no (a,a') region is written.
+  enum AnRegionMode {
+    AN_REGION_MIXTURE,
+    AN_REGION_RIDGE_BAND,
+    AN_REGION_ALL_TAGGED
+  };
   AnRegionMode AN_REGION_MODE;
+  /// Per-strip override of AN_REGION_MODE, reaction strip -> mode, for a
+  /// dataset where the tag is clean at some strips and not others. Strips
+  /// absent from the map use AN_REGION_MODE.
+  std::map<Int_t, AnRegionMode> AN_REGION_MODE_STRIPS;
+  /// The mode in force at a reaction strip.
+  AnRegionMode AnRegionModeFor(Int_t reac) const {
+    std::map<Int_t, AnRegionMode>::const_iterator it =
+        AN_REGION_MODE_STRIPS.find(reac);
+    return it == AN_REGION_MODE_STRIPS.end() ? AN_REGION_MODE : it->second;
+  }
   Double_t AN_RIDGE_NSIGMA_LO;
   Double_t AN_RIDGE_NSIGMA_HI;
 
@@ -200,6 +289,27 @@ struct StripSumScatterConfig {
   Bool_t REQUIRE_GATE_S3_S4;
   Bool_t REQUIRE_GATE_S5_S6;
   Bool_t SKIP_SAVGOL_PLOTS;
+  /// Skip the per-run beam-gate figures, the only output under
+  /// plots/strip_sum_scatter/run<N>, so no run folders are created. The
+  /// gates themselves are still fitted and applied.
+  Bool_t SKIP_RUN_PLOTS;
+  /// Also draw the per-region mean traces with RMS bands (the
+  /// region_mean_traces_* figures) next to the trace overlays. Off by
+  /// default: the overlay already carries the beam mean and its measured
+  /// sigma band.
+  Bool_t PLOT_REGION_MEAN_TRACES;
+
+  /// template-match: an event is classed at the strip whose (a,n) template
+  /// fits it best when that chi-square beats the flat beam's by more than
+  /// TEMPLATE_DELTA_CHI2 (25 is a 5 sigma-equivalent). A strip needs
+  /// TEMPLATE_MIN_EVENTS tagged events inside its region to have a template.
+  /// The bootstrap resamples each template TEMPLATE_BOOTSTRAP_TRIALS times
+  /// for its efficiency and a flat trace TEMPLATE_BEAM_TRIALS times for the
+  /// false-positive rate.
+  Double_t TEMPLATE_DELTA_CHI2;
+  Int_t TEMPLATE_MIN_EVENTS;
+  Long64_t TEMPLATE_BOOTSTRAP_TRIALS;
+  Long64_t TEMPLATE_BEAM_TRIALS;
   Bool_t REQUIRE_STRIP_16_BELOW_BEAM;
 
   /// Also render the selected region traces under the OTHER decode
@@ -382,8 +492,12 @@ public:
   /// its own beam-like events; MIN_EVENTS is the smallest sample that is
   /// trusted, BEAM_LO/HI the window (x the channel's beam peak) every long
   /// end must sit in for an event to count as beam, and APPLY_MAX_US how far
-  /// back the correction looks (the undershoot is gone by 40 us; beyond ~100
-  /// us the fitted bins are degenerate with the intercept).
+  /// back the correction looks. The trapezoid baseline is an average over a
+  /// few hundred microseconds, so pulses beyond 100 us still move it: the
+  /// pole-zero study (PoleZeroMUSIC, scripts/kernel_study.sh) found the
+  /// reach the binding limit of the correction and took it to the kernel's
+  /// 316 us edge (kNBins 12->15, kLogHi -4.0->-3.5), worth ~3 ADC of RMS on
+  /// the mismatched chains out-of-sample.
   Bool_t PULSE_HISTORY_CORRECTION;
   Long64_t PULSE_HISTORY_MIN_EVENTS;
   Double_t PULSE_HISTORY_BEAM_LO;

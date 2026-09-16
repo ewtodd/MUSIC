@@ -429,6 +429,22 @@ Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
   // estimates' disagreement is the region systematic, because that
   // disagreement is exactly the overlap ambiguity.
   const Double_t n_raw = CountInCut(h, cut, 1.0);
+  if (C.AnRegionModeFor(reac) == StripSumScatterConfig::AN_REGION_ALL_TAGGED) {
+    // Every tagged event is the reaction: the count is what the tag left,
+    // with no enclosed-fraction correction and no region systematic.
+    pt.n_reac = n_raw;
+    pt.sigma = pt.n_reac / norm;
+    pt.stat = pt.n_reac > 0.0 ? pt.sigma / std::sqrt(pt.n_reac) : 0.0;
+    pt.sys = 0.0;
+    std::cout << Form("   %2d    [%5.2f, %5.2f]      %6.2f   %6.0f  %9.0f   "
+                      "%7.1f +- %.1f (%.1f stat; all tagged events counted, "
+                      "no region systematic)",
+                      reac, pt.e_in, pt.e_out, pt.e_eff, pt.n_reac, pt.n_denom,
+                      pt.sigma, pt.Err(), pt.stat)
+              << std::endl;
+    delete cut;
+    return kTRUE;
+  }
   const Bool_t band =
       C.AN_REGION_MODE == StripSumScatterConfig::AN_REGION_RIDGE_BAND;
   RegionFit band_fit;

@@ -13,6 +13,7 @@
 #include <TH2F.h>
 #include <TNamed.h>
 #include <TROOT.h>
+#include <TSystem.h>
 #include <iostream>
 
 int main() {
@@ -37,9 +38,13 @@ int main() {
     std::cout << "  fingerprint " << fp->GetTitle() << std::endl;
   }
 
-  const Bool_t band =
+  const Bool_t band_default =
       C.AN_REGION_MODE == StripSumScatterConfig::AN_REGION_RIDGE_BAND;
-  if (band)
+  if (C.AN_REGION_MODE == StripSumScatterConfig::AN_REGION_ALL_TAGGED)
+    std::cout << "compute-regions: every tagged event is (a,n), no fit; reac "
+              << C.REACTION_STRIP_MIN << ".." << C.REACTION_STRIP_MAX
+              << std::endl;
+  else if (band_default)
     std::cout << "compute-regions: beam component per strip; (a,n) region = "
                  "the band "
               << C.AN_RIDGE_NSIGMA_LO << ".." << C.AN_RIDGE_NSIGMA_HI
@@ -61,6 +66,30 @@ int main() {
     if (!h)
       continue;
     nTried++;
+    const StripSumScatterConfig::AnRegionMode mode = C.AnRegionModeFor(reac);
+    if (mode == StripSumScatterConfig::AN_REGION_ALL_TAGGED) {
+      // Every tagged event is the reaction: the region is the whole build
+      // window and the attributed count is the scatter's content. No (a,a')
+      // region; a stale one from an earlier fit is removed so nothing
+      // downstream picks it up.
+      TCutG *an = new TCutG("region_an", 5);
+      an->SetPoint(0, ScatterBuildRange::kXMin, ScatterBuildRange::kYMin);
+      an->SetPoint(1, ScatterBuildRange::kXMax, ScatterBuildRange::kYMin);
+      an->SetPoint(2, ScatterBuildRange::kXMax, ScatterBuildRange::kYMax);
+      an->SetPoint(3, ScatterBuildRange::kXMin, ScatterBuildRange::kYMax);
+      an->SetPoint(4, ScatterBuildRange::kXMin, ScatterBuildRange::kYMin);
+      const Double_t nAn = h->Integral();
+      std::cout << Form("  [region] reac %2d: all tagged events are (a,n): "
+                        "%.0f",
+                        reac, nAn)
+                << std::endl;
+      RegionCutStore::Save(reac, an, nullptr, nAn);
+      gSystem->Unlink(RegionCutStore::Path("region_aa", reac));
+      delete an;
+      nOk++;
+      continue;
+    }
+    const Bool_t band = mode == StripSumScatterConfig::AN_REGION_RIDGE_BAND;
     // Same window the scatter is displayed in.
     Double_t y_lo = C.Y_DISPLAY_MIN, y_hi = C.Y_DISPLAY_MAX;
     std::map<Int_t, std::pair<Double_t, Double_t>>::const_iterator it =

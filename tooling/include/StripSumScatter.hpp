@@ -51,6 +51,49 @@
  * region cut costs a reprojection rather than another pass over the data.
  */
 
+/**
+ * @brief The conditions of the reaction tag, in the order they are applied.
+ *
+ * `StripSumScatter::RejectReason` returns the first one an event fails at a
+ * reaction strip, so the per-condition counts are sequential: each counts
+ * events that passed everything before it. `kTagPass` is a tag.
+ */
+enum TagCut {
+  kTagPass = 0,
+  kCutAllStrips, ///< A strip did not fire.
+  kCutUpstream,  ///< A strip before the reaction was not beam-like.
+  kCutJump,      ///< Jump at the reaction strip outside [min, max].
+  kCutReacLevel, ///< Reaction-strip deposit outside 1 + [min, max].
+  kCutSmooth,    ///< A post-reaction step to REQUIRE_SMOOTHNESS_END_STRIP.
+  kCutTailStep,  ///< A step past that strip (TAIL_SMOOTHNESS_NSIGMA).
+  kCutTailRise,  ///< A rise in the tail (TAIL_RISE_NSIGMA).
+  kCutRerise,    ///< Back at the beam, then above it again (TAIL_RERISE_*).
+  kCutLateStrip, ///< A late strip above its ceiling (LATE_STRIP_BELOW_NSIGMA).
+  kCutPostAbove, ///< The excess did not persist (POST_ABOVE_*).
+  kCutZigzag,    ///< A derivative sign flip with a large swing (ZIGZAG_*).
+  kCutEndStrip,  ///< The end strip not below END_STRIP_MAX.
+  kNTagCuts
+};
+/// @brief Short labels for TagCut, indexed by it.
+extern const char *const kTagCutName[kNTagCuts];
+
+/**
+ * @brief The event-level cuts applied before any reaction is asked about, in
+ * order; sequential like TagCut. `kPrePass` reached the tag.
+ */
+enum PreCut {
+  kPrePass = 0,
+  kPreGate,     ///< Failed a beam gate.
+  kPrePileup,   ///< Pileup.
+  kPreNoise,    ///< Noise.
+  kPreOffbeam,  ///< Off-beam (REJECT_OFFBEAM).
+  kPreParity,   ///< Even/odd asymmetry (PARITY_ASYM_MAX).
+  kPreBothMult, ///< Both-ends multiplicity (BOTH_MULT_MAX).
+  kNPreCuts
+};
+/// @brief Short labels for PreCut, indexed by it.
+extern const char *const kPreCutName[kNPreCuts];
+
 /// @brief A pair of strips whose sums form one classification plane.
 struct GateSpec {
   Int_t sx; ///< Strip whose sum forms the x axis.
@@ -163,6 +206,11 @@ struct SingleRunFillResult {
   std::vector<Long64_t> normed_at;
   /// Events tagged at each reaction strip, indexed the same way.
   std::vector<Long64_t> tagged;
+  /// Sequential per-condition counts, `[ReacIndex(reac) * kNTagCuts + cut]`,
+  /// for the tag-cut report. `kTagPass` entries equal `tagged`.
+  std::vector<Long64_t> cut_counts;
+  /// Sequential event-level counts, indexed by PreCut.
+  std::vector<Long64_t> pre_counts;
   /// @brief Construct with zeroed counters.
   SingleRunFillResult() : gated(0), seen(0), normed(0) {}
 };
@@ -267,6 +315,13 @@ private:
   Long64_t m_nNormed;
   std::vector<Long64_t> m_normedAt;
   std::vector<Long64_t> m_tagged;
+  // Per-condition tag counts from the last fill, for the cut report; not
+  // cached, so a cache load leaves them empty and writes no report.
+  std::vector<Long64_t> m_cutCounts;
+  std::vector<Long64_t> m_preCounts;
+  /// Print the per-condition counts and write them to
+  /// plots/strip_sum_scatter/tag_cuts.txt.
+  void WriteCutReport() const;
   Double_t m_yLo[64];
   Double_t m_yHi[64];
 
@@ -327,11 +382,17 @@ private:
   static void DrawTraceSet(const std::vector<TGraph *> &traces, Int_t color);
   void DrawAltDecodeRegionTraces(Int_t reac, TCutG *cutAn, TCutG *cutAa);
   static TGraph *TraceFromTotal(const Float_t *total);
+  /// Overlay of sampled traces per region. The beam is drawn as its mean
+  /// with a +-1 sigma band rather than as individual traces: the sigma is
+  /// the cache-measured per-strip beam spread (StripSigma, scaled by the
+  /// sample mean so it applies in ADC too) when `beam_sigma_measured`, else
+  /// the sample's own RMS (for smoothed traces, whose noise is narrower).
   static void DrawRegionTraces(const TString &save_name, const TString &subdir,
                                const std::vector<TGraph *> &beam,
                                const std::vector<TGraph *> &aa,
                                const std::vector<TGraph *> &an, Double_t y_min,
-                               Double_t y_max, const char *y_title);
+                               Double_t y_max, const char *y_title,
+                               Bool_t beam_sigma_measured = kTRUE);
 
   static void DrawRegionMeanTraces(const TString &save_name,
                                    const TString &subdir,
@@ -395,9 +456,66 @@ public:
    *       the one that produced the count would not apply to it.
    */
   static Bool_t PassesReaction(const EnergyView &ev, Int_t reac);
+  /**
+   * @brief The tail-shape part of the tag, applied inside PassesReaction.
+   *
+   * The conditions the published 87Rb per-strip macros put on the strips
+   * downstream of the reaction: smoothness continued to the last strip, a
+   * monotonically falling tail, per-strip ceilings and a zigzag veto. Each is
+   * off unless its `StripSumScatterConfig` value is set, so a dataset that
+   * sets none of them tags exactly as before.
+   *
+   * @param ev    Decoded event.
+   * @param reac  Reaction strip index.
+   * @return `kTRUE` if the tail passes every enabled condition.
+   */
+  static Bool_t PassesTail(const EnergyView &ev, Int_t reac);
+  /**
+   * @brief Which condition of the tag an event fails first at a strip.
+   * @param ev    Decoded event.
+   * @param reac  Reaction strip index.
+   * @return `kTagPass` if tagged, else the first failing TagCut. PassesReaction
+   *         is exactly `RejectReason(ev, reac) == kTagPass`.
+   */
+  static TagCut RejectReason(const EnergyView &ev, Int_t reac);
+  /// @brief The tail-shape part of RejectReason: `kTagPass` or the first
+  ///        failing tail condition.
+  static TagCut TailReason(const EnergyView &ev, Int_t reac);
+
+  /// @name Template-match second pass (TemplateMatch.hpp)
+  /// @{
+  /// Per-strip counts of a pass over the events files with the same gates
+  /// and event-level cuts as the fill, classifying each event by template.
+  struct TemplatePassResult {
+    std::vector<Long64_t> matched;            ///< Classed at each strip.
+    std::vector<Long64_t> matched_and_tagged; ///< Of those, tagged there too.
+    Long64_t seen = 0;
+    Long64_t considered = 0; ///< Past the event-level cuts, all strips fired.
+  };
+  /**
+   * @brief Which (a,n) template a trace fits best, if it beats the beam.
+   * @param total       Per-strip totals in beam units.
+   * @param templates   By ReacIndex; an empty entry is a strip without one.
+   * @param delta_chi2  Required improvement over the flat-beam chi-square.
+   * @param[out] chi2_beam_out Chi-square against the flat beam, if wanted.
+   * @param[out] chi2_best_out Chi-square of the best template, if wanted.
+   * @return The reaction strip, or -1 for beam.
+   */
+  static Int_t
+  TemplateClassify(const Double_t *total,
+                   const std::vector<std::vector<Double_t>> &templates,
+                   Double_t delta_chi2, Double_t *chi2_beam_out = nullptr,
+                   Double_t *chi2_best_out = nullptr);
+  TemplatePassResult TemplateMatchPass(
+      const std::vector<Int_t> &runOrder, std::map<Int_t, TChain *> &chains,
+      const std::vector<std::vector<Double_t>> &templates, Double_t delta_chi2);
+  /// @}
 
 private:
   static Bool_t SimBeamGains(Double_t *gain);
+  // Run n indexed tasks on a pool of workers, pulling from a shared queue.
+  static void RunIndexedParallel(Int_t n, Int_t workers,
+                                 const std::function<void(Int_t)> &task);
   static void SimTotal(const Float_t *left, const Float_t *right,
                        const Double_t *gain, Double_t *total);
   static TGraph *SimPopScatter(const TString &file, Int_t reac,

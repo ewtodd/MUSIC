@@ -27,12 +27,26 @@ namespace PulseHistory {
 /// Flag set on a hit whose correction was clamped rather than applied in full.
 const UInt_t kFlagClamped = 0x2000;
 /// Bins in the kernel, spanning #kLogLo to #kLogHi in log10 of dt.
-const Int_t kNBins = 12;
+const Int_t kNBins = 15;
 const Double_t kLogLo = -6.0; ///< Lowest dt bin edge: log10 of 1 us in seconds.
 const Double_t kLogHi =
-    -4.0; ///< Highest dt bin edge: log10 of 100 us in seconds.
+    -3.5; ///< Highest dt bin edge: log10 of 316 us in seconds.
 /// Maximum amplitude bands a kernel may split the previous pulse into.
 const Int_t kMaxAmpBins = 6;
+/// @name Decay-time fit
+/// Every fitted kernel's group additionally summarises the pre-correction
+/// deviation-against-dt profile with `p0 + p1 exp(-dt / p2) + p3 dt` over
+/// this window in microseconds. p2 is the preamp decay time the pole-zero
+/// setting failed to cancel. The window starts after the trapezoid freeze
+/// (holdoff plus margin, where the deviation follows the residual itself)
+/// and ends inside the kernel reach, where the profile still carries the
+/// tail and the linear term has not drowned it.
+/// @{
+const Double_t kTauFitLoUs = 8.0;
+const Double_t kTauFitHiUs = 130.0;
+/// Below this many (event, channel) pairs in the window the fit is skipped.
+const Int_t kTauFitMinEntries = 100;
+/// @}
 
 /**
  * @brief Channel groups, one kernel each.
@@ -74,7 +88,32 @@ struct Kernel {
   Bool_t ok = kFALSE; ///< Whether this group was successfully fitted.
   Int_t n_amp = 1;    ///< Amplitude bands actually used, at most #kMaxAmpBins.
   Double_t k[kMaxAmpBins]
-            [kNBins];        ///< Coefficients, `[amplitude band][dt bin]`.
+            [kNBins]; ///< Coefficients, `[amplitude band][dt bin]`.
+  /// @brief Single-exponential summary of the dt profile for this group.
+  ///
+  /// Fitted to the pre-correction mean deviation against dt over
+  /// `p0 + p1 exp(-dt / p2) + p3 dt`, in microseconds and ADC. The linear
+  /// term is not cosmetic: the trapezoid baseline is an average over a few
+  /// hundred microseconds, and a hit with a long gap behind it finds that
+  /// average less depressed by pile-up, lifting the profile roughly in
+  /// proportion to the gap. Without p3 the fitted time constant comes out
+  /// about 15 percent short on every group with a pole-zero mismatch.
+  /// p2 is the preamp decay time the pole-zero failed to cancel; #flat flags
+  /// the profiles with no decay to measure (see the flat rule in
+  /// PulseHistory.cpp).
+  struct TauFit {
+    Bool_t ok = kFALSE;   ///< Whether the fit converged.
+    Bool_t flat = kTRUE;  ///< Amplitude within 2 sigma of zero: no decay.
+    Double_t p0 = 0.0;    ///< Level at large dt, ADC.
+    Double_t p1 = 0.0;    ///< Tail amplitude at dt = 0, ADC.
+    Double_t p1err = 0.0; ///< Its error, ADC.
+    Double_t p2 = 0.0;    ///< Decay time, us.
+    Double_t p2err = 0.0; ///< Its error, us.
+    Double_t p3 = 0.0;    ///< Linear lift (the baseline term), ADC/us.
+    Double_t chi2 = 0.0;  ///< Chi2 of the fit over the window.
+    Int_t ndf = 0;        ///< Its degrees of freedom.
+  };
+  TauFit tau;                ///< Summary of the dt profile, all hits.
   Double_t intercept = 0.0;  ///< Fit intercept, in ADC.
   Double_t r2 = 0.0;         ///< Coefficient of determination.
   Double_t rms_before = 0.0; ///< Channel-deviation RMS before correction.

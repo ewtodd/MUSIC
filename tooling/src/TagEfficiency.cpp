@@ -122,17 +122,22 @@ Bool_t TagEfficiency::LoadSigmas(TFile &cache) {
   return found > 0;
 }
 
-// Strips with a hand-drawn cut for this channel, one past XS_STRIP_MAX for
-// the migration out of the last strip. The fitted ellipses are not used: until
-// they reproduce the drawn cuts they also sweep in the beam tail under the
-// island, which outnumbers the reaction a hundred to one at the low strips and
-// drags the mean onto the ridge.
+// Strips with a region cut for this channel, one past XS_STRIP_MAX for the
+// migration out of the last strip. A hand-drawn cut is preferred: a fitted
+// ellipse that also sweeps in beam tail under the island drags the mean onto
+// the ridge, and at the low strips the tail outnumbers the reaction a hundred
+// to one. Where none is drawn the saved cut is used -- the fit, or the
+// all-tagged box, which is exact when the tag conditions alone isolate the
+// residues -- and the method label says so.
 void TagEfficiency::LoadDrawnCuts(const TString &region) {
   const CrossSectionConfig &X = Constants::cfg.CROSS_SECTION_CONFIG;
   strips_.clear();
   for (Int_t reac = X.XS_STRIP_MIN; reac <= X.XS_STRIP_MAX + 1; reac++) {
     Strip st;
     st.cut = RegionCutStore::LoadDrawn(region, reac);
+    st.drawn = st.cut != nullptr;
+    if (!st.cut)
+      st.cut = RegionCutStore::Load(region, reac);
     if (st.cut)
       strips_[reac] = st;
   }
@@ -242,8 +247,8 @@ void TagEfficiency::DrawMeanTrace(const TString &subdir, Int_t reac,
   line->SetLineWidth(2);
   line->Draw("L SAME");
   TLegend *leg = PlottingUtils::AddLegend(0.40, 0.875, 0.72, 0.86);
-  leg->AddEntry(
-      line, Form("Mean trace, %.0f events in the drawn cut", st.count), "l");
+  leg->AddEntry(line, Form("Mean trace, %.0f events in the region", st.count),
+                "l");
   leg->AddEntry(band, "#pm1#sigma beam width per strip", "f");
   leg->Draw();
   PlottingUtils::AddText(Form("reaction strip %d", reac), 0.875, 0.68);
@@ -258,7 +263,7 @@ void TagEfficiency::DrawPlane(const TString &subdir, Int_t reac, TH2F *plane,
   TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
   c->SetLogz(kTRUE);
   PlottingUtils::ConfigureAndDraw2DHistogram(
-      plane, c, Form("reac %d: bootstrap on the drawn cut", reac));
+      plane, c, Form("reac %d: bootstrap on the region cut", reac));
   cut->SetLineColor(kBlack);
   cut->SetLineWidth(2);
   cut->SetFillStyle(0);
@@ -276,9 +281,9 @@ Bool_t TagEfficiency::RunChannel(const CrossSectionChannel &ch,
   const TString subdir = "tag_efficiency/" + ch.name;
   LoadDrawnCuts(region);
   if (strips_.empty()) {
-    std::cerr << "tag-efficiency: channel " << ch.name
-              << ": no hand-drawn cuts (" << region
-              << "); draw them in strip-sum-scatter first" << std::endl;
+    std::cerr << "tag-efficiency: channel " << ch.name << ": no region cuts ("
+              << region << "); run compute-regions or draw them first"
+              << std::endl;
     return kFALSE;
   }
   std::cout << "tag-efficiency: channel " << ch.name << ": mean traces inside "
@@ -289,13 +294,13 @@ Bool_t TagEfficiency::RunChannel(const CrossSectionChannel &ch,
   MeanTraces(reservoir);
 
   std::vector<TagEfficiencyRecord> records;
-  std::cout << Form("%5s %10s %9s %9s %9s", "strip", "in cut", "tag eff", "eff",
-                    "migrate")
+  std::cout << Form("%5s %10s %9s %9s %9s  %s", "strip", "in cut", "tag eff",
+                    "eff", "migrate", "cut")
             << std::endl;
   for (Int_t reac = X.XS_STRIP_MIN; reac <= X.XS_STRIP_MAX; reac++) {
     if (strips_.find(reac) == strips_.end() ||
         strips_[reac].count < kMinEventsInCut) {
-      std::cout << Form("%5d %10.0f   no drawn cut or too few events", reac,
+      std::cout << Form("%5d %10.0f   no region cut or too few events", reac,
                         strips_.count(reac) ? strips_[reac].count : 0.0)
                 << std::endl;
       continue;
@@ -317,8 +322,9 @@ Bool_t TagEfficiency::RunChannel(const CrossSectionChannel &ch,
     r.migrate = Double_t(o.next_inside) / Double_t(o.n);
     r.tag_eff = Double_t(o.tagged) / Double_t(o.n);
     records.push_back(r);
-    std::cout << Form("%5d %10.0f %9.3f %9.3f %9.3f", reac, r.n_counted,
-                      r.tag_eff, r.eff, r.migrate)
+    std::cout << Form("%5d %10.0f %9.3f %9.3f %9.3f  %s", reac, r.n_counted,
+                      r.tag_eff, r.eff, r.migrate,
+                      st.drawn ? "hand-drawn" : "saved fit / all-tagged")
               << std::endl;
 
     DrawMeanTrace(subdir, reac, st);

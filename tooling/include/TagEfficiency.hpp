@@ -87,7 +87,7 @@ TString Method();
  *
  * Takes the strip's mean trace of the channel's events **from the data**,
  * resamples it with the measured per-strip beam widths, and pushes the result
- * through the real tag and the channel's real hand-drawn region cut. Running
+ * through the real tag and the channel's real region cut. Running
  * the actual selection on realistic pseudo-events is what makes the resulting
  * efficiency apply to the count it is paired with.
  *
@@ -98,19 +98,21 @@ public:
   /**
    * @brief Measure every configured channel and write the store and figures.
    * @return `kFALSE` when a prerequisite is missing — the scatter cache, the
-   *         noise sigmas, or the hand-drawn cuts.
+   *         noise sigmas, or the region cuts.
    */
   Bool_t Run();
 
   /// @brief The label stamped into the store for this method.
   static const char *MethodLabel() {
-    return "bootstrap: mean trace inside the hand-drawn cut, resampled with "
-           "the measured per-strip beam widths";
+    return "bootstrap: mean trace inside the region cut (hand-drawn where "
+           "one exists, else the saved fit or all-tagged region), resampled "
+           "with the measured per-strip beam widths";
   }
 
 private:
   struct Strip {
-    TCutG *cut = nullptr;       // the channel's hand-drawn cut at this strip
+    TCutG *cut = nullptr;       // the channel's region cut at this strip
+    Bool_t drawn = kFALSE;      // hand-drawn, or the saved fit / all-tagged box
     std::vector<Double_t> mean; // mean trace of the events inside it
     Double_t count = 0.0;       // how many
   };

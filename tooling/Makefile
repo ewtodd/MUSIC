@@ -90,7 +90,7 @@ DATASET_CFG_OBJ := $(BUILD_DIR)/dataset_constants.o
 SRC_OBJS += $(DATASET_CFG_OBJ)
 
 # Binary "foo-bar" is built from tooling/mains/main_foo_bar.cpp (dashes->underscores).
-BINS := pipeline calibrate-beam strip-sum-scatter split-sol preprocess-sol compute-regions cross-section talys-xs tag-efficiency
+BINS := pipeline calibrate-beam strip-sum-scatter split-sol preprocess-sol compute-regions cross-section talys-xs tag-efficiency template-match
 
 BIN_PATHS := $(addprefix $(BIN_DIR)/,$(BINS))
 

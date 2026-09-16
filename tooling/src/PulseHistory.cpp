@@ -5,7 +5,9 @@
 #include "PlottingUtils.hpp"
 #include <TCanvas.h>
 #include <TDecompSVD.h>
+#include <TF1.h>
 #include <TFile.h>
+#include <TFitResultPtr.h>
 #include <TGraph.h>
 #include <TH1D.h>
 #include <TH2D.h>
@@ -113,6 +115,51 @@ Int_t BinOf(Double_t dt_s) {
 Double_t BinCentreUs(Int_t b) {
   return TMath::Power(10.0, kLogLo + (b + 0.5) * (kLogHi - kLogLo) / kNBins) *
          1.0e6;
+}
+
+// p0 + p1 exp(-dt / p2) + p3 dt through (dt us, deviation ADC) pairs, the
+// form the pole-zero residual plus the slow baseline lift takes. A p1 within
+// 2 sigma of zero, or a p2 pinned at a limit, means the profile has no decay
+// to measure: the group's pole-zero is matched, and a decay time off such a
+// fit is noise.
+void FitTauDecay(const std::vector<Double_t> &dt_us,
+                 const std::vector<Double_t> &dev, Kernel::TauFit &out) {
+  out = Kernel::TauFit{};
+  const Int_t n = Int_t(dt_us.size());
+  if (n < kTauFitMinEntries)
+    return;
+  // Bin the pairs into a profile so the fit weights the well-populated early
+  // bins, where the tail lives, against the sparse long tail of the window;
+  // a TProfile's bin errors do that, and ROOT skips its empty bins.
+  const Int_t nb = 60;
+  TProfile *prof = new TProfile("ph_tau_fit", "", nb, kTauFitLoUs, kTauFitHiUs);
+  for (Int_t i = 0; i < n; i++)
+    prof->Fill(dt_us[i], dev[i]);
+  TF1 *f = new TF1("ph_tau_fit_fn", "[0] + [1] * exp(-x / [2]) + [3] * x",
+                   kTauFitLoUs, kTauFitHiUs);
+  const Double_t head = prof->GetBinContent(prof->FindBin(kTauFitLoUs + 1.0));
+  const Double_t tail = prof->GetBinContent(prof->FindBin(kTauFitHiUs - 5.0));
+  f->SetParameters(tail, head - tail, 10.0, 0.0);
+  f->SetParLimits(2, 0.5, 200.0);
+  TFitResultPtr r = prof->Fit(f, "RQS0");
+  if (Int_t(r) == 0) {
+    out.ok = kTRUE;
+    out.p0 = f->GetParameter(0);
+    out.p1 = f->GetParameter(1);
+    out.p1err = f->GetParError(1);
+    out.p2 = f->GetParameter(2);
+    out.p2err = f->GetParError(2);
+    out.p3 = f->GetParameter(3);
+    out.chi2 = f->GetChisquare();
+    out.ndf = f->GetNDF();
+    out.flat = TMath::Abs(out.p1) < 2.0 * out.p1err || out.p2 <= 0.51 ||
+               out.p2 >= 199.0;
+  }
+  // "S" gives the histogram ownership of the fit function; mark it
+  // referenced so deleting the profile does not delete it under us.
+  f->SetBit(TF1::kNotDraw);
+  delete f;
+  delete prof;
 }
 
 Int_t AmpBinOf(Double_t e_prev, Double_t mode, Int_t n_amp) {
@@ -483,6 +530,27 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
   if (!any)
     return kFALSE;
 
+  // Decay-time summary per fitted group: the pre-correction deviation
+  // against the time to the previous pulse, fitted over the decay window
+  // with p0 + p1 exp(-dt / p2) + p3 dt (see Kernel::TauFit for why the
+  // linear term is needed). p2 is the preamp decay time the pole-zero
+  // setting failed to cancel, the number the hardware study is after; the
+  // binned kernel above is unchanged by it.
+  for (Int_t g = 1; g < kNGroups; g++) {
+    Kernel &K = res.kernel[g];
+    if (!K.ok)
+      continue;
+    std::vector<Double_t> dt_us, dev;
+    scan(g, [&](Int_t, const std::vector<Double_t> &, Double_t y,
+                Double_t dt_prev) {
+      if (dt_prev >= kTauFitLoUs && dt_prev <= kTauFitHiUs) {
+        dt_us.push_back(dt_prev);
+        dev.push_back(y);
+      }
+    });
+    FitTauDecay(dt_us, dev, K.tau);
+  }
+
   // Pass C: diagnostics, with the fitted kernels. Log-time axes are
   // log10(dt) where dt is the time difference in microseconds
   if (Constants::cfg.SAVE_PLOTS) {
@@ -609,6 +677,21 @@ TString Report(const Result &res, const TString &file_label) {
       for (Int_t b = 0; b < kNBins; b++)
         s += Form(" %.0fus:%+.3f", BinCentreUs(b), K.k[a][b]);
       s += "\n";
+    }
+    // Decay-time summary of the raw dt profile: p2 is the preamp decay the
+    // pole-zero did not cancel; flat profiles (matched chains) have no
+    // meaningful p2 and say so.
+    if (K.tau.ok) {
+      if (K.tau.flat)
+        s += Form(
+            "      tau fit: flat (A %.1f +- %.1f ADC within 2 sigma of 0)\n",
+            K.tau.p1, K.tau.p1err);
+      else
+        s += Form(
+            "      tau fit: %.1f +- %.1f us  (A %+.1f +- %.1f ADC,"
+            " level %+.1f, baseline lift %+.4f ADC/us, chi2/ndf %.1f/%d)\n",
+            K.tau.p2, K.tau.p2err, K.tau.p1, K.tau.p1err, K.tau.p0, K.tau.p3,
+            K.tau.chi2, K.tau.ndf);
     }
   }
   return s;
@@ -745,6 +828,9 @@ void WriteToEventsFile(const TString &events_subpath, const Result &res) {
   TTree *t = new TTree("pulse_history", "Pulse-history kernel per group");
   Int_t group = 0, n_amp = 1;
   Bool_t ok = kFALSE;
+  Double_t tau_us = 0.0, tau_err_us = 0.0, tau_p0 = 0.0, tau_p1 = 0.0,
+           tau_p3 = 0.0;
+  Bool_t tau_ok = kFALSE, tau_flat = kTRUE;
   Double_t k[kMaxAmpBins * kNBins], centre_us[kNBins],
       intercept = 0.0, r2 = 0.0, rms_before = 0.0, rms_after = 0.0,
       mean_shift = 0.0, apply_max_us = 0.0;
@@ -760,6 +846,15 @@ void WriteToEventsFile(const TString &events_subpath, const Result &res) {
   t->Branch("RmsAfter", &rms_after, "RmsAfter/D");
   t->Branch("MeanShift", &mean_shift, "MeanShift/D");
   t->Branch("ApplyMaxUs", &apply_max_us, "ApplyMaxUs/D");
+  // Decay-time summary of the raw dt profile (p0 + p1 exp(-dt/p2) + p3 dt);
+  // see Kernel::TauFit. Flat groups have tau_ok but tau_flat and p2 = 0.
+  t->Branch("TauOk", &tau_ok, "TauOk/O");
+  t->Branch("TauFlat", &tau_flat, "TauFlat/O");
+  t->Branch("TauUs", &tau_us, "TauUs/D");
+  t->Branch("TauErrUs", &tau_err_us, "TauErrUs/D");
+  t->Branch("TauP0", &tau_p0, "TauP0/D");
+  t->Branch("TauAmp", &tau_p1, "TauAmp/D");
+  t->Branch("TauLift", &tau_p3, "TauLift/D");
   t->Branch("N", &n, "N/L");
   t->Branch("NBeamEvents", &n_beam, "NBeamEvents/L");
   t->Branch("NCorrected", &n_corrected, "NCorrected/L");
@@ -780,6 +875,13 @@ void WriteToEventsFile(const TString &events_subpath, const Result &res) {
     rms_after = K.rms_after;
     mean_shift = res.mean_shift[g];
     apply_max_us = Constants::cfg.PULSE_HISTORY_APPLY_MAX_US;
+    tau_ok = K.tau.ok;
+    tau_flat = K.tau.flat;
+    tau_us = K.tau.ok ? K.tau.p2 : 0.0;
+    tau_err_us = K.tau.ok ? K.tau.p2err : 0.0;
+    tau_p0 = K.tau.p0;
+    tau_p1 = K.tau.p1;
+    tau_p3 = K.tau.p3;
     n = K.n;
     n_beam = res.n_beam_events;
     n_corrected = res.n_corrected;
