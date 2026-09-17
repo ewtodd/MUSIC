@@ -36,10 +36,10 @@ const char *GroupName(Int_t g) {
     return "short L (even strips)";
   case kShortRight:
     return "short R (odd strips)";
-  case kGuard0:
-    return "guard strip 0";
-  case kGuard17:
-    return "guard strip 17";
+  case kStrip0:
+    return "strip 0 (unsegmented)";
+  case kStrip17:
+    return "strip 17 (unsegmented)";
   }
   return "none";
 }
@@ -54,9 +54,9 @@ const char *GroupTag(Int_t g) {
     return "Ls";
   case kShortRight:
     return "Rs";
-  case kGuard0:
+  case kStrip0:
     return "S0";
-  case kGuard17:
+  case kStrip17:
     return "S17";
   }
   return "none";
@@ -117,20 +117,19 @@ Double_t BinCentreUs(Int_t b) {
          1.0e6;
 }
 
-// p0 + p1 exp(-dt / p2) + p3 dt through (dt us, deviation ADC) pairs, the
-// form the pole-zero residual plus the slow baseline lift takes. A p1 within
-// 2 sigma of zero, or a p2 pinned at a limit, means the profile has no decay
-// to measure: the group's pole-zero is matched, and a decay time off such a
-// fit is noise.
+/// p0 + p1 exp(-dt / p2) + p3 dt through (dt us, deviation ADC) pairs, the
+/// form the pole-zero residual plus the slow baseline lift takes. A p1 within
+/// 2 sigma of zero, or a p2 pinned at a limit, means the profile has no decay
+/// to measure: the group's pole-zero is matched, and a decay time off such a
+/// fit is noise.
 void FitTauDecay(const std::vector<Double_t> &dt_us,
                  const std::vector<Double_t> &dev, Kernel::TauFit &out) {
   out = Kernel::TauFit{};
   const Int_t n = Int_t(dt_us.size());
   if (n < kTauFitMinEntries)
     return;
-  // Bin the pairs into a profile so the fit weights the well-populated early
-  // bins, where the tail lives, against the sparse long tail of the window;
-  // a TProfile's bin errors do that, and ROOT skips its empty bins.
+  // Binned into a TProfile: its bin errors weight populated early bins, where
+  // the tail lives, against the sparse long tail, ROOT skips empty bins.
   const Int_t nb = 60;
   TProfile *prof = new TProfile("ph_tau_fit", "", nb, kTauFitLoUs, kTauFitHiUs);
   for (Int_t i = 0; i < n; i++)
@@ -183,11 +182,11 @@ std::vector<Int_t> BuildGroupMap() {
     if (idx < 0 || idx >= Int_t(gm.size()))
       continue;
     if (name == "Strip0") {
-      gm[idx] = kGuard0;
+      gm[idx] = kStrip0;
       continue;
     }
     if (name == "Strip17") {
-      gm[idx] = kGuard17;
+      gm[idx] = kStrip17;
       continue;
     }
     if (name.Length() < 2 || (name[0] != 'L' && name[0] != 'R'))
@@ -238,13 +237,112 @@ inline Int_t Feat(Int_t a, Int_t b) { return 1 + a * kNBins + b; }
 Double_t Shift(const std::deque<Past> &d, Double_t t, const Kernel &K,
                Double_t mode) {
   Double_t s = 0.0;
-  for (const Past &p : d) {
+  for (size_t k = 0; k < d.size(); k++) {
+    const Past &p = d[k];
     const Int_t b = BinOf((t - p.t) * 1.0e-12);
     if (b < 0)
       continue;
     s += K.k[AmpBinOf(p.e, mode, K.n_amp)][b] * p.e;
   }
   return s;
+}
+
+// The hit window and channel maps shared by the seed pass and the scan: the
+// per-channel maxima of the current event window, refilled at every seed.
+struct ScanState {
+  const std::vector<RawHit> &hits;
+  const std::vector<Int_t> &group_of;
+  const std::vector<Int_t> &fit_ch;
+  const std::vector<Int_t> &long_ch;
+  const std::vector<Double_t> &mode;
+  std::vector<Double_t> &ev_e;
+  const std::vector<Double_t> &mean;
+  Int_t nidx;
+  Int_t strip0;
+  Double_t window_ps;
+  Double_t olo;
+  Double_t ohi;
+  Double_t blo;
+  Double_t bhi;
+  Int_t n_amp;
+  Double_t keep_ps;
+};
+
+// Max hit energy per channel within the event window from seed i0; false if
+// strip 0 did not fire.
+Bool_t Lookahead(const ScanState &st, size_t i0) {
+  for (Int_t k = 0; k < Int_t(st.fit_ch.size()); k++)
+    st.ev_e[st.fit_ch[k]] = 0.0;
+  Bool_t strip0_fired = st.strip0 < 0;
+  const ULong64_t t0 = st.hits[i0].timestamp;
+  for (size_t j = i0 + 1;
+       j < st.hits.size() && st.hits[j].timestamp - t0 < st.window_ps; j++) {
+    const Int_t i = HitIndex(st.hits[j]);
+    if (i == st.strip0 && st.hits[j].energy > 0)
+      strip0_fired = kTRUE;
+    if (i < 0 || i >= st.nidx || st.group_of[i] == kNone)
+      continue;
+    if (Double_t(st.hits[j].energy) > st.ev_e[i])
+      st.ev_e[i] = Double_t(st.hits[j].energy);
+  }
+  return strip0_fired;
+}
+
+// Beam-like for group g: every long end inside its window around its mode,
+// g's own chain loose, the other chain and strips 0/17 tight.
+Bool_t BeamFor(const ScanState &st, Int_t g) {
+  const Int_t chain = ChainOf(g);
+  for (Int_t k = 0; k < Int_t(st.long_ch.size()); k++) {
+    const Int_t c = st.long_ch[k];
+    if (!(st.mode[c] > 0.0))
+      return kFALSE;
+    const Double_t r = st.ev_e[c] / st.mode[c];
+    const Bool_t own = chain >= 0 && ChainOf(st.group_of[c]) == chain;
+    if (own ? (r < st.olo || r > st.ohi) : (r < st.blo || r > st.bhi))
+      return kFALSE;
+  }
+  return kTRUE;
+}
+
+/// One walk over the hits for group g, calling fn(channel, features x,
+/// deviation y, dt to the previous pulse) at every beam-like seed of g. The
+/// per-channel deque holds earlier pulses only, so the seed's own hit never
+/// enters.
+void Scan(const ScanState &st, Int_t g, const std::vector<size_t> &seeds_g,
+          std::vector<Double_t> &x,
+          const std::function<void(Int_t, const std::vector<Double_t> &,
+                                   Double_t, Double_t)> &fn) {
+  std::vector<std::deque<Past>> past(st.nidx);
+  size_t next_seed = 0;
+  for (size_t j = 0; j < st.hits.size(); j++) {
+    if (next_seed < seeds_g.size() && seeds_g[next_seed] == j) {
+      next_seed++;
+      const Double_t tg = Double_t(st.hits[j].timestamp);
+      Lookahead(st, j);
+      for (Int_t k = 0; k < Int_t(st.fit_ch.size()); k++) {
+        const Int_t c = st.fit_ch[k];
+        // A short end or unsegmented strip that did not fire has no height.
+        if (st.group_of[c] != g || !(st.ev_e[c] > 0.0))
+          continue;
+        std::deque<Past> &d = past[c];
+        while (!d.empty() && d.front().t < tg - st.keep_ps)
+          d.pop_front();
+        std::fill(x.begin(), x.end(), 0.0);
+        x[0] = 1.0;
+        for (size_t p = 0; p < d.size(); p++) {
+          const Int_t b = BinOf((tg - d[p].t) * 1.0e-12);
+          if (b >= 0)
+            x[Feat(AmpBinOf(d[p].e, st.mode[c], st.n_amp), b)] += d[p].e;
+        }
+        const Double_t dt_prev = d.empty() ? -1.0 : (tg - d.back().t) * 1.0e-12;
+        fn(c, x, st.ev_e[c] - st.mean[c], dt_prev);
+      }
+    }
+    const Int_t i = HitIndex(st.hits[j]);
+    if (i >= 0 && i < st.nidx && st.group_of[i] == g)
+      past[i].push_back(
+          {Double_t(st.hits[j].timestamp), Double_t(st.hits[j].energy)});
+  }
 }
 
 } // namespace
@@ -265,10 +363,9 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
                      });
 
   const Int_t ref = IndexOfName(Constants::ActiveReferenceChannel());
-  // The entrance guard has to have fired too, or the event is not a beam
-  // particle through the whole chamber (same requirement as the beam-only
-  // selection downstream).
-  const Int_t guard0 = IndexOfName("Strip0");
+  // Strip 0 must have fired too, else it is not a beam particle through the
+  // whole chamber (as in the downstream beam-only selection).
+  const Int_t strip0 = IndexOfName("Strip0");
   if (ref < 0) {
     std::cerr << "  " << file_label
               << ": pulse history: no reference channel in the map"
@@ -294,14 +391,13 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
   if (long_ch.empty())
     return kFALSE;
 
-  // Beam peak per channel: the mode of its raw spectrum above the noise pile.
-  // Beam-like means every long end inside [lo, hi] x its mode. (For a short
-  // end most of the spectrum sits under that pile, so its mode is only a
-  // rough scale, used for the amplitude bands and nothing else.)
+  // Beam peak per channel: mode of the raw spectrum above the noise pile.
+  // Beam-like: every long end in [lo, hi] x mode; short: rough amp bands.
   const Double_t emax = Constants::ActiveStripEMaxAdc();
   const Int_t nb = 128;
   std::vector<std::vector<Long64_t>> spec(nidx, std::vector<Long64_t>(nb, 0));
-  for (const RawHit &h : hits) {
+  for (size_t j = 0; j < hits.size(); j++) {
+    const RawHit &h = hits[j];
     const Int_t i = HitIndex(h);
     if (i < 0 || i >= nidx || group_of[i] == kNone)
       continue;
@@ -310,7 +406,8 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
       spec[i][b]++;
   }
   res.mode.assign(nidx, 0.0);
-  for (Int_t i : fit_ch) {
+  for (Int_t k = 0; k < Int_t(fit_ch.size()); k++) {
+    const Int_t i = fit_ch[k];
     Int_t best = -1;
     for (Int_t b = nb / 16; b < nb; b++) // skip the lowest 1/16 of the range
       if (best < 0 || spec[i][b] > spec[i][best])
@@ -321,47 +418,19 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
   const Double_t blo = Constants::cfg.PULSE_HISTORY_BEAM_LO;
   const Double_t bhi = Constants::cfg.PULSE_HISTORY_BEAM_HI;
 
-  // Pass A: seeds that make a beam-like event for each group, and the channel
-  // means. A beam-like event for group g has the guard fired, every long end
-  // of the OTHER chain inside the tight window, and every long end of g's own
-  // chain inside the loose one: the tight window on the fitted chain would
-  // cut off exactly the large undershoots the kernel has to fit. The guards
-  // belong to neither chain, so both are held tight for them. A short end or
-  // guard enters the fit only in the events where it fired.
+  // Pass A: seeds making a beam-like event for each group, and the channel
+  // means; short ends and strips 0/17 enter the fit only where they fired.
   std::vector<size_t> seeds[kNGroups];
   std::vector<Double_t> mean(nidx, 0.0);
   std::vector<Double_t> ev_e(nidx, 0.0);
   const Double_t olo = Constants::cfg.PULSE_HISTORY_OWN_LO;
   const Double_t ohi = Constants::cfg.PULSE_HISTORY_OWN_HI;
-  auto lookahead = [&](size_t i0) {
-    for (Int_t c : fit_ch)
-      ev_e[c] = 0.0;
-    Bool_t guard_fired = guard0 < 0;
-    const ULong64_t t0 = hits[i0].timestamp;
-    for (size_t j = i0 + 1;
-         j < hits.size() && hits[j].timestamp - t0 < window_ps; j++) {
-      const Int_t i = HitIndex(hits[j]);
-      if (i == guard0 && hits[j].energy > 0)
-        guard_fired = kTRUE;
-      if (i < 0 || i >= nidx || group_of[i] == kNone)
-        continue;
-      if (Double_t(hits[j].energy) > ev_e[i])
-        ev_e[i] = Double_t(hits[j].energy);
-    }
-    return guard_fired;
-  };
-  auto beam_for = [&](Int_t g) {
-    const Int_t chain = ChainOf(g);
-    for (Int_t c : long_ch) {
-      if (!(mode[c] > 0.0))
-        return kFALSE;
-      const Double_t r = ev_e[c] / mode[c];
-      const Bool_t own = chain >= 0 && ChainOf(group_of[c]) == chain;
-      if (own ? (r < olo || r > ohi) : (r < blo || r > bhi))
-        return kFALSE;
-    }
-    return kTRUE;
-  };
+  const Int_t np = 1 + n_amp * kNBins;
+  const Double_t keep_ps = TMath::Power(10.0, kLogHi) * 1.0e12;
+  std::vector<Double_t> x(np, 0.0);
+  const ScanState st = {hits, group_of, fit_ch, long_ch,   mode, ev_e,
+                        mean, nidx,     strip0, window_ps, olo,  ohi,
+                        blo,  bhi,      n_amp,  keep_ps};
   std::vector<Long64_t> nmean(nidx, 0);
   for (size_t j = 0; j < hits.size(); j++) {
     const RawHit &h = hits[j];
@@ -370,17 +439,19 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
     if (Double_t(h.energy) < ref_lo || Double_t(h.energy) > ref_hi)
       continue;
     res.n_seeds++;
-    if (!lookahead(j))
+    if (!Lookahead(st, j))
       continue;
     for (Int_t g = 1; g < kNGroups; g++) {
-      if (!beam_for(g))
+      if (!BeamFor(st, g))
         continue;
       seeds[g].push_back(j);
-      for (Int_t c : fit_ch)
+      for (Int_t k = 0; k < Int_t(fit_ch.size()); k++) {
+        const Int_t c = fit_ch[k];
         if (group_of[c] == g && ev_e[c] > 0.0) {
           mean[c] += ev_e[c];
           nmean[c]++;
         }
+      }
     }
   }
   res.n_beam_events = 0;
@@ -393,52 +464,10 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
               << std::endl;
     return kFALSE;
   }
-  for (Int_t c : fit_ch)
+  for (Int_t k = 0; k < Int_t(fit_ch.size()); k++) {
+    const Int_t c = fit_ch[k];
     mean[c] = nmean[c] ? mean[c] / Double_t(nmean[c]) : 0.0;
-
-  // One walk over the hits for group g, calling fn(channel, features x,
-  // deviation y, dt to the previous pulse) for every channel of g at every
-  // beam-like seed of g. The per-channel deque holds that channel's earlier
-  // pulses only, so the event's own hit (which comes after the seed) never
-  // enters.
-  const Int_t np = 1 + n_amp * kNBins;
-  const Double_t keep_ps = TMath::Power(10.0, kLogHi) * 1.0e12;
-  std::vector<Double_t> x(np, 0.0);
-  auto scan = [&](Int_t g,
-                  const std::function<void(Int_t, const std::vector<Double_t> &,
-                                           Double_t, Double_t)> &fn) {
-    std::vector<std::deque<Past>> past(nidx);
-    size_t next_seed = 0;
-    for (size_t j = 0; j < hits.size(); j++) {
-      if (next_seed < seeds[g].size() && seeds[g][next_seed] == j) {
-        next_seed++;
-        const Double_t tg = Double_t(hits[j].timestamp);
-        lookahead(j);
-        for (Int_t c : fit_ch) {
-          // A short end or guard that did not fire has no height to fit.
-          if (group_of[c] != g || !(ev_e[c] > 0.0))
-            continue;
-          std::deque<Past> &d = past[c];
-          while (!d.empty() && d.front().t < tg - keep_ps)
-            d.pop_front();
-          std::fill(x.begin(), x.end(), 0.0);
-          x[0] = 1.0;
-          for (const Past &p : d) {
-            const Int_t b = BinOf((tg - p.t) * 1.0e-12);
-            if (b >= 0)
-              x[Feat(AmpBinOf(p.e, mode[c], n_amp), b)] += p.e;
-          }
-          const Double_t dt_prev =
-              d.empty() ? -1.0 : (tg - d.back().t) * 1.0e-12;
-          fn(c, x, ev_e[c] - mean[c], dt_prev);
-        }
-      }
-      const Int_t i = HitIndex(hits[j]);
-      if (i >= 0 && i < nidx && group_of[i] == g)
-        past[i].push_back(
-            {Double_t(hits[j].timestamp), Double_t(hits[j].energy)});
-    }
-  };
+  }
 
   // Pass B: normal equations per group.
   TMatrixD A[kNGroups];
@@ -452,18 +481,19 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
     bv[g].Zero();
   }
   for (Int_t g = 1; g < kNGroups; g++)
-    scan(g, [&](Int_t, const std::vector<Double_t> &xx, Double_t y, Double_t) {
-      for (Int_t a = 0; a < np; a++) {
-        if (xx[a] == 0.0)
-          continue;
-        bv[g][a] += xx[a] * y;
-        for (Int_t b = 0; b < np; b++)
-          A[g](a, b) += xx[a] * xx[b];
-      }
-      syy[g] += y * y;
-      sy[g] += y;
-      ng[g]++;
-    });
+    Scan(st, g, seeds[g], x,
+         [&](Int_t, const std::vector<Double_t> &xx, Double_t y, Double_t) {
+           for (Int_t a = 0; a < np; a++) {
+             if (xx[a] == 0.0)
+               continue;
+             bv[g][a] += xx[a] * y;
+             for (Int_t b = 0; b < np; b++)
+               A[g](a, b) += xx[a] * xx[b];
+           }
+           syy[g] += y * y;
+           sy[g] += y;
+           ng[g]++;
+         });
   Bool_t any = kFALSE;
   for (Int_t g = 1; g < kNGroups; g++) {
     Kernel &K = res.kernel[g];
@@ -485,10 +515,8 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
       for (Int_t b = 0; b < nk; b++)
         Ak(a, b) = A[g](keep[a], keep[b]);
     }
-    // SVD rather than LU: the far-dt bins of the rarer amplitude bands are
-    // nearly collinear with the intercept, and a plain inversion gives up on
-    // them. Column scaling first, so the tolerance means the same for every
-    // feature.
+    // SVD, not LU: far-dt bins of rarer amp bands are near-collinear with
+    // intercept; plain inversion gives up; scaling first, tolerance uniform.
     TVectorD scale(nk);
     for (Int_t a = 0; a < nk; a++)
       scale[a] = Ak(a, a) > 0.0 ? 1.0 / TMath::Sqrt(Ak(a, a)) : 1.0;
@@ -530,24 +558,21 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
   if (!any)
     return kFALSE;
 
-  // Decay-time summary per fitted group: the pre-correction deviation
-  // against the time to the previous pulse, fitted over the decay window
-  // with p0 + p1 exp(-dt / p2) + p3 dt (see Kernel::TauFit for why the
-  // linear term is needed). p2 is the preamp decay time the pole-zero
-  // setting failed to cancel, the number the hardware study is after; the
-  // binned kernel above is unchanged by it.
+  // Decay summary per fitted group: pre-correction deviation vs previous-pulse
+  // time. p2 = the preamp decay the pole-zero missed, hardware-study number.
   for (Int_t g = 1; g < kNGroups; g++) {
     Kernel &K = res.kernel[g];
     if (!K.ok)
       continue;
     std::vector<Double_t> dt_us, dev;
-    scan(g, [&](Int_t, const std::vector<Double_t> &, Double_t y,
-                Double_t dt_prev) {
-      if (dt_prev >= kTauFitLoUs && dt_prev <= kTauFitHiUs) {
-        dt_us.push_back(dt_prev);
-        dev.push_back(y);
-      }
-    });
+    Scan(st, g, seeds[g], x,
+         [&](Int_t, const std::vector<Double_t> &, Double_t y,
+             Double_t dt_prev) {
+           if (dt_prev >= kTauFitLoUs && dt_prev <= kTauFitHiUs) {
+             dt_us.push_back(dt_prev);
+             dev.push_back(y);
+           }
+         });
     FitTauDecay(dt_us, dev, K.tau);
   }
 
@@ -558,10 +583,11 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
     const Double_t xlo = kLogLo + 6.0, xhi = kLogHi + 6.0;
     for (Int_t g = 1; g < kNGroups; g++) {
       const char *gn = GroupTag(g);
-      res.dev_vs_pred[g] = new TH2D(
-          Form("h_ph_dev_vs_pred_%s_%s", gn, tag.Data()),
-          ";Predicted Deviation from Mean [ADC];#splitline{Measured}{Deviation from Mean [ADC]}",
-          120, -600.0, 600.0, 120, -600.0, 600.0);
+      res.dev_vs_pred[g] =
+          new TH2D(Form("h_ph_dev_vs_pred_%s_%s", gn, tag.Data()),
+                   ";Predicted Deviation from Mean "
+                   "[ADC];#splitline{Measured}{Deviation from Mean [ADC]}",
+                   120, -600.0, 600.0, 120, -600.0, 600.0);
       res.dev_before[g] = new TH1D(
           Form("h_ph_dev_before_%s_%s", gn, tag.Data()),
           Form(";%s #minus Mean %s [ADC];Events", gn, gn), 240, -600.0, 600.0);
@@ -578,34 +604,36 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
           xlo, xhi);
       res.shift[g] = new TH1D(Form("h_ph_shift_%s_%s", gn, tag.Data()),
                               ";Applied Shift [ADC];Hits", 240, -600.0, 600.0);
-      for (TH1 *h : {static_cast<TH1 *>(res.dev_vs_pred[g]),
-                     static_cast<TH1 *>(res.dev_before[g]),
-                     static_cast<TH1 *>(res.dev_after[g]),
-                     static_cast<TH1 *>(res.dtprev_before[g]),
-                     static_cast<TH1 *>(res.dtprev_after[g]),
-                     static_cast<TH1 *>(res.shift[g])})
-        h->SetDirectory(nullptr);
+      TH1 *hists[6] = {static_cast<TH1 *>(res.dev_vs_pred[g]),
+                       static_cast<TH1 *>(res.dev_before[g]),
+                       static_cast<TH1 *>(res.dev_after[g]),
+                       static_cast<TH1 *>(res.dtprev_before[g]),
+                       static_cast<TH1 *>(res.dtprev_after[g]),
+                       static_cast<TH1 *>(res.shift[g])};
+      for (Int_t h = 0; h < 6; h++)
+        hists[h]->SetDirectory(nullptr);
     }
     for (Int_t g = 1; g < kNGroups; g++) {
       const Kernel &K = res.kernel[g];
       if (!K.ok)
         continue;
-      scan(g, [&](Int_t, const std::vector<Double_t> &xx, Double_t y,
-                  Double_t dt_prev) {
-        Double_t pred = K.intercept;
-        for (Int_t a = 0; a < n_amp; a++)
-          for (Int_t b = 0; b < kNBins; b++)
-            pred += K.k[a][b] * xx[Feat(a, b)];
-        const Double_t after = y - pred;
-        res.dev_vs_pred[g]->Fill(pred, y);
-        res.dev_before[g]->Fill(y);
-        res.dev_after[g]->Fill(after);
-        if (dt_prev > 0.0) {
-          const Double_t l = TMath::Log10(dt_prev * 1.0e6);
-          res.dtprev_before[g]->Fill(l, y);
-          res.dtprev_after[g]->Fill(l, after);
-        }
-      });
+      Scan(st, g, seeds[g], x,
+           [&](Int_t, const std::vector<Double_t> &xx, Double_t y,
+               Double_t dt_prev) {
+             Double_t pred = K.intercept;
+             for (Int_t a = 0; a < n_amp; a++)
+               for (Int_t b = 0; b < kNBins; b++)
+                 pred += K.k[a][b] * xx[Feat(a, b)];
+             const Double_t after = y - pred;
+             res.dev_vs_pred[g]->Fill(pred, y);
+             res.dev_before[g]->Fill(y);
+             res.dev_after[g]->Fill(after);
+             if (dt_prev > 0.0) {
+               const Double_t l = TMath::Log10(dt_prev * 1.0e6);
+               res.dtprev_before[g]->Fill(l, y);
+               res.dtprev_after[g]->Fill(l, after);
+             }
+           });
     }
   }
   return kTRUE;
@@ -678,9 +706,8 @@ TString Report(const Result &res, const TString &file_label) {
         s += Form(" %.0fus:%+.3f", BinCentreUs(b), K.k[a][b]);
       s += "\n";
     }
-    // Decay-time summary of the raw dt profile: p2 is the preamp decay the
-    // pole-zero did not cancel; flat profiles (matched chains) have no
-    // meaningful p2 and say so.
+    // Decay-time summary of the raw dt profile: p2 = the preamp decay the
+    // pole-zero missed; flat profiles (matched chains) report no meaningful p2.
     if (K.tau.ok) {
       if (K.tau.flat)
         s += Form(

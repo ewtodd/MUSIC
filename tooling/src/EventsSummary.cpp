@@ -21,18 +21,13 @@ void CreateSummaryHistograms(SummaryHistograms &h,
       lMax = (s % 2 == 0) ? cfg.left_even_max : cfg.left_odd_max;
       rMax = (s % 2 == 0) ? cfg.right_even_max : cfg.right_odd_max;
     }
-    // Plotted as long vs short rather than R vs L: which physical end is long
-    // alternates with strip parity (L on odd, R on even), so the R-vs-L view
-    // swaps axes every strip and the two parities cannot be compared by eye.
+    // Plotted as long vs short, not R vs L: the long end alternates with strip
+    // parity (L on odd, R on even), so R-vs-L would swap axes per strip.
     const Bool_t lIsLong = (s % 2) != 0;
     Double_t shortMax = lIsLong ? rMax : lMax;
     Double_t longMax = lIsLong ? lMax : rMax;
-    // The four per-side maxima default to the full ADC span, which puts both
-    // axes on the same scale and squashes the short end into the axis. When
-    // they are left at that default, fall back to the tuned strip maximum for
-    // the long end and a quarter of it for the short end -- the short end is
-    // on its own preamp and only picks up a minority share, so it never
-    // approaches the long end's range.
+    // Maxima default to the full ADC span; when both are at it, use the tuned
+    // strip max for long, a quarter for short (own preamp, minority share).
     if (shortMax == longMax) {
       longMax = cfg.strip_e_max;
       shortMax = 0.25 * cfg.strip_e_max;
@@ -42,7 +37,7 @@ void CreateSummaryHistograms(SummaryHistograms &h,
         cfg.unit_label + "];" +
         Form("Strip %d Long (%c) #DeltaE [", s, lIsLong ? 'L' : 'R') +
         cfg.unit_label + "]";
-    h.h2_long_vs_short[s] =
+    h.h2_long_vs_short[s - 1] =
         new TH2F(PlottingUtils::GetRandomName().Data(), rlTitle, 300,
                  cfg.strip_e_min, shortMax, 300, cfg.strip_e_min, longMax);
   }
@@ -106,12 +101,10 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
   for (Int_t s = 1; s <= 16; s++) {
     TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
     c->cd();
-    PlottingUtils::ConfigureAndDraw2DHistogram(h.h2_long_vs_short[s], c);
-    h.h2_long_vs_short[s]->GetYaxis()->SetTitleOffset(1.3);
-    // Normed only: the charge-sharing line long + short = 1 a.u. (for a beam
-    // event the two ends carry the full deposit between them). Drawn as the
-    // y = -x + 1 gridline, i.e. short=0,long=1 -> short=1,long=0. Detached from
-    // the pad before deletion so the pad does not double-free it on c->Delete.
+    PlottingUtils::ConfigureAndDraw2DHistogram(h.h2_long_vs_short[s - 1], c);
+    h.h2_long_vs_short[s - 1]->GetYaxis()->SetTitleOffset(1.3);
+    // Normed only: charge sharing, long + short = 1 a.u. for a beam event;
+    // y = -x + 1 line; detached from the pad to avoid double-free on c->Delete.
     TLine *ridge = nullptr;
     if (plot_suffix == "_normed") {
       ridge = new TLine(1.0, 0.0, 0.0, 1.0);
@@ -124,7 +117,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
       PlottingUtils::SaveFigure(c, TString("long_vs_short_s") + s + plot_suffix,
                                 subdir, PlotSaveOptions::kLINEAR);
     out_file->cd();
-    c->Write(h.h2_long_vs_short[s]->GetName(), TObject::kOverwrite);
+    c->Write(h.h2_long_vs_short[s - 1]->GetName(), TObject::kOverwrite);
     if (ridge) {
       if (TVirtualPad *p = c->GetPad(0))
         p->GetListOfPrimitives()->Remove(ridge);
@@ -188,7 +181,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
   }
 
   for (Int_t s = 1; s <= 16; s++)
-    delete h.h2_long_vs_short[s];
+    delete h.h2_long_vs_short[s - 1];
   delete h.h_music;
   delete h.h_mult;
   delete h.h1_cathode;
@@ -306,25 +299,26 @@ void EventsSummary::BuildNormedSummaryHistograms(const TString &input_filename,
     ev.Decode();
 
     for (Int_t s = 0; s < 18; s++)
-      h.h_music->Fill(Double_t(s), ev.total[s]);
+      h.h_music->Fill(Double_t(s), ev.Total(s));
 
     for (Int_t s = 1; s <= 16; s++) {
       const Bool_t lIsLong = (s % 2) != 0;
-      h.h2_long_vs_short[s]->Fill(lIsLong ? ev.right[s] : ev.left[s],
-                                  lIsLong ? ev.left[s] : ev.right[s]);
+      h.h2_long_vs_short[s - 1]->Fill(
+          lIsLong ? ev.right[s - 1] : ev.left[s - 1],
+          lIsLong ? ev.left[s - 1] : ev.right[s - 1]);
     }
 
     if (h.h1_cathode && ev.cathode > 0.0)
       h.h1_cathode->Fill(ev.cathode);
 
     if (h.h1_strip17)
-      h.h1_strip17->Fill(ev.total[17]);
+      h.h1_strip17->Fill(ev.strip17);
 
     if (h.h2_strip0_vs_grid)
-      h.h2_strip0_vs_grid->Fill(ev.grid, ev.total[0]);
+      h.h2_strip0_vs_grid->Fill(ev.grid, ev.strip0);
 
     if (h.h1_strip0)
-      h.h1_strip0->Fill(ev.total[0]);
+      h.h1_strip0->Fill(ev.strip0);
 
     if (h.h1_grid)
       h.h1_grid->Fill(ev.grid);
@@ -337,7 +331,9 @@ void EventsSummary::BuildNormedSummaryHistograms(const TString &input_filename,
     // Collect sample traces
     if (sample_stride > 0 && j % sample_stride == 0 &&
         Int_t(sample_traces.size()) < Constants::cfg.SAVE_SAMPLE_TRACES) {
-      sample_traces.push_back(EventsSummary::BuildTraceFromTotals(ev.total));
+      Double_t td[18];
+      ev.Totals(td);
+      sample_traces.push_back(EventsSummary::BuildTraceFromTotals(td));
     }
   }
 

@@ -482,9 +482,8 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
   TimeShiftResult result;
   result.board_shifts.assign(Constants::ActiveNBoards(), 0);
 
-  // Board sync disabled for this dataset (e.g. 87Rb): nothing to compute, so
-  // skip the whole extract/scan/extreme-events pipeline and leave every board
-  // at zero shift. Per-channel TTF correction still happens in ApplyShifts.
+  // Board sync disabled (e.g. 87Rb): skip the extract/scan/extreme-events
+  // pipeline; ApplyShifts then adds a zero shift to every hit.
   if (!Constants::ActiveDoBoardSync()) {
     std::cout << "Board sync disabled for this dataset; skipping timeshift "
                  "calculation (all board shifts = 0)."
@@ -715,11 +714,7 @@ void Timing::ApplyShiftsInPlace(std::vector<RawHit> &hits,
     Long64_t board_shift = (hits[i].board < UShort_t(board_shifts.size()))
                                ? board_shifts[hits[i].board]
                                : 0;
-    // Per-channel TTF-delay correction (per-dataset; 0 when the map is empty,
-    // e.g. 87Rb). Independent of the second-scale board-pattern shift.
-    Long64_t ttf_offset =
-        Constants::LookupTTFOffsetPs(hits[i].board, hits[i].channel);
-    hits[i].timestamp = hits[i].timestamp + board_shift - ttf_offset;
+    hits[i].timestamp = hits[i].timestamp + board_shift;
   }
 }
 

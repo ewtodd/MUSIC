@@ -204,10 +204,8 @@ int main(int argc, char *argv[]) {
 
   gSystem->mkdir(Constants::cfg.SOL_SPLIT_DIR, kTRUE);
 
-  // Build work queue from base dir only
-  // Split every SOLARIS run the dataset declares. With epochs that means the
-  // union of the SOLARIS epochs' run lists; without them, the flat run list.
-  // A CoMPASS epoch has no .sol files to split and is skipped.
+  // Split every SOLARIS run the dataset declares (epochs: union of SOLARIS
+  // epochs' run lists, else the flat list); CoMPASS has no .sol and is skipped.
   std::vector<Int_t> runs;
   if (Constants::cfg.EPOCHS.empty()) {
     runs = Constants::cfg.RUN_NUMBERS;

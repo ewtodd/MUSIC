@@ -20,31 +20,32 @@
  * @brief The standard diagnostic histogram set for a subfile.
  *
  * Filled at two points with the same shapes but different units: by
- * EventBuilder in raw ADC, and by EventsSummary in calibrated arbitrary units.
- * Sharing the struct and its create/save helpers is what keeps the two views
- * comparable rather than drifting apart.
- *
+ * EventBuilder in raw ADC, and by EventsSummary in normalized arbitrary units.
+ * The two histograms share a struct / helpers so that their appearance is
+ * easily comparable.
  * @note Members are raw pointers, owned by whoever called
  *       CreateSummaryHistograms(). SaveAndDeleteSummaryHistograms() both writes
  *       and frees them.
  */
 struct SummaryHistograms {
-  TH2F *h_music;              ///< Energy against strip index: the MUSIC plot.
-  TH1F *h_mult;               ///< Hit multiplicity per event.
-  TH2F *h2_long_vs_short[18]; ///< Long against short gate, per strip.
-  TH1F *h1_cathode;           ///< Cathode energy.
-  TH1F *h1_strip17;           ///< Strip 17 energy.
-  TH2F *h2_strip0_vs_grid;    ///< Strip 0 against grid energy.
-  TH1F *h1_strip0;            ///< Strip 0 energy.
-  TH1F *h1_grid;              ///< Grid energy.
+  TH2F *h_music; ///< Energy against strip index: the MUSIC plot.
+  TH1F *h_mult;  ///< Hit multiplicity per event.
+  /// Long end against short end of the segmented strips 1-16, index
+  /// `strip - 1`.
+  TH2F *h2_long_vs_short[16];
+  TH1F *h1_cathode;        ///< Cathode energy.
+  TH1F *h1_strip17;        ///< Strip 17 energy.
+  TH2F *h2_strip0_vs_grid; ///< Strip 0 against grid energy.
+  TH1F *h1_strip0;         ///< Strip 0 energy.
+  TH1F *h1_grid;           ///< Grid energy.
 
   /// @brief Construct with every pointer null; call CreateSummaryHistograms().
   SummaryHistograms()
       : h_music(nullptr), h_mult(nullptr), h1_cathode(nullptr),
         h1_strip17(nullptr), h2_strip0_vs_grid(nullptr), h1_strip0(nullptr),
         h1_grid(nullptr) {
-    for (Int_t s = 0; s < 18; s++)
-      h2_long_vs_short[s] = nullptr;
+    for (Int_t k = 0; k < 16; k++)
+      h2_long_vs_short[k] = nullptr;
   }
 };
 

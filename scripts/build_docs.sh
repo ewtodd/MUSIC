@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# Build the MUSIC API reference.
-#
-# tooling/Makefile is the internal per-dataset build recipe and is never run
-# directly, so the docs get their own entry point rather than a target there.
-# Substitutes the @DOC_*@ placeholders in Doxyfile.in and runs doxygen; the
-# generated Doxyfile is written into the output directory, not the source tree.
+# Build the MUSIC API reference: substitute @DOC_*@ in Doxyfile.in, run
+# doxygen (not a tooling/Makefile target; Doxyfile -> output dir, not tree).
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

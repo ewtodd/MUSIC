@@ -32,9 +32,10 @@
  * `Constants::ARR_SLOT_CATHODE` is the cathode in every array here.
  */
 struct EventState {
-  Int_t leftdE[18];  ///< Left-side energy per anode strip, in ADC.
-  Int_t rightdE[18]; ///< Right-side energy per anode strip, in ADC.
-  Int_t totaldE[18]; ///< Summed energy per anode strip, in ADC.
+  Int_t leftdE[16];  ///< Left end of strips 1-16, in ADC, index `strip - 1`.
+  Int_t rightdE[16]; ///< Right end of strips 1-16, in ADC, index `strip - 1`.
+  Int_t strip0dE;    ///< Strip 0, unsegmented, in ADC.
+  Int_t strip17dE;   ///< Strip 17, unsegmented, in ADC.
   Int_t
       hits[Constants::N_ARR_SLOTS]; ///< Hit count per slot; see SlotLayout.hpp.
   Int_t cathode;                    ///< Cathode energy, in ADC.
@@ -47,6 +48,15 @@ struct EventState {
   /// event and stable across re-chunking, so it joins a cached event back to
   /// its source without depending on file or entry numbering.
   ULong64_t ref_ts;
+  /// @brief A strip's deposit: the sum of its ends, or the unsegmented value.
+  /// @param strip Anode strip, 0 to 17.
+  Int_t Total(Int_t strip) const {
+    if (strip <= 0)
+      return strip0dE;
+    if (strip >= 17)
+      return strip17dE;
+    return leftdE[strip - 1] + rightdE[strip - 1];
+  }
 };
 
 /**
@@ -96,8 +106,8 @@ public:
    *
    * @return `kTRUE` to replace the existing hit with the candidate.
    *
-   * @note DedupStrategy::kDISCARD is not decided here — it rejects the whole
-   *       event, which is handled by the caller.
+   * @note DedupStrategy::kDISCARD is not decided here; it rejects the whole
+   * event, which is handled by the caller.
    */
   static Bool_t ShouldKeepHit(ULong64_t cand_ts, ULong64_t prev_ts,
                               UShort_t cand_energy, UShort_t prev_energy,

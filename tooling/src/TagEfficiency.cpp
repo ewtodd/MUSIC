@@ -21,7 +21,6 @@
 
 // ---------------------------------------------------------------------------
 // Store
-// ---------------------------------------------------------------------------
 namespace TagEfficiencyStore {
 
 TString Path() {
@@ -96,7 +95,6 @@ TString Method() {
 
 // ---------------------------------------------------------------------------
 // Bootstrap method
-// ---------------------------------------------------------------------------
 namespace {
 
 const Long64_t kBootstrapTrials = 20000;
@@ -105,30 +103,25 @@ const Double_t kMinEventsInCut = 20.0;
 } // namespace
 
 Bool_t TagEfficiency::LoadSigmas(TFile &cache) {
-  Double_t jump[18] = {0}, strip[18] = {0};
+  Double_t strip[18] = {0};
   Int_t found = 0;
-  for (Int_t s = 0; s < 18; s++) {
+  for (Int_t s = 0; s < 18; s++)
     if (TParameter<Double_t> *p = static_cast<TParameter<Double_t> *>(
-            cache.Get(Form("jump_sigma_s%d", s)))) {
-      jump[s] = p->GetVal();
+            cache.Get(Form("strip_sigma_s%d", s)))) {
+      strip[s] = p->GetVal();
       found++;
     }
-    if (TParameter<Double_t> *p = static_cast<TParameter<Double_t> *>(
-            cache.Get(Form("strip_sigma_s%d", s))))
-      strip[s] = p->GetVal();
-  }
-  StripSumScatter::SetJumpSigma(jump);
   StripSumScatter::SetStripSigma(strip);
   return found > 0;
 }
 
-// Strips with a region cut for this channel, one past XS_STRIP_MAX for the
-// migration out of the last strip. A hand-drawn cut is preferred: a fitted
-// ellipse that also sweeps in beam tail under the island drags the mean onto
-// the ridge, and at the low strips the tail outnumbers the reaction a hundred
-// to one. Where none is drawn the saved cut is used -- the fit, or the
-// all-tagged box, which is exact when the tag conditions alone isolate the
-// residues -- and the method label says so.
+/// Strips with a region cut for this channel, one past XS_STRIP_MAX for the
+/// migration out of the last strip. A hand-drawn cut is preferred: a fitted
+/// ellipse that also sweeps in beam tail under the island drags the mean onto
+/// the ridge, and at the low strips the tail outnumbers the reaction a hundred
+/// to one. Where none is drawn the saved cut is used -- the fit, or the
+/// all-tagged box, which is exact when the tag conditions alone isolate the
+/// residues -- and the method label says so.
 void TagEfficiency::LoadDrawnCuts(const TString &region) {
   const CrossSectionConfig &X = Constants::cfg.CROSS_SECTION_CONFIG;
   strips_.clear();
@@ -148,12 +141,18 @@ void TagEfficiency::LoadDrawnCuts(const TString &region) {
 void TagEfficiency::MeanTraces(TTree *tt) {
   const Int_t kReacMin =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
-  Float_t total[18];
+  TraceEvt e;
   UInt_t mask = 0;
   tt->SetBranchStatus("*", 0);
-  tt->SetBranchStatus("total", 1);
+  tt->SetBranchStatus("leftdE", 1);
+  tt->SetBranchStatus("rightdE", 1);
+  tt->SetBranchStatus("strip0dE", 1);
+  tt->SetBranchStatus("strip17dE", 1);
   tt->SetBranchStatus("reac_mask", 1);
-  tt->SetBranchAddress("total", total);
+  tt->SetBranchAddress("leftdE", e.leftdE);
+  tt->SetBranchAddress("rightdE", e.rightdE);
+  tt->SetBranchAddress("strip0dE", &e.strip0dE);
+  tt->SetBranchAddress("strip17dE", &e.strip17dE);
   tt->SetBranchAddress("reac_mask", &mask);
   for (std::map<Int_t, Strip>::iterator it = strips_.begin();
        it != strips_.end(); ++it) {
@@ -166,8 +165,7 @@ void TagEfficiency::MeanTraces(TTree *tt) {
     if (mask == 0)
       continue;
     Double_t td[18];
-    for (Int_t s = 0; s < 18; s++)
-      td[s] = total[s];
+    e.Totals(td);
     for (std::map<Int_t, Strip>::iterator it = strips_.begin();
          it != strips_.end(); ++it) {
       const Int_t reac = it->first;
@@ -190,9 +188,9 @@ void TagEfficiency::MeanTraces(TTree *tt) {
   tt->SetBranchStatus("*", 1);
 }
 
-// The mean trace resampled with the measured beam widths, each resample
-// through the tag and the cut at reac, and through the next strip's for the
-// migration.
+/// The mean trace resampled with the measured beam widths, each resample
+/// through the tag and the cut at reac, and through the next strip's for the
+/// migration.
 TagEfficiency::Outcome TagEfficiency::Bootstrap(Int_t reac, TH2F *plane) {
   const Strip &st = strips_[reac];
   TCutG *cut_next = strips_.count(reac + 1) ? strips_[reac + 1].cut : nullptr;
@@ -202,9 +200,15 @@ TagEfficiency::Outcome TagEfficiency::Bootstrap(Int_t reac, TH2F *plane) {
     Double_t total[18];
     for (Int_t s = 0; s < 18; s++)
       total[s] = st.mean[s] + rng.Gaus(0.0, StripSumScatter::StripSigma(s));
+    // A synthetic view holding the resampled trace: the whole deposit on the
+    // left end, nothing on the right, so Total(s) reads back the trace.
     EnergyView ev;
-    for (Int_t s = 0; s < 18; s++)
-      ev.total[s] = total[s];
+    for (Int_t s = 1; s <= 16; s++) {
+      ev.left[s - 1] = total[s];
+      ev.right[s - 1] = 0.0;
+    }
+    ev.strip0 = total[0];
+    ev.strip17 = total[17];
     o.n++;
     Double_t x, y;
     StripSumScatter::PlaneXY(total, reac, x, y);

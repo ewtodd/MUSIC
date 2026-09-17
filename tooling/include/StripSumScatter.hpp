@@ -62,15 +62,12 @@ enum TagCut {
   kTagPass = 0,
   kCutAllStrips, ///< A strip did not fire.
   kCutUpstream,  ///< A strip before the reaction was not beam-like.
-  kCutJump,      ///< Jump at the reaction strip outside [min, max].
-  kCutReacLevel, ///< Reaction-strip deposit outside 1 + [min, max].
-  kCutSmooth,    ///< A post-reaction step to REQUIRE_SMOOTHNESS_END_STRIP.
-  kCutTailStep,  ///< A step past that strip (TAIL_SMOOTHNESS_NSIGMA).
+  kCutJump,      ///< Jump at the reaction strip below the gate.
+  kCutReacLevel, ///< Reaction-strip deposit below 1 + the gate.
+  kCutSmooth,    ///< A post-reaction step above SMOOTHNESS_NSIGMA.
   kCutTailRise,  ///< A rise in the tail (TAIL_RISE_NSIGMA).
   kCutRerise,    ///< Back at the beam, then above it again (TAIL_RERISE_*).
-  kCutLateStrip, ///< A late strip above its ceiling (LATE_STRIP_BELOW_NSIGMA).
   kCutPostAbove, ///< The excess did not persist (POST_ABOVE_*).
-  kCutZigzag,    ///< A derivative sign flip with a large swing (ZIGZAG_*).
   kCutEndStrip,  ///< The end strip not below END_STRIP_MAX.
   kNTagCuts
 };
@@ -86,8 +83,6 @@ enum PreCut {
   kPreGate,     ///< Failed a beam gate.
   kPrePileup,   ///< Pileup.
   kPreNoise,    ///< Noise.
-  kPreOffbeam,  ///< Off-beam (REJECT_OFFBEAM).
-  kPreParity,   ///< Even/odd asymmetry (PARITY_ASYM_MAX).
   kPreBothMult, ///< Both-ends multiplicity (BOTH_MULT_MAX).
   kNPreCuts
 };
@@ -144,18 +139,20 @@ struct BeamEllipses {
  * events files.
  */
 struct TraceEvt {
-  Float_t total[18];     ///< Calibrated per-strip totals.
-  Float_t total_adc[18]; ///< Raw, un-normalised ADC sum per strip.
-  /// @name Split-strip halves, in calibrated units
-  /// Kept separately and independently of `IGNORE_SHORT_STRIPS`, which is a
-  /// decode-time switch that zeroes one half of `EnergyView::left`/`right`.
-  /// Reconstructed from the raw ADC and the per-channel gains, so one
-  /// calibration can be rendered under either decode.
+  /// @name Calibrated ends, each already carrying its strip's alignment
   /// @{
-  Float_t long_au[18];  ///< Long end of each split strip.
-  Float_t short_au[18]; ///< Short end.
+  Float_t leftdE[16];  ///< Left end of strips 1-16, index `strip - 1`.
+  Float_t rightdE[16]; ///< Right end of strips 1-16, index `strip - 1`.
+  Float_t strip0dE;    ///< Strip 0, unsegmented.
+  Float_t strip17dE;   ///< Strip 17, unsegmented.
   /// @}
-
+  /// @name The same, raw ADC
+  /// @{
+  Float_t leftdE_adc[16];
+  Float_t rightdE_adc[16];
+  Float_t strip0_adc;
+  Float_t strip17_adc;
+  /// @}
   UInt_t reac_mask; ///< Bit per reaction strip this event was tagged at.
   Bool_t beam_flat; ///< Whether the trace looked flat, i.e. beam-like.
   Int_t both_mult;  ///< Split strips (1-16) with both ends above threshold.
@@ -164,6 +161,33 @@ struct TraceEvt {
   /// cached event joins back to its source record. Zero when the source
   /// predates the seed-timestamp branch.
   ULong64_t seed_ts;
+
+  /// @brief A strip's deposit: the sum of its ends, or the unsegmented value.
+  Double_t Total(Int_t strip) const {
+    if (strip <= 0)
+      return strip0dE;
+    if (strip >= 17)
+      return strip17dE;
+    return Double_t(leftdE[strip - 1]) + Double_t(rightdE[strip - 1]);
+  }
+  /// @brief A strip's raw ADC deposit, summed the same way.
+  Double_t TotalAdc(Int_t strip) const {
+    if (strip <= 0)
+      return strip0_adc;
+    if (strip >= 17)
+      return strip17_adc;
+    return Double_t(leftdE_adc[strip - 1]) + Double_t(rightdE_adc[strip - 1]);
+  }
+  /// @brief Every strip's deposit, for code that wants an array of 18.
+  void Totals(Double_t *out) const {
+    for (Int_t s = 0; s < 18; s++)
+      out[s] = Total(s);
+  }
+  /// @brief Every strip's raw ADC deposit, for code that wants an array of 18.
+  void TotalsAdc(Double_t *out) const {
+    for (Int_t s = 0; s < 18; s++)
+      out[s] = TotalAdc(s);
+  }
 };
 
 /**
@@ -273,7 +297,7 @@ public:
   /// @brief First strip of the post-trigger window summed onto y.
   /// @param reac Reaction strip index.
   /// @return The strip index, inclusive, per the `POST_TRIGGER_SUM_STRIPS` /
-  ///         `POST_WINDOW_LAST_STRIP` / `POST_WINDOW_STRIPS` rule.
+  ///         `POST_WINDOW_LAST_STRIP` rule.
   static Int_t YLoOf(Int_t reac);
   /// @brief Last strip of the post-trigger window, inclusive.
   /// @param reac Reaction strip index.
@@ -287,25 +311,18 @@ public:
    * @{
    */
 
-  /// @brief Sigma of the strip-to-strip difference `total[s] - total[s-1]`.
-  /// @param strip Strip index.
-  static Double_t JumpSigma(Int_t strip);
   /// @brief Sigma of a strip's own deposit.
   /// @param strip Strip index.
   static Double_t StripSigma(Int_t strip);
-  /// @brief Install the jump sigmas. Call before tagging starts.
-  /// @param sigma 18 values, one per strip.
-  static void SetJumpSigma(const Double_t *sigma);
   /// @brief Install the per-strip sigmas. Call before tagging starts.
   /// @param sigma 18 values, one per strip.
   static void SetStripSigma(const Double_t *sigma);
-  /// @brief Minimum jump for a tag: `REAC_JUMP_NSIGMA * JumpSigma(reac)`.
+  /// @brief Minimum jump for a tag: `REAC_JUMP_NSIGMA * StripSigma(reac)`.
   /// @param reac Reaction strip index.
   static Double_t JumpMin(Int_t reac);
   /// @}
 
 private:
-  static Double_t s_jumpSigma[18];
   static Double_t s_stripSigma[18];
   std::map<Int_t, TH2F *> m_scatter;
   std::vector<TraceEvt> m_reservoir;
@@ -334,40 +351,30 @@ private:
 
   // Fresh, empty scatters for the configured plane and build range.
   void AllocateScatters();
-  // Fill the scatters from the reservoir alone. The reservoir keeps every
-  // tagged event, so a plane or axes change needs only this and not a
-  // 25-minute pass over the events files.
+  /// Fill the scatters from the reservoir alone. The reservoir keeps every
+  /// tagged event, so a plane or axes change needs only this and not a
+  /// 25-minute pass over the events files.
   void ReprojectFromReservoir();
   void FillScatters(const std::vector<Int_t> &runOrder,
                     std::map<Int_t, TChain *> &chains);
 
   void PlotScatters();
 
-  // Diagnostic (PLOT_PARITY_REJECTED_GRID): grid #DeltaE of events that pass
-  // the cheap pre-tag cuts and are then rejected by the parity cut. Saves both
-  // an a.u. view (decoded grid) and an ADC view (raw trigger channel), each on
-  // a log-y axis. Reads the Grid branch directly (a self-contained pass), so it
-  // works regardless of whether the scatter cache has already been filled.
-  void PlotParityRejectedGrid(const std::vector<Int_t> &run_order,
-                              std::map<Int_t, TChain *> &chains);
-
   void InteractiveOverlay(Int_t reac);
 
   static void EnableEventBranches(TChain *chain);
   static Bool_t AllStripsFired(const EnergyView &ev);
   static Bool_t IsPureBeam(const EnergyView &ev, const BeamEllipses &be);
-  // Sigma-clipped width of each strip-to-strip difference and of each strip's
-  // deposit over a capped sample of `chain`, after the cheap pre-tag cuts.
-  // False when too few events survive to measure them.
-  static Bool_t MeasureBeamNoise(TChain *chain, Double_t *jump_sigma,
-                                 Double_t *strip_sigma);
+  /// Sigma-clipped width of each strip's deposit over a capped sample of
+  /// `chain`, after the cheap pre-tag cuts. Every sigma-unit cut, level or
+  /// step, resolves through this one width. False when too few events
+  /// survive to measure it.
+  static Bool_t MeasureBeamNoise(TChain *chain, Double_t *strip_sigma);
   // Strips 1..reac-1 within BEAM_UPSTREAM_NSIGMA of the beam, or the
   // requirement is off. Shared by the tag and its per-strip denominator.
   static Bool_t BeamUpstreamOf(const EnergyView &ev, Int_t reac);
   static Bool_t IsPileup(const EnergyView &ev);
   static Bool_t IsNoise(const EnergyView &ev);
-  static Bool_t IsOffbeam(const EnergyView &ev);
-  static Bool_t IsParityAsymmetric(const EnergyView &ev);
   static Double_t SumRange(const Double_t *total, Int_t lo, Int_t hi);
   static std::vector<GateSpec> ActiveGates();
 
@@ -380,8 +387,7 @@ private:
                                 const TString &tag, const TString &subdir);
 
   static void DrawTraceSet(const std::vector<TGraph *> &traces, Int_t color);
-  void DrawAltDecodeRegionTraces(Int_t reac, TCutG *cutAn, TCutG *cutAa);
-  static TGraph *TraceFromTotal(const Float_t *total);
+  static TGraph *TraceFromTotal(const Double_t *total);
   /// Overlay of sampled traces per region. The beam is drawn as its mean
   /// with a +-1 sigma band rather than as individual traces: the sigma is
   /// the cache-measured per-strip beam spread (StripSigma, scaled by the
@@ -418,20 +424,20 @@ private:
 
   static void SmoothTrace(const Double_t *in, Double_t *out, Int_t width);
 
-  // Savitzky-Golay smoothing: 3rd-degree polynomial, half-window of 2
-  // (5-point convolution). Uses standard SG coefficients [-3,12,17,12,-3]/35.
-  // At edges, the window shrinks and coefficients are renormalised.
+  /// Savitzky-Golay smoothing: 3rd-degree polynomial, half-window of 2
+  /// (5-point convolution). Uses standard SG coefficients [-3,12,17,12,-3]/35.
+  /// At edges, the window shrinks and coefficients are renormalised.
   static void SavitzkyGolay(const Double_t *in, Double_t *out);
 
-  // CFD-style trigger finder: locate the first strip whose beam-subtracted
-  // signal (td[s]-1) exceeds both a fraction of the trace peak and a multiple
-  // of the beam sigma. Returns the strip index, or -1 if no trigger fires.
+  /// CFD-style trigger finder: locate the first strip whose beam-subtracted
+  /// signal (td[s]-1) exceeds both a fraction of the trace peak and a multiple
+  /// of the beam sigma. Returns the strip index, or -1 if no trigger fires.
   static Int_t FindTrigger(const Double_t *td, const Double_t *base,
                            Double_t beam_sigma);
 
   // Build a TGraph from Savitzky-Golay-smoothed per-strip totals. Input is
   // the raw normed array; smoothing is applied internally before graph build.
-  static TGraph *SmoothedTraceFromTotal(const Float_t *total);
+  static TGraph *SmoothedTraceFromTotal(const Double_t *total);
 
   void ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
                        const TString &subdir);
@@ -461,7 +467,8 @@ public:
    *
    * The conditions the published 87Rb per-strip macros put on the strips
    * downstream of the reaction: smoothness continued to the last strip, a
-   * monotonically falling tail, per-strip ceilings and a zigzag veto. Each is
+   * monotonically falling tail, no return to the beam and persistence of the
+   * excess. Each is
    * off unless its `StripSumScatterConfig` value is set, so a dataset that
    * sets none of them tags exactly as before.
    *
@@ -481,35 +488,6 @@ public:
   /// @brief The tail-shape part of RejectReason: `kTagPass` or the first
   ///        failing tail condition.
   static TagCut TailReason(const EnergyView &ev, Int_t reac);
-
-  /// @name Template-match second pass (TemplateMatch.hpp)
-  /// @{
-  /// Per-strip counts of a pass over the events files with the same gates
-  /// and event-level cuts as the fill, classifying each event by template.
-  struct TemplatePassResult {
-    std::vector<Long64_t> matched;            ///< Classed at each strip.
-    std::vector<Long64_t> matched_and_tagged; ///< Of those, tagged there too.
-    Long64_t seen = 0;
-    Long64_t considered = 0; ///< Past the event-level cuts, all strips fired.
-  };
-  /**
-   * @brief Which (a,n) template a trace fits best, if it beats the beam.
-   * @param total       Per-strip totals in beam units.
-   * @param templates   By ReacIndex; an empty entry is a strip without one.
-   * @param delta_chi2  Required improvement over the flat-beam chi-square.
-   * @param[out] chi2_beam_out Chi-square against the flat beam, if wanted.
-   * @param[out] chi2_best_out Chi-square of the best template, if wanted.
-   * @return The reaction strip, or -1 for beam.
-   */
-  static Int_t
-  TemplateClassify(const Double_t *total,
-                   const std::vector<std::vector<Double_t>> &templates,
-                   Double_t delta_chi2, Double_t *chi2_beam_out = nullptr,
-                   Double_t *chi2_best_out = nullptr);
-  TemplatePassResult TemplateMatchPass(
-      const std::vector<Int_t> &runOrder, std::map<Int_t, TChain *> &chains,
-      const std::vector<std::vector<Double_t>> &templates, Double_t delta_chi2);
-  /// @}
 
 private:
   static Bool_t SimBeamGains(Double_t *gain);

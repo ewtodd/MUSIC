@@ -14,35 +14,53 @@
  * arbitrary calibrated units or still raw ADC depends on whether a calibration
  * tree was found — see #is_normed and Unit().
  *
+ * The layout follows the detector: strips 1-16 are segmented and read at a
+ * left and a right end, held in arrays of 16 indexed by `strip - 1`; strips 0
+ * and 17 are unsegmented and each a single value. A strip's total deposit is
+ * never stored; Total() adds the two ends when asked.
+ *
  * @note Holds a non-owning pointer to the tree it is attached to, which must
  *       outlive it. Gains are reloaded automatically when a `TChain` rolls over
  *       to a new file, tracked by #loaded_tree_.
  */
 struct EnergyView {
-  UShort_t left_0_17_adc[18]; ///< Raw left-side strip ADC values.
-  UShort_t rightdE_adc[18];   ///< Raw right-side strip ADC values.
-  UShort_t hits_adc[36];      ///< Raw per-slot hit ADC values.
-  Short_t cathode_adc;        ///< Raw cathode ADC value.
-  Short_t grid_adc;           ///< Raw Frisch grid ADC value.
+  /// @name Raw ADC, straight from the events tree
+  /// @{
+  UShort_t leftdE_adc[16];  ///< Left end of strips 1-16, index `strip - 1`.
+  UShort_t rightdE_adc[16]; ///< Right end of strips 1-16, index `strip - 1`.
+  UShort_t strip0_adc;      ///< Strip 0, unsegmented.
+  UShort_t strip17_adc;     ///< Strip 17, unsegmented.
+  UShort_t hits_adc[36];    ///< Raw per-slot hit ADC values.
+  Short_t cathode_adc;      ///< Raw cathode ADC value.
+  Short_t grid_adc;         ///< Raw Frisch grid ADC value.
+  /// @}
 
-  Float_t gain_left[18];  ///< Per-strip left-side gain.
-  Float_t gain_right[18]; ///< Per-strip right-side gain.
+  /// @name Calibration, from the file's calibration tree
+  /// @{
+  Float_t gain_left[16];  ///< Left-end gain of strips 1-16, index `strip - 1`.
+  Float_t gain_right[16]; ///< Right-end gain of strips 1-16.
+  Float_t gain_strip0;    ///< Strip 0 gain.
+  Float_t gain_strip17;   ///< Strip 17 gain.
   Float_t gain_cathode;   ///< Cathode gain.
+  /// Per-strip multiplicative alignment, `pol3_reference / centroid`, indexed
+  /// by strip 0-17 and applied to every end of the strip after its gain.
+  /// Identity (1.0) when no alignment is loaded, so an unaligned dataset
+  /// decodes unchanged.
+  Float_t strip_factor[18];
   /// Whether a calibration tree was found. When true, the decoded values are in
   /// arbitrary calibrated units; when false they remain raw ADC.
   Bool_t is_normed;
-
-  /// Per-strip multiplicative alignment, `pol3_reference / centroid`, applied
-  /// to #total after the per-channel gain. Identity (1.0) when no alignment is
-  /// loaded, so an unaligned dataset decodes unchanged.
-  Float_t strip_factor[18];
+  /// @}
 
   /// @name Decoded per-event values
-  /// In arbitrary units when #is_normed, otherwise raw ADC.
+  /// In arbitrary units when #is_normed, otherwise raw ADC. Each end already
+  /// carries its strip's alignment factor, so a strip's deposit is the plain
+  /// sum of its ends, which is what Total() returns.
   /// @{
-  Double_t left[18];  ///< Left-side energy per strip.
-  Double_t right[18]; ///< Right-side energy per strip.
-  Double_t total[18]; ///< Summed energy per strip, after #strip_factor.
+  Double_t left[16];  ///< Left end of strips 1-16, index `strip - 1`.
+  Double_t right[16]; ///< Right end of strips 1-16, index `strip - 1`.
+  Double_t strip0;    ///< Strip 0.
+  Double_t strip17;   ///< Strip 17.
   Double_t cathode;   ///< Cathode energy.
   Double_t grid;      ///< Grid energy.
   /// @}
@@ -52,8 +70,21 @@ struct EnergyView {
 
   /// @brief Construct detached, with zeroed values and no gains loaded.
   EnergyView()
-      : cathode_adc(0), grid_adc(0), gain_cathode(0.0f), is_normed(kFALSE),
-        cathode(0.0), grid(0.0), tree_(nullptr), loaded_tree_(-1) {}
+      : strip0_adc(0), strip17_adc(0), cathode_adc(0), grid_adc(0),
+        gain_strip0(0.0f), gain_strip17(0.0f), gain_cathode(0.0f),
+        is_normed(kFALSE), strip0(0.0), strip17(0.0), cathode(0.0), grid(0.0),
+        tree_(nullptr), loaded_tree_(-1) {
+    for (Int_t k = 0; k < 16; k++) {
+      leftdE_adc[k] = 0;
+      rightdE_adc[k] = 0;
+      gain_left[k] = 0.0f;
+      gain_right[k] = 0.0f;
+      left[k] = 0.0;
+      right[k] = 0.0;
+    }
+    for (Int_t s = 0; s < 18; s++)
+      strip_factor[s] = 1.0f;
+  }
 
   /**
    * @brief Bind to an events tree and set up the branch addresses.
@@ -65,7 +96,9 @@ struct EnergyView {
   /**
    * @brief Decode the currently loaded entry into the value members.
    *
-   * Applies the per-channel gains, then #strip_factor to #total.
+   * Applies the per-channel gains, drops the short end when
+   * `IGNORE_SHORT_STRIPS` is set, then multiplies every end by its strip's
+   * #strip_factor.
    *
    * @note Reads whichever entry the bound tree has loaded, so call
    *       `GetEntry()` first.
@@ -76,6 +109,31 @@ struct EnergyView {
   /// @note Called automatically when a chain rolls over to a new tree; only
   ///       needed directly when driving decoding by hand.
   void LoadGains();
+
+  /// @brief A strip's deposit: the sum of its ends, or the unsegmented value.
+  /// @param strip Anode strip, 0 to 17.
+  Double_t Total(Int_t strip) const {
+    if (strip <= 0)
+      return strip0;
+    if (strip >= 17)
+      return strip17;
+    return left[strip - 1] + right[strip - 1];
+  }
+  /// @brief A strip's raw ADC deposit, summed the same way.
+  /// @param strip Anode strip, 0 to 17.
+  Double_t TotalAdc(Int_t strip) const {
+    if (strip <= 0)
+      return Double_t(strip0_adc);
+    if (strip >= 17)
+      return Double_t(strip17_adc);
+    return Double_t(leftdE_adc[strip - 1]) + Double_t(rightdE_adc[strip - 1]);
+  }
+  /// @brief Every strip's deposit at once, for code that wants an array.
+  /// @param[out] out 18 values, one per strip.
+  void Totals(Double_t *out) const {
+    for (Int_t s = 0; s < 18; s++)
+      out[s] = Total(s);
+  }
 
   /// @brief Unit label for the decoded values, for axis titles.
   /// @return Arbitrary units when #is_normed, otherwise an ADC label.

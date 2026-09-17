@@ -34,8 +34,8 @@ extern std::mutex g_log_mutex;
 /**
  * @brief One input file: a run number and the subfile suffix within it.
  *
- * CoMPASS splits a long run across numbered subfiles, so a run alone does not
- * identify a file.
+ * CoMPASS and SOLARIS split long runs across numbered subfiles, so a run alone
+ * does not identify a file.
  */
 struct FileSpec {
   Int_t run;      ///< Run number.

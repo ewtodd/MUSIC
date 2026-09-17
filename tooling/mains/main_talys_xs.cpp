@@ -1,20 +1,20 @@
-// talys-xs: Hauser-Feshbach cross sections from TALYS for this dataset's
-// reaction, written as ROOT graphs cross-section overlays.
-//
-// Runs TALYS in normal kinematics (alpha on the beam nucleus as target; the
-// cross section is the same either way) over a grid of centre-of-mass
-// energies spanning the strips the cross section reports and the reference
-// table, once per configured model, and writes every residual-production
-// channel TALYS produced as a TGraph of E_cm [MeV] vs sigma [mb], named by
-// TALYS's own file stem (rp039090 for Z=39, A=90), into one directory per
-// model (m0, m1, ...) of root_files/talys/talys_xs.root, with the model's
-// label and exact input as TNameds. Which channels make up (a,xn) is the
-// analysis's business, so cross-section sums them itself. Like srim-cache in
-// the simulator, this is the one place the external code is driven;
-// everything downstream only reads the file.
-//
-// TALYS comes from the talys-nix flake input, whose path the build compiles
-// in; TALYS_BIN in the environment overrides it.
+/// talys-xs: Hauser-Feshbach cross sections from TALYS for this dataset's
+/// reaction, written as ROOT graphs cross-section overlays.
+///
+/// Runs TALYS in normal kinematics (alpha on the beam nucleus as target; the
+/// cross section is the same either way) over a grid of centre-of-mass
+/// energies spanning the strips the cross section reports and the reference
+/// table, once per configured model, and writes every residual-production
+/// channel TALYS produced as a TGraph of E_cm [MeV] vs sigma [mb], named by
+/// TALYS's own file stem (rp039090 for Z=39, A=90), into one directory per
+/// model (m0, m1, ...) of root_files/talys/talys_xs.root, with the model's
+/// label and exact input as TNameds. Which channels make up (a,xn) is the
+/// analysis's business, so cross-section sums them itself. Like srim-cache in
+/// the simulator, this is the one place the external code is driven;
+/// everything downstream only reads the file.
+///
+/// TALYS comes from the talys-nix flake input, whose path the build compiles
+/// in; TALYS_BIN in the environment overrides it.
 #include "BeamEnergies.hpp"
 #include "Constants.hpp"
 #include "InitUtils.hpp"
@@ -148,9 +148,8 @@ int main() {
   if (talys.IsNull())
     talys = "talys";
 
-  // The grid spans the strips the cross section reports, with a margin, at
-  // the energies it reports them at, and the reference table so the curve
-  // is drawn under every point.
+  // The grid spans the reported strips at their reported energies plus a
+  // margin and the reference table, so the curve is drawn under every point.
   Double_t dE[18];
   Double_t e_strip0 = 0.0;
   if (!BeamEnergies::Profile(BeamEnergies::SimPath(), dE, e_strip0)) {

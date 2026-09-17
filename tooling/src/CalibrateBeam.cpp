@@ -2,22 +2,28 @@
 #include <Rtypes.h>
 
 const Int_t kMaxChannels = 35;
-// Raw total of one strip. Strips 0 and 17 are single-ended guards; 1-16 are
-// split L/R and their total is the sum of both ends.
-inline Double_t StripTotalAdc(const UShort_t *l, const UShort_t *r, Int_t s) {
-  return (s == 0 || s == 17) ? Double_t(l[s]) : Double_t(l[s]) + Double_t(r[s]);
+// Raw total of one strip. Strips 0 and 17 are unsegmented and read once;
+// strips 1-16 are read at two ends, held in arrays of 16 indexed by strip - 1,
+// and their total is the sum of both.
+inline Double_t StripTotalAdc(const UShort_t *l, const UShort_t *r, UShort_t s0,
+                              UShort_t s17, Int_t s) {
+  if (s <= 0)
+    return Double_t(s0);
+  if (s >= 17)
+    return Double_t(s17);
+  return Double_t(l[s - 1]) + Double_t(r[s - 1]);
 }
 
-// The strip whose total is paired with strip s to gate it: the one before it,
-// except strips 0 and 1 which share the (0, 1) pair because there is nothing
-// before strip 0.
+/// The strip whose total is paired with strip s to gate it: the one before it,
+/// except strips 0 and 1 which share the (0, 1) pair because there is nothing
+/// before strip 0.
 inline Int_t GatePartner(Int_t s) { return s <= 1 ? 0 : s - 1; }
 const Long64_t kMinSamples = 200;
 const Long64_t kSampleCap = 20000;
-// (L, R) pair cap for the L/R gain-matching passes. Larger than kSampleCap
-// because the short-side "shoulder" anchor is found in a narrow slice of the
-// pairs (long side ≈ 300-350 ADC) that only a small fraction of events
-// populate.
+/// (L, R) pair cap for the L/R gain-matching passes. Larger than kSampleCap
+/// because the short-side "shoulder" anchor is found in a narrow slice of the
+/// pairs (long side ≈ 300-350 ADC) that only a small fraction of events
+/// populate.
 const Long64_t kPairCap = 100000;
 
 // Defined below; forward-declared so both beam-peak fitters and the beam_peak
@@ -99,10 +105,10 @@ inline Double_t ApplyCal(const ChannelCal &c, Double_t adc) {
   return Gain(c) * adc;
 }
 
-// The beam gate for one strip: a 2D Gaussian on the (strip sx, strip sy) raw
-// totals. Gating a strip on itself and its neighbour selects single-particle
-// events in THAT strip; the gate is on totals, so it says nothing about how
-// the charge divides between the two ends, which is what the anchor fit reads.
+/// The beam gate for one strip: a 2D Gaussian on the (strip sx, strip sy) raw
+/// totals. Gating a strip on itself and its neighbour selects single-particle
+/// events in THAT strip; the gate is on totals, so it says nothing about how
+/// the charge divides between the two ends, which is what the anchor fit reads.
 BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
                              const TString &run_label,
                              const TString &plot_subdir,
@@ -124,14 +130,16 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
   }
   // Raw ADC, read before any calibration exists (this fit produces it), so read
   // the branches directly. strip1 total = L1 + R1; strip2 total = L2 + R2.
-  UShort_t left_0_17_adc[18], rightdE_adc[18];
-  tree->SetBranchAddress("Left_0_17_dE", left_0_17_adc);
+  UShort_t leftdE_adc[16], rightdE_adc[16], strip0_adc = 0, strip17_adc = 0;
+  tree->SetBranchAddress("LeftdE", leftdE_adc);
   tree->SetBranchAddress("RightdE", rightdE_adc);
+  tree->SetBranchAddress("Strip0dE", &strip0_adc);
+  tree->SetBranchAddress("Strip17dE", &strip17_adc);
 
-  // Use 1024 bins (previously 256) so each bin is narrower (16 ADC for 37Cl).
-  // The sigma floor in ComputeMoments is 2 * bin_width; at the old 64 ADC/bin
-  // it clamped sigma to 128 ADC, hiding the true beam width and washing out
-  // correlation (rho ≈ 0.09 even though strip1/strip2 track the same beam).
+  /// Use 1024 bins (previously 256) so each bin is narrower (16 ADC for 37Cl).
+  /// The sigma floor in ComputeMoments is 2 * bin_width; at the old 64 ADC/bin
+  /// it clamped sigma to 128 ADC, hiding the true beam width and washing out
+  /// correlation (rho ≈ 0.09 even though strip1/strip2 track the same beam).
   const Int_t kBeamGateNBins = 1024;
   TH2F *h =
       new TH2F(Form("h2_gate_s%d_s%d_%s", sx, sy, run_label.Data()),
@@ -142,8 +150,10 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
   Long64_t n = tree->GetEntries();
   for (Long64_t j = 0; j < n; j++) {
     tree->GetEntry(j);
-    const Double_t tx = StripTotalAdc(left_0_17_adc, rightdE_adc, sx);
-    const Double_t ty = StripTotalAdc(left_0_17_adc, rightdE_adc, sy);
+    const Double_t tx =
+        StripTotalAdc(leftdE_adc, rightdE_adc, strip0_adc, strip17_adc, sx);
+    const Double_t ty =
+        StripTotalAdc(leftdE_adc, rightdE_adc, strip0_adc, strip17_adc, sy);
     if (tx > 0.0 && ty > 0.0)
       h->Fill(tx, ty);
   }
@@ -159,9 +169,9 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
   }
 
   const Double_t kSeedFrac = 0.30;
-  // With 1024 bins instead of 256, scale from 10→40 to keep the ADC seed
-  // window roughly 640 ADC (10 bins × 16384/256 = 640; 40 bins × 16384/1024 =
-  // 640).
+  /// With 1024 bins instead of 256, scale from 10→40 to keep the ADC seed
+  /// window roughly 640 ADC (10 bins × 16384/256 = 640; 40 bins × 16384/1024 =
+  /// 640).
   const Int_t kSeedHalfBins = 40;
   const Int_t kMomentRefineIters = 4;
   const Double_t kMomentRefineNSigma = 2.5;
@@ -182,12 +192,8 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
     delete h;
     return out;
   }
-  // Iteratively re-center: recompute the moments inside a ±2.5σ window
-  // around the current centroid. At high rate (run84: 45 kHz) the pileup
-  // blob at ~2x the beam and the correlated diagonal band both pass the
-  // seed threshold; a single wide-window pass then reports a huge, highly
-  // correlated pseudo-blob (sigma ~650, rho 0.95) instead of the beam. The
-  // shrinking window converges onto the dominant (beam) blob.
+  // Re-center iteratively (moments inside ±2.5σ of the centroid); at high
+  // rate (run84: 45 kHz) the ~2x-beam pileup blob passes the seed cut.
   for (Int_t iter = 0; iter < kMomentRefineIters; iter++) {
     Int_t wlo_bx = std::max(
         1, h->GetXaxis()->FindBin(m.mu_x - kMomentRefineNSigma * m.sigma_x));
@@ -220,9 +226,8 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
   if (save_plot) {
     TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
     PlottingUtils::ConfigureAndDraw2DHistogram(h, cv);
-    // Draw the correlated 2D Gaussian ellipse: the TEllipse rotates
-    // according to the covariance eigen-decomposition so the drawn contour
-    // matches the actual InEllipseXY gate (χ² < n²).
+    // Correlated 2D Gaussian ellipse: TEllipse rotates per the covariance
+    // eigen-decomposition, so the drawn contour = the InEllipseXY gate (χ²<n²).
     Double_t sxx = out.sigma_x * out.sigma_x;
     Double_t syy = out.sigma_y * out.sigma_y;
     Double_t sxy = out.rho * out.sigma_x * out.sigma_y;
@@ -278,12 +283,12 @@ inline Double_t InterquartileRange(std::vector<Float_t> &v) {
   return q3 - q1;
 }
 
-// Robust peak/width estimate used to seed the beam-peak Gaussian fit, and as
-// the fallback anchor when the fit fails. Histograms only the
-// 5th-95th-percentile core so outlier ADC values can't stretch the binning,
-// takes the modal bin centre as the peak and IQR/1.349 as the width. Peak-like:
-// unlike the raw sample mean it is not pulled up by the straggling beam-dE
-// tail.
+/// Robust peak/width estimate used to seed the beam-peak Gaussian fit, and as
+/// the fallback anchor when the fit fails. Histograms only the
+/// 5th-95th-percentile core so outlier ADC values can't stretch the binning,
+/// takes the modal bin centre as the peak and IQR/1.349 as the width.
+/// Peak-like: unlike the raw sample mean it is not pulled up by the
+/// straggling beam-dE tail.
 void RobustPeakSeed(const std::vector<Float_t> &v, Double_t &mode,
                     Double_t &sigma) {
   mode = 0.0;
@@ -320,12 +325,12 @@ void RobustPeakSeed(const std::vector<Float_t> &v, Double_t &mode,
     mode = med;
 }
 
-// Per-channel beam-peak ADC histogram, shared by the fitters and the beam_peak
-// diagnostic plot so a fitted Gaussian's amplitude (counts per bin) always
-// matches the histogram it is drawn over. Range and bin count come from the
-// robust mode/width (mode +/- 4 sigma, ~6 bins/sigma, never finer than 1 ADC),
-// so the binning is chosen consistently per channel instead of from a fixed
-// count over the outlier-stretched min..max range. Caller owns the histogram.
+/// Per-channel beam-peak ADC histogram, shared by the fitters and the beam_peak
+/// diagnostic plot so a fitted Gaussian's amplitude (counts per bin) always
+/// matches the histogram it is drawn over. Range and bin count come from the
+/// robust mode/width (mode +/- 4 sigma, ~6 bins/sigma, never finer than 1 ADC),
+/// so the binning is chosen consistently per channel instead of from a fixed
+/// count over the outlier-stretched min..max range. Caller owns the histogram.
 TH1F *MakeBeamPeakHist(const TString &name, const TString &title,
                        const std::vector<Float_t> &v, Double_t mode,
                        Double_t sigma) {
@@ -346,14 +351,14 @@ TH1F *MakeBeamPeakHist(const TString &name, const TString &title,
   return h;
 }
 
-// Beam-peak Gaussian fit, robustly seeded: estimate the peak/width from the
-// percentile-clipped mode (RobustPeakSeed), then fit "gaus" over only the peak
-// core (mode +/- 2 sigma). A second pass refits inside a NARROW window around
-// the first centroid: when the spectrum is bimodal (e.g. Strip0 with a
-// secondary bump below the beam peak), the IQR-based seed sigma is inflated
-// by the contamination and the wide first-pass window lets the fit average
-// both components — the narrow refit locks onto the dominant peak. This is
-// the primary (and only) fit in ReduceToAnchors.
+/// Beam-peak Gaussian fit, robustly seeded: estimate the peak/width from the
+/// percentile-clipped mode (RobustPeakSeed), then fit "gaus" over only the peak
+/// core (mode +/- 2 sigma). A second pass refits inside a NARROW window around
+/// the first centroid: when the spectrum is bimodal (e.g. Strip0 with a
+/// secondary bump below the beam peak), the IQR-based seed sigma is inflated
+/// by the contamination and the wide first-pass window lets the fit average
+/// both components — the narrow refit locks onto the dominant peak. This is
+/// the primary (and only) fit in ReduceToAnchors.
 Bool_t FitBeamPeakGaussian(const std::vector<Float_t> &v, const TString &fname,
                            Double_t &peak_adc, Double_t &sigma_adc,
                            TF1 *&fit_out) {
@@ -391,10 +396,8 @@ Bool_t FitBeamPeakGaussian(const std::vector<Float_t> &v, const TString &fname,
   peak_adc = f->GetParameter(1);
   sigma_adc = std::fabs(f->GetParameter(2));
 
-  // Second pass: refit inside mu ± min(1.5*sigma_fit, 12% of mu). For a
-  // clean single Gaussian this window still spans the core and reproduces
-  // the first-pass result; for a contaminated spectrum it excludes the
-  // secondary component and re-centres onto the dominant peak.
+  // Second pass: refit inside mu ± min(1.5*sigma_fit, 12% of mu); a clean
+  // single Gaussian reproduces pass 1; contamination re-centres the fit.
   Double_t half = 1.5 * sigma_adc;
   Double_t half_cap = 0.12 * peak_adc;
   if (half_cap < half)
@@ -431,10 +434,10 @@ Bool_t FitBeamPeakGaussian(const std::vector<Float_t> &v, const TString &fname,
   return kTRUE;
 }
 
-// Fit a Gaussian to the bucket and return (mu, sigma). Falls back to
-// (median, IQR/1.349) on fit failure. Sim per-channel deposits are
-// well-approximated by a Gaussian, so a direct fit gives a cleaner
-// (mu, sigma) than median/IQR estimators.
+/// Fit a Gaussian to the bucket and return (mu, sigma). Falls back to
+/// (median, IQR/1.349) on fit failure. Sim per-channel deposits are
+/// well-approximated by a Gaussian, so a direct fit gives a cleaner
+/// (mu, sigma) than median/IQR estimators.
 Bool_t FitGaussianMuSigma(const std::vector<Float_t> &v, const TString &fname,
                           Double_t &mu, Double_t &sigma) {
   if (v.size() < 50)
@@ -465,31 +468,28 @@ Bool_t FitGaussianMuSigma(const std::vector<Float_t> &v, const TString &fname,
   return mu > 0 && sigma > 0;
 }
 
-// Paired (L, R) raw-ADC samples for one strip, collected UNGATED from events
-// where both ends fire, plus the uncapped "shoulder" slice: short-side values
-// from events where the LONG side reads low (charge went mostly to the short
-// end). The slice is collected separately because those events are rare — the
-// capped pair vectors fill up with beam events long before enough slice
-// events arrive.
+/// Paired (L, R) raw-ADC samples for one strip, collected UNGATED from events
+/// where both ends fire, plus the uncapped "shoulder" slice: short-side values
+/// from events where the LONG side reads low (charge went mostly to the short
+/// end). The slice is collected separately because those events are rare — the
+/// capped pair vectors fill up with beam events long before enough slice
+/// events arrive.
 struct StripPairSamples {
   std::vector<Float_t> l;
   std::vector<Float_t> r;
-  // Beam-gated, long-side-triggered pairs. Unlike `l`/`r` these keep events
-  // where the short end did not fire (recorded as 0), so they describe the
-  // population the decode actually sums. `l`/`r` require both ends and are
-  // therefore biased towards anomalously large short-side signals.
+  // Beam-gated, long-triggered pairs: keep events with silent short end
+  // (recorded 0) -- the population the decode sums; `l`/`r` need both ends.
   std::vector<Float_t> gated_long;
   std::vector<Float_t> gated_short;
 };
 
-// check_LR gain-match slice constants (37Cl_an_check_LR.ipynb, cell "Save
-// 2-pass calibration"). Defined before CollectAnchorSamplesOneSubfile because
-// the shoulder slice is selected during sample collection.
+// check_LR gain-match slice constants (37Cl_an_check_LR.ipynb); defined
+// before CollectAnchorSamplesOneSubfile, which picks the shoulder slice.
 
-// Every strip carries its own beam gate, on its own total and its neighbour's
-// (GatePartner). A strip is therefore anchored on events that were beam-like
-// THERE, rather than on events that were beam-like at strips 1 and 2 and
-// whatever they happened to be doing further down the chamber.
+/// Every strip carries its own beam gate, on its own total and its neighbour's
+/// (GatePartner). A strip is therefore anchored on events that were beam-like
+/// THERE, rather than on events that were beam-like at strips 1 and 2 and
+/// whatever they happened to be doing further down the chamber.
 void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
                                     const std::vector<ChannelCal> &chans,
                                     const BeamFit2D gate[18],
@@ -516,28 +516,26 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
     delete sf;
     return;
   }
-  // Raw ADC, pre-calibration. Guard strips (S) and left ends (L) live in
-  // Left_0_17_dE; right ends in RightdE. Strip totals are L+R; the gate uses
-  // the strip1 total (L1+R1) and the strip2 total (L2+R2).
-  UShort_t left_0_17_adc[18], rightdE_adc[18];
+  // Raw ADC, pre-calibration: the two ends of strips 1-16 in LeftdE/RightdE,
+  // the unsegmented strips in Strip0dE/Strip17dE. Strip totals are L+R; the
+  // gate uses the strip1/strip2 totals.
+  UShort_t leftdE_adc[16], rightdE_adc[16], strip0_adc = 0, strip17_adc = 0;
   Short_t cathode_adc = 0;
-  tree->SetBranchAddress("Left_0_17_dE", left_0_17_adc);
+  tree->SetBranchAddress("LeftdE", leftdE_adc);
   tree->SetBranchAddress("RightdE", rightdE_adc);
+  tree->SetBranchAddress("Strip0dE", &strip0_adc);
+  tree->SetBranchAddress("Strip17dE", &strip17_adc);
   tree->SetBranchAddress("Cathode", &cathode_adc);
 
   Long64_t n = tree->GetEntries();
   for (Long64_t j = 0; j < n; j++) {
     tree->GetEntry(j);
-    // (L, R) pairs for strips 1–16 where both ends fired — UNGATED, matching
-    // the check_LR notebook which runs on all events. The short-side anchor
-    // ("shoulder") is found in a slice where the LONG side reads low
-    // (~300-350 ADC), i.e. events where the charge went mostly to the short
-    // end. Those are reaction/off-position events that a beam gate would
-    // remove, so the pairs must not be beam-gated.
+    // (L, R) pairs for strips 1–16, UNGATED (check_LR runs on all events):
+    // a beam gate would remove the shoulder events (long side ~300-350 ADC).
     if (pairs) {
       for (Int_t s = 1; s <= 16; s++) {
-        Int_t lv = Int_t(left_0_17_adc[s]);
-        Int_t rv = Int_t(rightdE_adc[s]);
+        Int_t lv = Int_t(leftdE_adc[s - 1]);
+        Int_t rv = Int_t(rightdE_adc[s - 1]);
         if (lv > 0 && rv > 0 && Long64_t(pairs[s].l.size()) < kPairCap) {
           pairs[s].l.push_back(Float_t(lv));
           pairs[s].r.push_back(Float_t(rv));
@@ -549,20 +547,18 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
     for (Int_t s = 1; s <= 17; s++) {
       if (!gate[s].ok)
         continue;
-      const Double_t x =
-          StripTotalAdc(left_0_17_adc, rightdE_adc, GatePartner(s));
-      const Double_t y = StripTotalAdc(left_0_17_adc, rightdE_adc, s);
+      const Double_t x = StripTotalAdc(leftdE_adc, rightdE_adc, strip0_adc,
+                                       strip17_adc, GatePartner(s));
+      const Double_t y =
+          StripTotalAdc(leftdE_adc, rightdE_adc, strip0_adc, strip17_adc, s);
       if (x <= 0.0 || y <= 0.0)
         continue;
       pass[s] = BeamFitUtils::InEllipseXY(gate[s], x, y,
                                           Constants::cfg.BEAM_GATE_NSIGMA_X,
                                           Constants::cfg.BEAM_GATE_NSIGMA_Y);
     }
-    // Strip 0 shares strip 1's gate, so it has to share strip 1's verdict too.
-    // The ellipse was fitted on the (strip 0, strip 1) plane; GatePartner(0) is
-    // 0, so testing it strip-0-against-itself puts strip 0's value on strip 1's
-    // axis, lands every event outside, and leaves the guard with no beam sample
-    // at all -- which zeroes its gain and then fails AllStripsFired downstream.
+    // Strip 0 shares strip 1's gate, so share its verdict: GatePartner(0) is
+    // 0, and a self-test lands every event outside, zeroing its gain.
     pass[0] = pass[1];
     if (pairs) {
       for (Int_t s = 1; s <= 16; s++) {
@@ -570,9 +566,9 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
           continue;
         Bool_t l_is_long = (LongSide(s) == 'L');
         Int_t long_v =
-            l_is_long ? Int_t(left_0_17_adc[s]) : Int_t(rightdE_adc[s]);
+            l_is_long ? Int_t(leftdE_adc[s - 1]) : Int_t(rightdE_adc[s - 1]);
         Int_t short_v =
-            l_is_long ? Int_t(rightdE_adc[s]) : Int_t(left_0_17_adc[s]);
+            l_is_long ? Int_t(rightdE_adc[s - 1]) : Int_t(leftdE_adc[s - 1]);
         if (long_v > 0) {
           pairs[s].gated_long.push_back(Float_t(long_v));
           pairs[s].gated_short.push_back(Float_t(short_v > 0 ? short_v : 0));
@@ -588,10 +584,12 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
       if (s < 0 || s > 17 || !pass[s])
         continue;
       Int_t v = 0;
-      if (c.side == 'S' || c.side == 'L')
-        v = Int_t(left_0_17_adc[c.strip]);
+      if (c.side == 'S')
+        v = Int_t(c.strip == 0 ? strip0_adc : strip17_adc);
+      else if (c.side == 'L')
+        v = Int_t(leftdE_adc[c.strip - 1]);
       else if (c.side == 'R')
-        v = Int_t(rightdE_adc[c.strip]);
+        v = Int_t(rightdE_adc[c.strip - 1]);
       else if (c.side == 'C')
         v = Int_t(cathode_adc);
       if (v > 0)
@@ -602,57 +600,57 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
   delete sf;
 }
 
-// L/R gain matching, replicating the check_LR notebook's two-pass recipe
-// (37Cl_an_check_LR.ipynb, "Save 2-pass calibration" cell) exactly, minus the
-// eta/position correction:
-//
-// Pass 1 — per-side anchors:
-//   * LONG side anchor  = beam peak of the long side (histogram mode). The
-//     per-channel anchor from ReduceToAnchors is exactly this (the beam
-//     dominates the spectrum), so it is reused.
-//   * SHORT side anchor = short-axis crossing of the charge-sharing ridge,
-//     reached by extrapolating the ridge line to long = 0 (C_short =
-//     -intercept/slope); see RidgeShortAnchor. The short end is never observed
-//     collecting the full deposit -- the beam is collimated onto the long end
-//     -- so the anchor comes from the ridge rather than from finding a peak. A
-//     DC offset/pedestal moves the line's intercept off C_long, and using the
-//     free intercept here (rather than assuming it equals C_long) absorbs it.
-//   * gain = TARGET / anchor per side, with TARGET = 1.0 a.u. (the notebook
-//     uses 1000 ADC; only the overall scale differs).
-//
-// Pass 2 — per-strip normalisation of the summed beam peak to 1.0 a.u.:
-//   * pass 1 anchors the LONG side's own beam peak at 1.0, but at that peak
-//     the long end only carries fraction (1-f) of the strip's charge, so the
-//     summed total reads 1+f. f varies strip to strip (it grows downstream and
-//     differs by parity), which is what shows up as a sawtooth in the summed
-//     trace.
-//   * the peak is measured on `gated_long`/`gated_short`: beam-gated events
-//     where the LONG end fired, with a silent short end recorded as 0. That is
-//     the population the decode sums. The `l`/`r` pairs must not be used here:
-//     they require both ends to fire and so are biased towards large
-//     short-side signals.
-//   * both gains are scaled by 1/peak, which leaves the L/R ratio from pass 1
-//     untouched, so a wrong short anchor misallocates charge within a strip
-//     but no longer shifts the strip total.
-//   * when IGNORE_SHORT_STRIPS is set the decode keeps only the long end, so
-//     the long end alone is normalised to 1.0 and pass 1 already provides it.
-//
-// Pairs are collected UNGATED (all events with both ends firing) because the
-// ridge needs the off-centre crossings that a beam gate removes. Strips whose
-// ridge cannot be fitted fall back to the MEDIAN anchor of the strips that
-// could; that fallback assumes a common electronics scale across strips, which
-// the measured ridge slopes can be used to check rather than assume.
+/// L/R gain matching, replicating the check_LR notebook's two-pass recipe
+/// (37Cl_an_check_LR.ipynb, "Save 2-pass calibration" cell) exactly, minus the
+/// eta/position correction:
+///
+/// Pass 1 — per-side anchors:
+///   * LONG side anchor  = beam peak of the long side (histogram mode). The
+///     per-channel anchor from ReduceToAnchors is exactly this (the beam
+///     dominates the spectrum), so it is reused.
+///   * SHORT side anchor = short-axis crossing of the charge-sharing ridge,
+///     reached by extrapolating the ridge line to long = 0 (C_short =
+///     -intercept/slope); see RidgeShortAnchor. The short end is never observed
+///     collecting the full deposit -- the beam is collimated onto the long end
+///     -- so the anchor comes from the ridge rather than from finding a peak. A
+///     DC offset/pedestal moves the line's intercept off C_long, and using the
+///     free intercept here (rather than assuming it equals C_long) absorbs it.
+///   * gain = TARGET / anchor per side, with TARGET = 1.0 a.u. (the notebook
+///     uses 1000 ADC; only the overall scale differs).
+///
+/// Pass 2 — per-strip normalisation of the summed beam peak to 1.0 a.u.:
+///   * pass 1 anchors the LONG side's own beam peak at 1.0, but at that peak
+///     the long end only carries fraction (1-f) of the strip's charge, so the
+///     summed total reads 1+f. f varies strip to strip (it grows downstream and
+///     differs by parity), which is what shows up as a sawtooth in the summed
+///     trace.
+///   * the peak is measured on `gated_long`/`gated_short`: beam-gated events
+///     where the LONG end fired, with a silent short end recorded as 0. That is
+///     the population the decode sums. The `l`/`r` pairs must not be used here:
+///     they require both ends to fire and so are biased towards large
+///     short-side signals.
+///   * both gains are scaled by 1/peak, which leaves the L/R ratio from pass 1
+///     untouched, so a wrong short anchor misallocates charge within a strip
+///     but no longer shifts the strip total.
+///   * when IGNORE_SHORT_STRIPS is set the decode keeps only the long end, so
+///     the long end alone is normalised to 1.0 and pass 1 already provides it.
+///
+/// Pairs are collected UNGATED (all events with both ends firing) because the
+/// ridge needs the off-centre crossings that a beam gate removes. Strips whose
+/// ridge cannot be fitted fall back to the MEDIAN anchor of the strips that
+/// could; that fallback assumes a common electronics scale across strips, which
+/// the measured ridge slopes can be used to check rather than assume.
 const Int_t kGmBins = 512;
-// Ridge-slope short anchor. In the long-vs-short plane a fixed deposit divided
-// between the two ends of a strip traces
-//     ADC_long/C_long + ADC_short/C_short = 1,
-// a line of slope -C_long/C_short. The slope is the same for every deposit
-// energy, so the ridge direction alone gives the anchor ratio and C_short need
-// never be observed directly -- which matters because the beam is collimated
-// onto the long end and almost never deposits its full charge on the short one.
-// The plane also contains pile-up bands at 2x, 3x the single-particle deposit;
-// the 2-particle band falls into the single-particle window once
-// short > ~0.55*C_short, so the fit is capped well below that.
+/// Ridge-slope short anchor. In the long-vs-short plane a fixed deposit divided
+/// between the two ends of a strip traces
+///     ADC_long/C_long + ADC_short/C_short = 1,
+/// a line of slope -C_long/C_short. The slope is the same for every deposit
+/// energy, so the ridge direction alone gives the anchor ratio and C_short need
+/// never be observed directly -- which matters because the beam is collimated
+/// onto the long end and rarely deposits its full charge on the short one.
+/// The plane also contains pile-up bands at 2x, 3x the single-particle deposit;
+/// the 2-particle band falls into the single-particle window once
+/// short > ~0.55*C_short, so the fit is capped well below that.
 const Double_t kRidgeShortMaxFrac =
     0.5;                            // cap on short, as a fraction of C_long
 const Double_t kRidgeBandLo = 0.30; // single-particle band, x C_long
@@ -670,9 +668,9 @@ const Double_t kRidgeRatioHi = 3.00;
 const Double_t kGmEsumLo = 0.8; // a.u. eSum peak search window (pass 2)
 const Double_t kGmEsumHi = 2.5;
 
-// Everything SaveRidgeFitPlots needs to redraw a fit: the slice medians it was
-// fitted to, the window they were taken from, and the resulting line. Filled
-// even when the fit is later rejected, so a bad fit can be looked at.
+/// Everything SaveRidgeFitPlots needs to redraw a fit: the slice medians it was
+/// fitted to, the window they were taken from, and the resulting line. Filled
+/// even when the fit is later rejected, so a bad fit can be looked at.
 struct RidgeFit {
   std::vector<Double_t> x, y, ey; // slice centres, medians, median errors
   Double_t lo = 0.0, hi = 0.0;    // short-axis fit window
@@ -680,20 +678,20 @@ struct RidgeFit {
   Double_t c_long = 0.0, c_short = 0.0;
   Bool_t fitted = kFALSE; // a line was fitted (it may still be rejected)
   // Diagnostic: how far a strip got before the fit, so a "not measurable"
-  // log line can say which guard rejected it instead of only slope/intercept.
+  // log line can say which check rejected it instead of only slope/intercept.
   Long64_t n_gated = 0;        // pairs handed to RidgeShortAnchor
   Long64_t n_short_window = 0; // stayed inside the short window
   Long64_t n_long_band = 0;    // also inside the long band
   Int_t n_slices = 0;          // slices with >= kRidgeMinPerSlice
   Long64_t min_per_slice = 0;  // adaptive per-slice minimum used this strip
-  const char *fail = "";       // guarded reason when it returned 0
+  const char *fail = "";       // the check that returned 0, if any
 };
 
-// Theil-Sen robust line: slope = median of pairwise slopes, intercept = median
-// residual. Unlike OLS ("pol1" via a chi-square fit) a single outlying slice
-// median cannot bend the slope: it is the intercept-correcting companion to the
-// fact that a slice median is itself a robust estimate. Returns kFALSE when the
-// slice set is too small or degenerate (all-same x).
+/// Theil-Sen robust line: slope = median of pairwise slopes, intercept = median
+/// residual. Unlike OLS ("pol1" via a chi-square fit) a single outlying slice
+/// median cannot bend the slope: it corrects the intercept, complementing
+/// the slice median's own robustness. Returns kFALSE when the slice set
+/// is too small or degenerate (all-same x).
 Bool_t TheilSenLine(const std::vector<Double_t> &x,
                     const std::vector<Double_t> &y, Double_t &slope,
                     Double_t &intercept) {
@@ -726,10 +724,10 @@ Bool_t TheilSenLine(const std::vector<Double_t> &x,
   return kTRUE;
 }
 
-// Slope of the single-particle charge-sharing ridge, returning C_short at the
-// fitted line's short-axis crossing, C_short = -intercept/slope (equivalently
-// C_long/|slope| when the intercept sits exactly at C_long). Returns 0 when the
-// ridge is not measurable.
+/// Slope of the single-particle charge-sharing ridge, returning C_short at the
+/// fitted line's short-axis crossing, C_short = -intercept/slope (equivalently
+/// C_long/|slope| if the intercept sits at C_long). Returns 0 when the
+/// ridge is not measurable.
 Double_t RidgeShortAnchor(const std::vector<Float_t> &v_short,
                           const std::vector<Float_t> &v_long, Double_t c_long,
                           Double_t &slope_out, Double_t &intercept_out,
@@ -767,14 +765,8 @@ Double_t RidgeShortAnchor(const std::vector<Float_t> &v_short,
   }
   std::vector<Double_t> x, y, ey;
   {
-    // Per-slice minimum. Try the strict floor first (kRidgeMinPerSlice): this
-    // is what odd strips pass with, so their fit is byte-for-byte unchanged. If
-    // it fails to fill kRidgeMinPts slices, relax -- a strip whose ridge is
-    // spread thinly over many short bins (the even strips here: beam off-axis
-    // left, they share far more, so ~50/bin instead of >200) is being starved
-    // by a population-independent constant. Halve the floor and retry until
-    // kRidgeMinPts slices fill or the noise floor is hit, so a thinly spread
-    // ridge still fits without letting a couple-count slice through.
+    // Per-slice min: strict floor first (odd strips pass it, fit unchanged);
+    // if kRidgeMinPts slices don't fill, halve & retry: evens ~50 vs >200/bin
     Long64_t min_per_slice = kRidgeMinPerSlice;
     for (;;) {
       x.clear();
@@ -813,10 +805,8 @@ Double_t RidgeShortAnchor(const std::vector<Float_t> &v_short,
       dbg->fail = "fewer than kRidgeMinPts filled slices";
     return 0.0;
   }
-  // Robust regression: median of pairwise slopes, so an outlying slice median
-  // (e.g. the 2-/3-particle bands or a low-long background) cannot bend the
-  // slope the way the chi-square "pol1" fit could. Returns kFALSE on a
-  // degenerate slice set.
+  // TheilSen: median of pairwise slopes; outlying slice medians (2/3-particle
+  // bands, low-long background) can't bend the slope as a chi-square pol1.
   Double_t slope = 0.0, inter = 0.0;
   if (!TheilSenLine(x, y, slope, inter)) {
     if (dbg)
@@ -837,26 +827,23 @@ Double_t RidgeShortAnchor(const std::vector<Float_t> &v_short,
       dbg->fail = "slope >= 0";
     return 0.0;
   }
-  // The line must pass through C_long on the long axis; a large departure means
-  // the band selection did not isolate the single-particle ridge. The window is
-  // kept loose enough to admit a genuine intercept offset down to 0.80 C_long.
+  // Line must cross the long axis at C_long; a large departure means the band
+  // selection missed the single-particle ridge; window loose (0.80 C_long).
   if (inter < 0.80 * c_long || inter > 1.20 * c_long) {
     if (dbg)
       dbg->fail = "intercept outside [0.80, 1.20]*C_long";
     return 0.0;
   }
-  // Short anchor from the fitted line itself: where it crosses the short axis
-  // (long = 0), i.e. -intercept/slope. Using the free intercept rather than
-  // assuming it sits exactly at C_long absorbs a DC offset/pedestal; while the
-  // intercept is inside the sanity window, this is the honest crossing.
+  // Short anchor from the fitted line's short-axis crossing (-intercept/slope);
+  // the free intercept (not assuming C_long) absorbs DC offset/pedestal.
   return -inter / slope;
 }
 
-// One plot per strip under <plot_subdir>/ridge, named ridge_s<NN>: the
-// beam-gated long-vs-short plane, the slice medians the fit was actually given
-// (black), and the fitted line (violet). Drawn for every strip, including the
-// ones whose fit was rejected, so a bad ridge can be seen rather than inferred
-// from the slope in the log.
+/// One plot per strip under <plot_subdir>/ridge, named ridge_s<NN>: the
+/// beam-gated long-vs-short plane, the slice medians the fit was actually given
+/// (black), and the fitted line (violet). Drawn for every strip, including the
+/// ones whose fit was rejected, so a bad ridge can be seen rather than inferred
+/// from the slope in the log.
 void SaveRidgeFitPlots(const StripPairSamples pairs[18], const RidgeFit dbg[18],
                        const TString &plot_subdir) {
   TString subdir = plot_subdir + "/ridge";
@@ -907,9 +894,9 @@ void SaveRidgeFitPlots(const StripPairSamples pairs[18], const RidgeFit dbg[18],
   }
 }
 
-// Histogram-mode peak finder, mirroring the notebook's find_peak(): histogram
-// `v` over [lo, hi] with kGmBins bins, skip the first skip_frac of bins (to
-// avoid the threshold pile), return the max-bin centre. Returns 0 when empty.
+/// Histogram-mode peak finder, mirroring the notebook's find_peak(): histogram
+/// `v` over [lo, hi] with kGmBins bins, skip the first skip_frac of bins (to
+/// avoid the threshold pile), return the max-bin centre. Returns 0 when empty.
 Double_t GmFindPeak(const std::vector<Float_t> &v, Double_t lo, Double_t hi,
                     Double_t skip_frac) {
   if (v.empty() || hi <= lo)
@@ -956,11 +943,8 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
     }
   }
 
-  // ── Pass 1: per-side anchors ──
-  // LONG side: its own beam peak, already fitted by ReduceToAnchors.
-  // SHORT side: from the charge-sharing ridge slope, the same method on both
-  //   parities. Strips whose ridge is not measurable fall back to the median
-  //   of the strips that did measure one.
+  // Pass 1: per-side anchors. LONG: own beam peak (from ReduceToAnchors);
+  // SHORT: ridge slope, both parities; unmeasurable → median of measured.
 
   Bool_t matched[18] = {kFALSE};
   Double_t short_anchor_adc[18] = {0};
@@ -981,13 +965,8 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
 
     {
       const StripPairSamples &p = pairs[s];
-      // Fit the ridge on beam-gated events. The gate cuts on the strip-1 and
-      // strip-2 SUMS, so it removes pile-up and junk without touching where a
-      // particle crossed on any other strip -- exactly the off-centre
-      // crossings the ridge is made of. Fitting the ungated pairs instead
-      // admits the 2- and 3-particle bands and a low-long background that
-      // grows with short, which drags the slice medians down and steepens the
-      // slope.
+      // Beam-gated ridge fit: the gate removes pile-up/junk while keeping
+      // off-centre crossings; ungated's 2/3-particle bands steepen the slope.
       const std::vector<Float_t> &v_short = p.gated_short;
       const std::vector<Float_t> &v_long = p.gated_long;
       Double_t slope = 0.0, inter = 0.0;
@@ -1016,10 +995,8 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
 
     if (peak_short <= 0)
       continue;
-    // C_short/C_long is the ratio of the two preamp gains, so it is order
-    // unity. A ridge too flat to measure still crosses the long axis near
-    // C_long, so the intercept test above cannot catch it -- but it sends
-    // C_long/|slope| to absurd values, which this does catch.
+    // C_short/C_long is a preamp-gain ratio, so order unity. Catches ridges
+    // too flat for the intercept test: they cross near C_long, ratio absurd.
     Double_t ratio = peak_short / c_long.fit_adc;
     if (ratio < kRidgeRatioLo || ratio > kRidgeRatioHi) {
       std::cerr << "  strip " << s << ": ridge ratio " << Form("%.2f", ratio)
@@ -1037,11 +1014,8 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
 
   SaveRidgeFitPlots(pairs, ridge_dbg, plot_subdir);
 
-  // Fall back on the median RATIO rather than the median anchor: the ratio is a
-  // property of the two preamps, so it carries across strips, whereas an anchor
-  // in ADC does not -- each strip has its own C_long. Taken per parity because
-  // the L and R channels are on separate preamps and their ratios differ
-  // systematically (odd ~1.2, even ~0.9 on 87Rb).
+  // Fall back on the median RATIO (preamp property, transfers across strips;
+  // ADC anchors don't), per parity: L/R preamps differ (odd ~1.2, even ~0.9).
   Double_t median_ratio[2] = {0.0, 0.0};
   std::vector<Double_t> all_ratios;
   for (Int_t par = 0; par < 2; par++) {
@@ -1099,12 +1073,8 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
               << " ADC" << std::endl;
   }
 
-  // ── Pass 2: check, do not correct ──
-  // Both anchors are now measured (long from its beam peak, short from the
-  // ridge slope), so gain_L*L + gain_R*R already peaks at 1.0 a.u. for a beam
-  // event by construction. A departure means the ridge fit for that strip is
-  // wrong, and is reported rather than absorbed into the gains -- rescaling
-  // here would hide exactly the failure worth seeing.
+  // Pass 2: check, do not correct. eSum peaks at 1.0 a.u. by construction,
+  // so departures expose bad ridge fits — rescaling would hide that failure.
   Double_t esum_peak[18] = {0};
   for (Int_t s = 1; s <= 16; s++) {
     if (!matched[s])
@@ -1137,11 +1107,11 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
   }
 }
 
-// Cathode uses median + IQR/1.349 (asymmetric tail not as clean and the user
-// prefers to keep cathode on the existing approach). All other channels
-// (S guard strips + L/R long anodes) use a robust mode-seeded Gaussian fit
-// over the peak core (mode ± 2σ), anchored to the fitted centroid. Fall back
-// to the robust mode itself on fit failure.
+/// Cathode uses median + IQR/1.349 (asymmetric tail not as clean and the user
+/// prefers to keep cathode on the existing approach). All other channels
+/// (the unsegmented strips 0/17 + L/R long ends) use a robust mode-seeded fit
+/// over the peak core (mode ± 2σ), anchored to the fitted centroid. Fall back
+/// to the robust mode itself on fit failure.
 void ReduceToAnchors(std::vector<ChannelCal> &chans,
                      std::vector<std::vector<Float_t>> &samples,
                      std::vector<TF1 *> &fits_out, const TString &run_label,
@@ -1165,9 +1135,8 @@ void ReduceToAnchors(std::vector<ChannelCal> &chans,
       c.fit_adc = Median(v);
       c.fit_sigma_adc = InterquartileRange(v) / 1.349;
     } else {
-      // Primary: robust mode-seeded Gaussian fit of the peak core. Last
-      // resort: the robust mode itself (peak-like), never the tail-biased
-      // sample mean.
+      // Primary: robust mode-seeded Gaussian fit of the peak core; last
+      // resort: the peak-like robust mode, never the tail-biased mean.
       Double_t peak = 0, sig = 0;
       TF1 *fit = nullptr;
       TString fname =
@@ -1177,14 +1146,13 @@ void ReduceToAnchors(std::vector<ChannelCal> &chans,
         c.fit_sigma_adc = sig;
         fits_out[i] = fit;
       } else {
-        // Fit failed; anchor on the robust mode. Still "calibrated", but
-        // no fit curve is drawn -- flag it, tagged long/short, since a
-        // long-side fallback is a real miscalibration risk.
+        // Fit failed; anchor on robust mode — still calibrated, no fit curve.
+        // Log tags it long/short: a long-side fallback risks miscalibration.
         Double_t mode = 0.0, rsigma = 0.0;
         RobustPeakSeed(v, mode, rsigma);
         c.fit_adc = mode;
         c.fit_sigma_adc = rsigma;
-        TString kind = (c.side == 'S')                 ? "guard"
+        TString kind = (c.side == 'S')                 ? "unsegmented"
                        : (c.side == LongSide(c.strip)) ? "long"
                                                        : "short";
         std::cerr << "  [fit-fallback " << kind << "] " << c.name
@@ -1198,11 +1166,8 @@ void ReduceToAnchors(std::vector<ChannelCal> &chans,
               << std::endl;
   }
 
-  // After all per-channel peaks are fitted, run the check_LR-style two-pass
-  // L/R gain matching for strips 1–16: long-side beam peak + short-side
-  // shoulder anchors, then a per-strip eSum median alignment applied to the
-  // short side only. Sets the ChannelCal::gain overrides; strips where the
-  // shoulder cannot be found keep the independent 1/fit_adc gains.
+  // check_LR-style two-pass L/R match (strips 1–16): long beam peak + short
+  // shoulder, then eSum median alignment (short side only; 1/fit_adc if none).
   if (pairs)
     ComputeLRGainMatch(chans, pairs, plot_subdir);
 }
@@ -1226,9 +1191,8 @@ void WriteEresTomlRaw(const TString &out_subpath,
   toml::table root_tbl;
   root_tbl.insert("detector", detector_tbl);
 
-  // The eres calibration TOML is a small, version-controlled input (a control
-  // file), not bulk output: write it into the repo's control/ dir alongside the
-  // other Calibration_Run*_eres.toml, regardless of where root_files point.
+  // eres TOML is a version-controlled control file, not bulk output: write
+  // it into the repo's control/ dir, alongside Calibration_Run*_eres.toml.
   TString out_dir = Paths::DatasetDir() + "/sim_control";
   gSystem->mkdir(out_dir, kTRUE);
   TString out_full = out_dir + "/" + out_subpath;
@@ -1241,11 +1205,11 @@ void WriteEresTomlRaw(const TString &out_subpath,
   std::cout << "  wrote eres TOML: " << out_full << std::endl;
 }
 
-// Writes a one-row `calibration` tree into the open file `dst` (typically a
-// per-subfile .cal.root). Layout matches AggregateEresTomlForRun's reader.
-// `align` carries the beam-energy window and per-strip alignment factors;
-// pass nullptr when neither has been computed yet (branches are written as
-// zero).
+/// Writes a one-row `calibration` tree into the open file `dst` (typically a
+/// per-subfile .cal.root). Layout matches AggregateEresTomlForRun's reader.
+/// `align` carries the beam-energy window and per-strip alignment factors;
+/// pass nullptr when neither has been computed yet (branches are written as
+/// zero).
 void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
                           const StripAlignmentResult *align) {
   dst->cd();
@@ -1256,12 +1220,11 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
   Float_t fit_adc[kMaxChannels] = {0}, fit_sigma[kMaxChannels] = {0};
   Long64_t fit_n[kMaxChannels] = {0};
   Bool_t ok[kMaxChannels] = {0};
-  // Per-strip gains laid out to match the events tree exactly: GainLeft[s]
-  // multiplies Left_0_17_dE[s] (s=0/17 are the single-ended guards, s=1..16 the
-  // left ends), GainRight[s] multiplies RightdE[s] (0 at the guards). This is
-  // what EnergyView reads to calibrate on the fly -- no per-event a.u. is
-  // stored.
-  Float_t gain_left[18] = {0}, gain_right[18] = {0};
+  // GainLeft[k]/GainRight[k] scale LeftdE[k]/RightdE[k], the two ends of
+  // strip k+1; GainStrip0/GainStrip17 the unsegmented strips. EnergyView
+  // reads these to calibrate on the fly.
+  Float_t gain_left[16] = {0}, gain_right[16] = {0};
+  Float_t gain_strip0 = 0.0f, gain_strip17 = 0.0f;
   Float_t gain_cathode = 0.0f;
   // Per-strip ridge ratio measured in THIS subfile, 0 where the ridge was not
   // measurable. AggregateRidgeRatiosForRun medians these across a run.
@@ -1281,12 +1244,14 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
       if (c.side == LongSide(c.strip))
         long_anchor[c.strip] = Float_t(c.fit_adc);
     }
-    if (c.side == 'S' && c.strip >= 0 && c.strip <= 17)
-      gain_left[c.strip] = gain[k];
+    if (c.side == 'S' && c.strip == 0)
+      gain_strip0 = gain[k];
+    else if (c.side == 'S' && c.strip == 17)
+      gain_strip17 = gain[k];
     else if (c.side == 'L' && c.strip >= 1 && c.strip <= 16)
-      gain_left[c.strip] = gain[k];
+      gain_left[c.strip - 1] = gain[k];
     else if (c.side == 'R' && c.strip >= 1 && c.strip <= 16)
-      gain_right[c.strip] = gain[k];
+      gain_right[c.strip - 1] = gain[k];
     else if (c.side == 'C')
       gain_cathode = gain[k];
   }
@@ -1296,16 +1261,16 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
   cal->Branch("FitSigmaADC", fit_sigma,
               Form("FitSigmaADC[%d]/F", kMaxChannels));
   cal->Branch("FitN", fit_n, Form("FitN[%d]/L", kMaxChannels));
-  cal->Branch("GainLeft", gain_left, "GainLeft[18]/F");
-  cal->Branch("GainRight", gain_right, "GainRight[18]/F");
+  cal->Branch("GainLeft", gain_left, "GainLeft[16]/F");
+  cal->Branch("GainRight", gain_right, "GainRight[16]/F");
+  cal->Branch("GainStrip0", &gain_strip0, "GainStrip0/F");
+  cal->Branch("GainStrip17", &gain_strip17, "GainStrip17/F");
   cal->Branch("GainCathode", &gain_cathode, "GainCathode/F");
   cal->Branch("RidgeRatio", ridge_ratio, "RidgeRatio[18]/F");
   cal->Branch("LongAnchor", long_anchor, "LongAnchor[18]/F");
 
-  // Beam-energy window and per-strip multiplicative alignment factors
-  // matching the notebook approach (pol3 reference / centroid).
-  // EnergyView applies total_corrected = factor * total after the
-  // per-channel gain. Default factor = 1.0 (identity).
+  // Beam-energy window + per-strip multiplicative factors (notebook: pol3
+  // reference / centroid). EnergyView: total *= factor after gain; default 1.
   Float_t beam_e_min = 0.0f, beam_e_max = 0.0f;
   Float_t strip_factor[18];
   for (Int_t s = 0; s < 18; s++)
@@ -1360,10 +1325,11 @@ void SaveBeamPeakChannelHistograms(
   }
 }
 
-// Writes the per-channel gain table (tree "calibration") into the subfile's own
-// events file. No per-event calibrated tree is produced: downstream readers
-// recover a.u. on the fly via gain x raw ADC (EnergyView), so the raw events
-// tree plus this one-row gain table fully determine every calibrated value.
+/// Writes the per-channel gain table (tree "calibration") into the subfile's
+/// own events file. No per-event calibrated tree is produced: downstream
+/// readers recover a.u. on the fly via gain x raw ADC (EnergyView), so the
+/// raw events tree plus this one-row gain table fully determine every
+/// calibrated value.
 void WriteCalibrationToEvents(const FileSpec &spec,
                               const std::vector<ChannelCal> &chans,
                               const StripAlignmentResult *align) {
@@ -1429,7 +1395,7 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
     tree->GetEntry(j);
     ev.Decode();
     for (Int_t s = 0; s < kNStrips; s++) {
-      Double_t v = ev.total[s];
+      Double_t v = ev.Total(s);
       if (v > 0)
         h[s]->Fill(v);
     }
@@ -1467,10 +1433,10 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
     delete h[s];
 }
 
-// Overlay (one color per channel, log-y) of ONLY the events used for
-// calibration: the beam anchor samples, converted to a.u. via each channel's
-// gain. Same axes/style as SaveDynamicRangeOverlay but restricted to
-// calibration events rather than the full spectrum.
+/// Overlay (one color per channel, log-y) of ONLY the events used for
+/// calibration: the beam anchor samples, converted to a.u. via each channel's
+/// gain. Same axes/style as SaveDynamicRangeOverlay but restricted to
+/// calibration events rather than the full spectrum.
 void CalibrateBeam::SaveCalibSampleOverlay(
     const std::vector<ChannelCal> &chans,
     const std::vector<std::vector<Float_t>> &samples,
@@ -1534,12 +1500,12 @@ void CalibrateBeam::SaveCalibSampleOverlay(
     delete h[i];
 }
 
-// Derives the beam-energy window from the Strip0 (entrance guard) beam-peak
-// fit. The notebook (37Cl_an.ipynb cell 10) fits a Gaussian to raw stp0 ADC
-// and takes mu ± 3*sigma. Here, Strip0's beam peak is already fitted in
-// ReduceToAnchors (fit_adc / fit_sigma_adc), so we convert to a.u. via the
-// channel's own gain. In a.u. the peak sits at 1.0 by construction, so the
-// window is 1.0 ± 3*sigma/fit_adc.
+/// Derives the beam-energy window from the Strip0 (entrance strip) beam-peak
+/// fit. The notebook (37Cl_an.ipynb cell 10) fits a Gaussian to raw stp0 ADC
+/// and takes mu ± 3*sigma. Here, Strip0's beam peak is already fitted in
+/// ReduceToAnchors (fit_adc / fit_sigma_adc), so we convert to a.u. via the
+/// channel's own gain. In a.u. the peak sits at 1.0 by construction, so the
+/// window is 1.0 ± 3*sigma/fit_adc.
 void DeriveBeamEnergyWindow(const std::vector<ChannelCal> &chans,
                             StripAlignmentResult &align) {
   const Double_t kBeamNSigma = 3.0;
@@ -1558,16 +1524,16 @@ void DeriveBeamEnergyWindow(const std::vector<ChannelCal> &chans,
             << std::endl;
 }
 
-// Per-strip multiplicative alignment, matching the notebook
-// (37Cl_an.ipynb cell 5). Decodes events with the per-channel gains already on
-// disk, finds each strip's beam-peak centroid from the eSum 2D histogram,
-// fits a robust degree-3 polynomial reference trend through the centroids
-// (strips 1-16 only — the single-ended anodes sit at a different scale), and
-// derives a multiplicative factor = reference[s] / centroid[s] for 1-16.
-// Strips 0/17 get factor = 1.0 / centroid (push beam peak to 1.0 a.u.).
-//
-// Uses ALL events (not beam-gated): the beam dominates every strip's
-// histogram by a wide margin.
+/// Per-strip multiplicative alignment, matching the notebook
+/// (37Cl_an.ipynb cell 5). Decodes events with the per-channel gains already on
+/// disk, finds each strip's beam-peak centroid from the eSum 2D histogram,
+/// fits a robust degree-3 polynomial reference trend through the centroids
+/// (strips 1-16 only — the unsegmented strips sit at a different scale), and
+/// derives a multiplicative factor = reference[s] / centroid[s] for 1-16.
+/// Strips 0/17 get factor = 1.0 / centroid (push beam peak to 1.0 a.u.).
+///
+/// Uses ALL events (not beam-gated): the beam dominates every strip's
+/// histogram by a wide margin.
 StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
                                                 const TString &plot_subdir,
                                                 const TString &file_label) {
@@ -1624,7 +1590,7 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
     ev.Decode();
     Bool_t any = kFALSE;
     for (Int_t s = 0; s < kNStrips; s++) {
-      Double_t v = ev.total[s];
+      Double_t v = ev.Total(s);
       if (v <= 0)
         continue;
       h2->Fill(Double_t(s), v);
@@ -1656,10 +1622,8 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
     }
     proj->Smooth(kSmoothTimes);
 
-    // Strip 0/17: single-ended anode, beam at ~1.0, pileup at ~2.0.
-    // Strips 1-16: total is bimodal when the short side doesn't fire
-    // (long-only ≈ 0.5) — pick the peak nearest 1.0, which is the
-    // full-strip beam peak (both sides contributing, eSum ≈ 1.0).
+    // Strip 0/17: unsegmented, beam ~1.0, pileup ~2.0. Strips 1-16:
+    // bimodal when short side silent (long-only ≈ 0.5); take peak near 1.0.
     Double_t peak_target = 1.0;
     Double_t search_lo, search_hi;
     if (s == 0 || s == 17) {
@@ -1791,9 +1755,8 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
               << g_cent->GetN() << " strips" << std::endl;
   }
 
-  // Notebook (37Cl_an.ipynb cell 5): factors = reference / centroid,
-  // where reference is the pol3 trend through strips 1-16 centroids.
-  // Strips 0/17 are single-ended anodes not in the pol3 fit; push to 1.0.
+  // Notebook 37Cl_an.ipynb cell 5: factor = reference / centroid, with the
+  // reference = pol3 through strips 1-16; 0/17 unsegmented, pushed to 1.0.
   Int_t valid_strips = 0;
   for (Int_t s = 0; s < kNStrips; s++) {
     if (!beam_ok[s])
@@ -1860,9 +1823,8 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
   TString plot_subdir = "beam_calibration/" + file_label;
   std::cout << "Beam calibration: " << file_label << std::endl;
 
-  // One gate per strip, on that strip's total against its neighbour's. A
-  // strip whose gate cannot be fitted is left out of the calibration rather
-  // than dragging the whole subfile down with it.
+  // One gate per strip: strip total vs its neighbour's. A strip whose gate
+  // cannot be fitted is excluded from calibration, not the whole subfile.
   BeamFit2D gate[18];
   Int_t n_gates = 0;
   {
@@ -1901,10 +1863,8 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
     delete peak_fits[i];
   peak_fits.clear();
 
-  // Every channel that failed to calibrate is silently forced to gain 0 (reads
-  // 0 a.u. and drops out of the strip total), so spell out which ones and why.
-  // The long/short tag makes a long-side failure -- the dominant signal, which
-  // should never starve -- easy to spot: grep "[uncalibrated long]".
+  // Uncalibrated channels silently get gain 0 (drop out of strip totals), so
+  // log which/why; grep "[uncalibrated long]" — long side should never starve.
   for (Int_t i = 0; i < Int_t(chans.size()); i++) {
     const ChannelCal &c = chans[i];
     if (IsCalibrated(c))
@@ -1913,7 +1873,7 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
     if (c.side == 'C')
       kind = "cathode";
     else if (c.side == 'S')
-      kind = "guard";
+      kind = "unsegmented";
     else
       kind = (c.side == LongSide(c.strip)) ? "long" : "short";
     TString why;
@@ -1941,15 +1901,8 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
   // alignment step needs this on disk so EnergyView can decode events in a.u.
   WriteCalibrationToEvents(spec, chans, &align);
 
-  // Per-strip multiplicative alignment: decode events with the per-channel
-  // gains just written, find each strip's beam-peak centroid, fit a pol3
-  // reference trend, and derive factors = reference / centroid. Stored in
-  // the calibration tree and applied by EnergyView as total *= factor.
-  // gains just written, find each strip's beam-peak AND pileup-peak centroids,
-  // and derive a linear correction (slope + intercept) that maps beam→1.0 and
-  // pileup→2.0, flattening the Bragg curve. The polynomial trend is used only
-  // Preserve beam energy window from DeriveBeamEnergyWindow across the
-  // alignment call (which returns a fresh StripAlignmentResult).
+  // Per-strip alignment: factor = pol3 reference / beam-peak centroid, applied
+  // as total *= factor. Keep beam window: call returns a fresh result.
   Double_t beam_e_min = align.beam_e_min;
   Double_t beam_e_max = align.beam_e_max;
   {
@@ -1974,21 +1927,21 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
   std::cout << "  " << file_label << " calibration complete." << std::endl;
 }
 
-// Replace each subfile's short-side gain with one built from the run-level
-// median ridge ratio.
-//
-// C_short/C_long is a ratio of preamp gains, so it is fixed per channel and
-// does not vary subfile to subfile -- the measured scatter is ~1%, well below
-// the ~7% spread between strips. But a single subfile often cannot fit the
-// ridge on the low-occupancy short ends (on 87Rb the even strips fit in only
-// ~45% of subfiles, and 37Cl's upstream strips almost never do), so per-subfile
-// fitting leaves a large fraction of strips on a fallback.
-//
-// Aggregating fixes that without re-reading any event data: take the median
-// ratio per strip over the subfiles that did measure it, then rebuild every
-// subfile's short gain as 1/(ratio * C_long), using that subfile's own C_long
-// so per-subfile gain drift is preserved. Strips that no subfile could fit keep
-// whatever the per-subfile fallback gave them.
+/// Replace each subfile's short-side gain with one built from the run-level
+/// median ridge ratio.
+///
+/// C_short/C_long is a ratio of preamp gains, so it is fixed per channel and
+/// does not vary subfile to subfile -- the measured scatter is ~1%, well below
+/// the ~7% spread between strips. But a single subfile often cannot fit the
+/// ridge on the low-occupancy short ends (on 87Rb the even strips fit in only
+/// ~45% of subfiles, and 37Cl's upstream strips almost never do), so
+/// per-subfile fitting leaves a large fraction of strips on a fallback.
+///
+/// Aggregating fixes that without re-reading any event data: take the median
+/// ratio per strip over the subfiles that did measure it, then rebuild every
+/// subfile's short gain as 1/(ratio * C_long), using that subfile's own
+/// C_long so per-subfile gain drift is preserved. Strips that no subfile
+/// could fit keep whatever the per-subfile fallback gave them.
 void CalibrateBeam::AggregateRidgeRatiosForRun(
     Int_t run, const std::vector<FileSpec> &specs) {
   std::vector<Double_t> per_strip[18];
@@ -2050,7 +2003,7 @@ void CalibrateBeam::AggregateRidgeRatiosForRun(
       delete cf;
       continue;
     }
-    Float_t gl[18] = {0}, gr[18] = {0}, la[18] = {0}, rr[18] = {0};
+    Float_t gl[16] = {0}, gr[16] = {0}, la[18] = {0}, rr[18] = {0};
     t->SetBranchAddress("GainLeft", gl);
     t->SetBranchAddress("GainRight", gr);
     t->SetBranchAddress("LongAnchor", la);
@@ -2064,9 +2017,9 @@ void CalibrateBeam::AggregateRidgeRatiosForRun(
       if (anchor <= 0)
         continue;
       if (LongSide(s) == 'L')
-        gr[s] = Float_t(1.0 / anchor);
+        gr[s - 1] = Float_t(1.0 / anchor);
       else
-        gl[s] = Float_t(1.0 / anchor);
+        gl[s - 1] = Float_t(1.0 / anchor);
       rr[s] = Float_t(med[s]);
       changed = kTRUE;
     }
@@ -2220,6 +2173,11 @@ void CalibrateBeam::Run(const TString &file_label) {
   for (Int_t w = 0; w < Int_t(workers.size()); w++)
     workers[w].join();
 
+  if (Constants::cfg.SKIP_ERES_TOML) {
+    std::cout << "SKIP_ERES_TOML=true; skipping the per-run eres TOML"
+              << std::endl;
+    return;
+  }
   for (std::set<Int_t>::const_iterator it = runs.begin(); it != runs.end();
        ++it) {
     std::vector<FileSpec> run_specs;

@@ -85,15 +85,13 @@ def _load_calibrated_lr(path, max_events_per_file=None):
     right = ev["RightdE"].astype(np.float32) * \
         cal["GainRight"][0].astype(np.float32)
     # StripFactor: per-strip multiplicative alignment from the pol3 reference
-    # trend (replaced slope/intercept in the C++ rewrite); absent in old files
-    # -> identity (1.0).
+    # trend (replaces slope/intercept in the C++ rewrite); old files lack it -> 1.0.
     if "StripFactor" in cal:
         strip_factor = cal["StripFactor"][0].astype(np.float32)
     else:
         strip_factor = np.ones(18, dtype=np.float32)
-    # Both-channel firing from the RAW ADC, not the calibrated ends (short-end
-    # gains are 0 -- no sim anchor -- so the calibrated short ends are always
-    # zero).
+    # Both-channel firing from the RAW ADC, not the calibrated ends: short-end
+    # gains are 0 (no sim anchor), so calibrated short ends are always zero.
     both = _both_fired(ev["Left_0_17_dE"], ev["RightdE"],
                        config.BLIND_MULT_THRESH)
     return left, right, both, strip_factor

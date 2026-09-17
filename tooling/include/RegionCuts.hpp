@@ -99,10 +99,6 @@ struct RegionFit {
   /// real tail is far heavier than its Gaussian, so no model subtraction
   /// recovers it.
   Double_t n_beam = 0.0, n_reac = 0.0;
-  /// `kFALSE` for a beam-only fit, as used by the ridge-band region mode.
-  /// #reac is then a copy of #beam with zero amplitude, and nothing draws or
-  /// counts it.
-  Bool_t has_reac = kTRUE;
   Bool_t ok = kFALSE; ///< Whether the fit succeeded. Check this first.
   TString why;        ///< Why the fit failed; set only when #ok is false.
 };
@@ -130,11 +126,6 @@ Bool_t LoadFit(Int_t reac, RegionFit &fit);
 
 /**
  * @brief Finding regions by fitting a two-component mixture to the scatter.
- *
- * This is ApJ 983:142's "two Gaussian peaks" carried into two dimensions. The
- * two populations separate along the beam ridge's diagonal, which 1-D
- * projections wash out, and the reaction island is a few times 1e-4 of the
- * scatter.
  *
  * The fit is staged accordingly: the beam-like component is pinned from its own
  * core, the reaction component is seeded at the first local maximum above the
@@ -167,25 +158,6 @@ TCutG *EllipseCut(const char *name, const Gauss2D &g, Double_t nsigma,
                   Int_t npts = 64);
 
 /**
- * @brief Fit the beam component alone, with no reaction component.
- *
- * Pinned from its core exactly as FitMixture() does, but returns a fit with
- * `has_reac == kFALSE`. For the ridge-band region mode, where the (a,n)
- * population is not a compact island and so cannot be modelled as a second
- * Gaussian.
- *
- * @param scatter Scatter histogram. Must not be null.
- * @param reac    Reaction strip index.
- * @param x_lo    Fit window, lower x.
- * @param x_hi    Fit window, upper x.
- * @param y_lo    Fit window, lower y.
- * @param y_hi    Fit window, upper y.
- * @return The beam-only fit.
- */
-RegionFit FitBeam(TH2F *scatter, Int_t reac, Double_t x_lo, Double_t x_hi,
-                  Double_t y_lo, Double_t y_hi);
-
-/**
  * @brief How far a point sits above the beam ridge, in conditional sigma.
  *
  * The residual of y about the ridge line, in units of the beam's conditional
@@ -197,26 +169,6 @@ RegionFit FitBeam(TH2F *scatter, Int_t reac, Double_t x_lo, Double_t x_hi,
  * @return The height in sigma; negative below the ridge.
  */
 Double_t AboveRidge(const Gauss2D &beam, Double_t x, Double_t y);
-
-/**
- * @brief Closed polygon of a band above the beam ridge.
- *
- * The (a,n) region in `AN_REGION_RIDGE_BAND` mode. Spans the window in x and is
- * clipped to the window in y.
- *
- * @param name    Name for the returned cut.
- * @param beam    Fitted beam component defining the ridge.
- * @param nsig_lo Lower band edge, in conditional sigma above the ridge.
- * @param nsig_hi Upper band edge.
- * @param x_lo    Window, lower x.
- * @param x_hi    Window, upper x.
- * @param y_lo    Window, lower y.
- * @param y_hi    Window, upper y.
- * @return The cut. The caller owns it.
- */
-TCutG *RidgeBandCut(const char *name, const Gauss2D &beam, Double_t nsig_lo,
-                    Double_t nsig_hi, Double_t x_lo, Double_t x_hi,
-                    Double_t y_lo, Double_t y_hi);
 
 /**
  * @brief Count scatter events inside a cut.

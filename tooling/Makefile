@@ -1,21 +1,5 @@
-# MUSIC monorepo build.
-#
-# This is an INTERNAL build recipe, driven by the flake's derivation
-# (`nix build .#<dataset>`), which invokes it as:  make -C tooling ...
-# Never run it directly. It is no longer at the repo root, so it can't be
-# invoked from there; running it by hand would place binaries in
-# analysis/<dataset>/bin instead of keeping them at the repo root.
-#
-# Per-dataset outputs are self-contained: binaries in analysis/<DATASET>/bin,
-# objects + libmusic.a in analysis/<DATASET>/build. tooling/src compiles once
-# into a static libmusic.a; each main links it with --gc-sections. The GPU lib
-# (tooling/gpu/libgpuaccel.so) is optional: when built, it is dlopen'd at
-# runtime via an absolute path injected as -DMUSIC_GPU_LIB, and GpuAccel falls
-# back to the CPU sort if the lib (or a GPU) is missing.
-#
-# Dataset config: tooling/include/Constants.hpp defines the DatasetConfig class.
-# Each analysis provides analysis/<DATASET>/config/Constants.cpp which creates
-# and initializes the global instance. Editing the .cpp rebuilds all objects.
+# MUSIC monorepo build: INTERNAL recipe driven by the flake (nix build
+# .#<dataset>); never run directly. Outputs in analysis/<DATASET>/{bin,build}.
 
 CXX         := g++
 ROOT_CFLAGS := $(shell root-config --cflags)
@@ -74,10 +58,8 @@ LDFLAGS   := -Wl,--gc-sections $(ROOT_LIBS) -lSpectrum -lMinuit \
 LIB      := $(BUILD_DIR)/libmusic.a
 SRC_OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(wildcard $(SRC_DIR)/*.cpp))
 
-# Si-detector calibration / stopping-power library objects. They #include the
-# per-dataset SiCalibConstants.hpp, so they only compile for a dataset that
-# provides one; otherwise drop them from the library (the matching binaries are
-# gated the same way below). This is what lets `make DATASET=87Rb` build.
+# Si-detector calib / stopping-power objects: #include the per-dataset
+# SiCalibConstants.hpp (compile only if present; binaries gated the same way).
 SI_SRC_OBJS := $(addprefix $(BUILD_DIR)/,SiFits.o SiCalibration.o \
                CalcStoppingPower.o PlotStoppingPower.o)
 ifeq ($(wildcard $(CFG_DIR)/SiCalibConstants.hpp),)
@@ -90,14 +72,13 @@ DATASET_CFG_OBJ := $(BUILD_DIR)/dataset_constants.o
 SRC_OBJS += $(DATASET_CFG_OBJ)
 
 # Binary "foo-bar" is built from tooling/mains/main_foo_bar.cpp (dashes->underscores).
-BINS := pipeline calibrate-beam strip-sum-scatter split-sol preprocess-sol compute-regions cross-section talys-xs tag-efficiency template-match
+BINS := pipeline calibrate-beam strip-sum-scatter split-sol preprocess-sol compute-regions cross-section talys-xs tag-efficiency
 
 BIN_PATHS := $(addprefix $(BIN_DIR)/,$(BINS))
 
 .PHONY: all gpu clean
-# The GPU lib needs the CUDA toolchain (nvcc), which only the CUDA shell/build
-# provides; without it, skip the GPU lib and rely on the CPU fallback. Override
-# with `make WITH_GPU=1` (or =0) to force either way.
+# GPU lib needs the CUDA toolchain (nvcc), which only the CUDA shell/build
+# provides; absent -> skip GPU lib, CPU fallback. Force with WITH_GPU=1/0.
 WITH_GPU ?= $(shell command -v nvcc >/dev/null 2>&1 && echo 1 || echo 0)
 ifeq ($(WITH_GPU),1)
 all: gpu $(BIN_PATHS)
@@ -112,11 +93,8 @@ gpu:
 	fi
 	$(MAKE) -C $(GPU_DIR)
 
-# Every object explicitly depends on the dataset config source. Editing
-# Constants.cpp rebuilds everything -- no make clean needed.
-# CPLUS_INCLUDE_PATH from the dev shell makes tooling/include a SYSTEM include
-# path, and -MMD omits system headers from the .d files, so a header edit
-# rebuilds nothing that includes it. Depend on the headers explicitly.
+# Objects depend on the dataset config source (edit -> full rebuild); dev
+# shell marks tooling/include SYSTEM, so .d files omit it -- depend on HEADERS.
 HEADERS := $(wildcard $(INC_DIR)/*.hpp)
 CFG_SRC := $(DATASET_CFG_SRC)
  $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp $(CFG_SRC) $(HEADERS) | $(BUILD_DIR)

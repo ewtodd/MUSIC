@@ -51,8 +51,8 @@ const Int_t kTauFitMinEntries = 100;
 /**
  * @brief Channel groups, one kernel each.
  *
- * The long and short end of the split strips on either chain, plus the two
- * single-pad guards.
+ * The long and short end of the segmented strips on either chain, plus the
+ * two unsegmented strips 0 and 17.
  *
  * @note A short end fires in only a fraction of beam events and its height
  *       follows the track position, so its kernel is fitted on the fired hits
@@ -64,8 +64,8 @@ enum Group {
   kLongRight = 2,  ///< Long end, right chain.
   kShortLeft = 3,  ///< Short end, left chain.
   kShortRight = 4, ///< Short end, right chain.
-  kGuard0 = 5,     ///< Single-pad guard before strip 0.
-  kGuard17 = 6,    ///< Single-pad guard after strip 17.
+  kStrip0 = 5,     ///< Strip 0, unsegmented.
+  kStrip17 = 6,    ///< Strip 17, unsegmented.
   kNGroups = 7     ///< Count of groups; not a group itself.
 };
 /// @brief Human-readable name of a Group.
@@ -73,9 +73,10 @@ const char *GroupName(Int_t g);
 /// @brief Short tag for filenames: `L`, `R`, `Ls`, `Rs`, `S0`, `S17`.
 const char *GroupTag(Int_t g);
 /// @brief Which readout chain a group belongs to.
-/// @return `0` for the left chain, `1` for the right, `-1` for the guards.
+/// @return `0` for the left chain, `1` for the right, `-1` for strips 0/17.
 Int_t ChainOf(Int_t g);
-/// @brief Whether a group is a long end rather than a short end or guard.
+/// @brief Whether a group is a long end rather than a short end or an
+///        unsegmented strip.
 Bool_t IsLongGroup(Int_t g);
 
 /**

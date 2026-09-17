@@ -853,8 +853,7 @@ def cluster_per_reaction_strip(
         )
         strip_subdir = f"{subdir}/reac{strip}"
         # Step 2 isolates the RARE (a,n) via template prune / co-assign +
-        # an_select; GMM noise tagging would clip its low-density tail, so
-        # noise_pctl=None.
+        # an_select; GMM noise tagging clips its low-density tail (hence None).
         labels, means, k, bics = cluster_auto(feats,
                                               k=force_k,
                                               tag=tag,
@@ -867,9 +866,8 @@ def cluster_per_reaction_strip(
         _print_cluster_means(means, labels, names)
         _print_importance(feats, labels, names)
         X_at = X[at]
-        # Per-strip working plots (means + every prune round) go into a
-        # per-strip subdir (only `_final` lands in the main dir); combined
-        # auto-k drops sigma shading at k>=4.
+        # Working plots (means + every prune round) -> per-strip subdir;
+        # only _final in the main dir; combined auto-k: no sigma shading k>=4.
         bands = not (tag == "combined" and k >= 4)
         _draw_means_only(X_at,
                          labels,

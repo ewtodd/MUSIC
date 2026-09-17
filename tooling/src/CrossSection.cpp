@@ -47,9 +47,9 @@ Double_t CrossSection::Point::Err() const {
   return std::sqrt(stat * stat + sys * sys);
 }
 
-// "n", "2n", "pn", "a", "g": light particles leaving the compound nucleus,
-// each with an optional multiplicity digit in front. The residue is the
-// compound (beam + alpha) minus what left.
+/// "n", "2n", "pn", "a", "g": light particles leaving the compound nucleus,
+/// each with an optional multiplicity digit in front. The residue is the
+/// compound (beam + alpha) minus what left.
 Bool_t CrossSection::ExitResidue(const TString &exit, Int_t z_beam,
                                  Int_t a_beam, Int_t &z, Int_t &a) {
   Int_t dz = 0, da = 0, mult = 0;
@@ -147,13 +147,13 @@ TGraph *CrossSection::Clipped(TGraph *g, Double_t e_lo, Double_t e_hi) {
   return x.empty() ? nullptr : new TGraph(Int_t(x.size()), &x[0], &y[0]);
 }
 
-// The effective energy of a strip spanning e_out..e_in: the energy at which
-// the model's cross section equals its average over the strip, so a thin
-// target at e_eff would give what the strip gives (Szegedi et al. 2021).
-// The beam's dE/dx varies by a few percent within one strip, so the average
-// is taken uniform in energy. Only the model's shape enters: a constant
-// factor on sigma cancels. Bisection on a rising curve; the midpoint when
-// there is no curve or the strip lies outside it.
+/// The effective energy of a strip spanning e_out..e_in: the energy at which
+/// the model's cross section equals its average over the strip, so a thin
+/// target at e_eff would give what the strip gives (Szegedi et al. 2021).
+/// The beam's dE/dx varies by a few percent within one strip, so the average
+/// is taken uniform in energy. Only the model's shape enters: a constant
+/// factor on sigma cancels. Bisection on a rising curve; the midpoint when
+/// there is no curve or the strip lies outside it.
 Double_t CrossSection::EffectiveEnergy(TGraph *axn, Double_t e_out,
                                        Double_t e_in) {
   const Double_t mid = 0.5 * (e_out + e_in);
@@ -197,11 +197,11 @@ TCutG *CrossSection::ScaledCut(TCutG *cut, Double_t scale) {
   return scaled;
 }
 
-// Events in the scatter whose bin centre falls inside the cut scaled by
-// `scale`. Counting at a few scales and correcting each by the fraction of a
-// Gaussian it should enclose measures how much of what the region holds is
-// not the component: a clean peak gives the same number at every scale,
-// contamination grows with area.
+/// Events in the scatter whose bin centre falls inside the cut scaled by
+/// `scale`. Counting at a few scales and correcting each by the fraction of a
+/// Gaussian it should enclose measures how much of what the region holds is
+/// not the component: a clean peak gives the same number at every scale,
+/// contamination grows with area.
 Double_t CrossSection::CountInCut(TH2F *scatter, TCutG *cut, Double_t scale) {
   TCutG *scaled = ScaledCut(cut, scale);
   TAxis *ax = scatter->GetXaxis();
@@ -245,10 +245,10 @@ Bool_t CrossSection::LoadCache() {
   return kTRUE;
 }
 
-// The simulated beam's loss per strip and the energy entering strip 0, and
-// from them the centre-of-mass energy at the middle of every strip, so the
-// alignment to a published table can be found over the whole detector rather
-// than only the strips a cross section is reported for.
+/// The simulated beam's loss per strip and the energy entering strip 0, and
+/// from them the centre-of-mass energy at the middle of every strip, so the
+/// alignment to a published table can be found over the whole detector rather
+/// than only the strips a cross section is reported for.
 Bool_t CrossSection::LoadBeam() {
   if (!BeamEnergies::Profile(BeamEnergies::SimPath(), dE_, e_strip0_)) {
     std::cerr << "cross-section: cannot read the simulated beam at "
@@ -264,11 +264,11 @@ Bool_t CrossSection::LoadBeam() {
   return kTRUE;
 }
 
-// Every model in root_files/talys/talys_xs.root, in the config's order, with
-// every residual-production graph talys-xs wrote for it. Empty when there is
-// no file; the plot goes on without them. The label is presentation, so the
-// config's current one wins over the one stamped in the file; relabelling
-// never needs a TALYS rerun.
+/// Every model in root_files/talys/talys_xs.root, in the config's order, with
+/// every residual-production graph talys-xs wrote for it. Empty when there is
+/// no file; the plot goes on without them. The label is presentation, so the
+/// config's current one wins over the one stamped in the file; relabelling
+/// never needs a TALYS rerun.
 void CrossSection::LoadTalys() {
   const CrossSectionConfig &X = Constants::cfg.CROSS_SECTION_CONFIG;
   const TString path = Paths::ResultsDir() + "/root_files/talys/talys_xs.root";
@@ -357,16 +357,14 @@ Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
     return kFALSE;
   }
   pt.reac = reac;
-  // Beam particles that reached this strip under the same conditions a
-  // reaction here had to satisfy. Falls back to the flat count only if the
-  // cache predates the per-strip one.
+  // Beam particles reached this strip under the conditions a reaction here had
+  // to satisfy; flat-count fallback if the cache predates the per-strip one.
   Bool_t at_ok = kTRUE;
   const Long64_t n_at = ReadCount(*cache_, Form("n_normed_r%d", reac), at_ok);
   pt.n_denom = Double_t(at_ok && n_at > 0 ? n_at : n_beam_);
 
-  // Beam energy at the strip's entrance and exit: what entered strip 0, less
-  // each earlier strip's mean loss. Effective energy from the first model's
-  // shape; the others say how much it depends on the shape.
+  // Strip entrance/exit energies: strip 0's energy, less each earlier strip's
+  // mean loss. e_eff from the first model; the others bound shape dependence.
   Double_t e_lab = e_strip0_;
   for (Int_t s = 0; s < reac; s++)
     e_lab -= dE_[s];
@@ -394,9 +392,8 @@ Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
   const Double_t norm = pt.n_denom * areal_ * kCm2PerMb;
   TagEfficiencyRecord eff;
   if (TagEfficiencyStore::Load(ch.name, reac, eff) && eff.eff > 0.0) {
-    // The efficiency side's own count, unfolded: what the strip before fed
-    // into it by migration is removed first, then the loss is undone. The
-    // feed is only known when the strip before was itself unfolded.
+    // Unfolded efficiency-side count: previous strip's migration feed removed,
+    // then loss undone; feed known only if that strip was itself unfolded.
     const Double_t feed =
         prev_reac_ == reac - 1 ? prev_migrate_ * prev_true_ : 0.0;
     pt.n_reac = (eff.n_counted - feed) / eff.eff;
@@ -418,18 +415,10 @@ Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
   }
   prev_reac_ = -1;
 
-  // No efficiency record: two estimates of the reaction count. The geometric
-  // one is everything inside the region, corrected for the fraction of a
-  // Gaussian it should enclose; the attributed one is what the mixture fit
-  // assigned to the reaction component (trimmed at 3 sigma, so corrected for
-  // that). Where the island is well off the beam ridge they agree; where the
-  // region also covers beam tail the geometric count runs away, since the
-  // beam's real tail is far heavier than any Gaussian and cannot be
-  // subtracted by model. The attributed count is the value; the two
-  // estimates' disagreement is the region systematic, because that
-  // disagreement is exactly the overlap ambiguity.
+  // Geometric = in-region / enclosed fraction; attributed = 3-sigma fit share.
+  // Disagreement = region systematic; geometric runs away over beam tail.
   const Double_t n_raw = CountInCut(h, cut, 1.0);
-  if (C.AnRegionModeFor(reac) == StripSumScatterConfig::AN_REGION_ALL_TAGGED) {
+  if (C.AN_REGION_MODE == StripSumScatterConfig::AN_REGION_ALL_TAGGED) {
     // Every tagged event is the reaction: the count is what the tag left,
     // with no enclosed-fraction correction and no region systematic.
     pt.n_reac = n_raw;
@@ -445,39 +434,6 @@ Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
     delete cut;
     return kTRUE;
   }
-  const Bool_t band =
-      C.AN_REGION_MODE == StripSumScatterConfig::AN_REGION_RIDGE_BAND;
-  RegionFit band_fit;
-  if (band && RegionCutStore::LoadFit(reac, band_fit) && band_fit.ok) {
-    // A ridge band is not a Gaussian's ellipse: its count is what it holds,
-    // with no enclosed-fraction correction. The region systematic is the
-    // change in count when the band's lower edge moves by one conditional
-    // sigma either way, since that edge is where the beam tail ends.
-    pt.n_reac = n_raw;
-    pt.sigma = pt.n_reac / norm;
-    pt.stat = pt.n_reac > 0.0 ? pt.sigma / std::sqrt(pt.n_reac) : 0.0;
-    Double_t lo = pt.sigma, hi = pt.sigma;
-    for (Int_t k = -1; k <= 1; k += 2) {
-      TCutG *alt = RegionCutFinder::RidgeBandCut(
-          "region_an_alt", band_fit.beam, C.AN_RIDGE_NSIGMA_LO + k,
-          C.AN_RIDGE_NSIGMA_HI, band_fit.x_lo, band_fit.x_hi, band_fit.y_lo,
-          band_fit.y_hi);
-      const Double_t s = CountInCut(h, alt, 1.0) / norm;
-      delete alt;
-      lo = TMath::Min(lo, s);
-      hi = TMath::Max(hi, s);
-    }
-    pt.sys = 0.5 * (hi - lo);
-    std::cout << Form("   %2d    [%5.2f, %5.2f]      %6.2f   %6.0f  %9.0f   "
-                      "%7.1f +- %.1f (%.1f stat, %.1f region; band %.1f..%.1f "
-                      "sigma above the ridge, edge +-1 sigma)",
-                      reac, pt.e_in, pt.e_out, pt.e_eff, pt.n_reac, pt.n_denom,
-                      pt.sigma, pt.Err(), pt.stat, pt.sys, C.AN_RIDGE_NSIGMA_LO,
-                      C.AN_RIDGE_NSIGMA_HI)
-              << std::endl;
-    delete cut;
-    return kTRUE;
-  }
   const Double_t est_geo = n_raw / Enclosed(C.AN_REGION_NSIGMA);
   const Double_t n_assigned = RegionCutStore::LoadAssigned(region, reac);
   const Bool_t have_fit = n_assigned >= 0.0;
@@ -486,11 +442,8 @@ Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
   pt.sigma = pt.n_reac / norm;
   pt.stat = pt.n_reac > 0.0 ? pt.sigma / std::sqrt(pt.n_reac) : 0.0;
   if (have_fit) {
-    // Against the region's core: the 1-sigma ellipse (half the drawn region),
-    // corrected for the 39% it encloses. The full region's count is no check
-    // where it also covers tail, but the core is where the island dominates,
-    // so core and attributed counts should agree, and their disagreement is
-    // the honest size of the overlap ambiguity.
+    // Core check: 1-sigma ellipse (half the drawn region), corrected for the
+    // 39% enclosed; the gap to the core count = the overlap ambiguity's size.
     const Double_t est_core =
         CountInCut(h, cut, 1.0 / C.AN_REGION_NSIGMA) / Enclosed(1.0);
     pt.sys = std::fabs(est_core - est_fit) / norm;
@@ -518,11 +471,11 @@ Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
   return kTRUE;
 }
 
-// Against the published values. A published table is a list of strips, so
-// the two are aligned strip to row by the single integer offset that best
-// matches the energies over the whole table, not row by row: pairing each
-// strip with its nearest published energy silently pairs two strips with one
-// row when a dataset reaches energies the reference never reported.
+/// Against the published values. A published table is a list of strips, so
+/// the two are aligned strip to row by the single integer offset that best
+/// matches the energies over the whole table, not row by row: pairing each
+/// strip with its nearest published energy silently pairs two strips with one
+/// row when a dataset reaches energies the reference never reported.
 void CrossSection::CompareReference(const ChannelResult &r) const {
   const std::vector<std::vector<Double_t>> &ref = r.ch->reference_xs;
   if (ref.empty())
@@ -570,10 +523,10 @@ void CrossSection::CompareReference(const ChannelResult &r) const {
   }
 }
 
-// Excitation function(s), this work against the published points. The frame
-// spans every set drawn so the measured strips are seen in the context of the
-// whole published curve, not just the rows they happen to sit beside. One
-// channel: its own title. Several: the dataset alone, every channel labelled.
+/// Excitation function(s), this work against the published points. The frame
+/// spans every set drawn so the measured strips are seen in the context of the
+/// whole published curve, not just the rows they happen to sit beside. One
+/// channel: its own title. Several: the dataset alone, every channel labelled.
 void CrossSection::Draw(const std::vector<const ChannelResult *> &rs,
                         const TString &name) const {
   Double_t fx_lo = 1.0e9, fx_hi = -1.0e9, fy_lo = 1.0e9, fy_hi = -1.0e9;
@@ -588,11 +541,8 @@ void CrossSection::Draw(const std::vector<const ChannelResult *> &rs,
     std::vector<Double_t> vx, vy, vexl, vexh, vey;
     for (Int_t i = 0; i < Int_t(r.points.size()); i++) {
       const Point &pt = r.points[i];
-      // The energy error is the strip's extent about the effective energy,
-      // asymmetric since that energy sits above the midpoint on a rising
-      // curve (the reference table's convention), with the effective
-      // energy's dependence on the model shape added in quadrature on each
-      // side.
+      // Energy error = strip extent about e_eff, asymmetric (above the midpoint
+      // on a rising curve); e_eff's shape dependence added in quadrature.
       vx.push_back(pt.e_eff);
       vy.push_back(pt.sigma);
       vexl.push_back(std::hypot(pt.e_eff - TMath::Min(pt.e_in, pt.e_out),
@@ -639,9 +589,8 @@ void CrossSection::Draw(const std::vector<const ChannelResult *> &rs,
                               : r.ch->reference_label;
       published.push_back(p);
     }
-    // Hauser-Feshbach prediction, if talys-xs has written one. The first
-    // model in full, the shape checks dashed; on a combined figure only the
-    // first model per channel, in the channel's colour.
+    // Hauser-Feshbach prediction, if talys-xs wrote one: first model solid,
+    // rest dashed; combined figure: first per channel only, in its colour.
     for (Int_t m = 0; m < Int_t(r.talys.size()); m++) {
       if (rs.size() > 1 && m > 0)
         break;

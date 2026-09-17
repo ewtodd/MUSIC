@@ -10,7 +10,7 @@
  * uses.
  *
  * The pipeline was written against CoMPASS. Rather than fork every downstream
- * stage for the SOLARIS era, SOLARIS hits are adapted into `RawHit` with
+ * stage for the SOLARIS format, SOLARIS hits are adapted into `RawHit` with
  * CoMPASS-compatible flag bits, so EventBuilder, the timing filters and
  * everything after them work unchanged.
  */
@@ -110,10 +110,8 @@ inline UInt_t MapSOLFlagsToCoMPASS(UShort_t sol_flags_high,
     mapped |= CoMPASSData::INPUT_SATURATING;
   }
 
-  // The rest, packed per the layout above. Each word is masked to the width it
-  // actually defines; the previous shifts (16 and 20) overlapped in bits 20-23,
-  // so flags_high bits 4-7 and flags_low bits 0-3 were ORed on top of each
-  // other and neither could be read back.
+  // The rest, packed per the layout above; each word is masked to its width:
+  // the old shifts (16, 20) overlapped in bits 20-23, making flags unreadable.
   mapped |= (static_cast<UInt_t>(sol_flags_low) & SOLPack::LOW_MASK)
             << SOLPack::LOW_SHIFT;
   mapped |= ((static_cast<UInt_t>(sol_flags_high) >> SOLPack::HIGH_SKIP) &

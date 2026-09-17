@@ -1,6 +1,6 @@
-// cross-section: absolute (a,xn) cross section per reaction strip. The work
-// is CrossSection (tooling/src/CrossSection.cpp); this only sets the output
-// locations and runs it.
+/// cross-section: absolute (a,xn) cross section per reaction strip. The work
+/// is CrossSection (tooling/src/CrossSection.cpp); this only sets the output
+/// locations and runs it.
 #include "CrossSection.hpp"
 #include "InitUtils.hpp"
 #include "Paths.hpp"

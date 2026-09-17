@@ -61,6 +61,7 @@ void InitDatasetConfig() {
   gInstance.MAX_FUSED_WORKERS = 16;
   gInstance.SKIP_EXISTING = kTRUE;
   gInstance.SAVE_PLOTS = kFALSE;
+  gInstance.SKIP_ERES_TOML = kTRUE;
   gInstance.SAVE_SAMPLE_TRACES = 10;
 
   // Beam calibration and gating. Strips 0 and 17 are ignored throughout, so
@@ -77,48 +78,36 @@ void InitDatasetConfig() {
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X = 5.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y = 5.0;
 
-  // The tag, in the order the conditions are applied. Everything in sigma
-  // resolves through the noise measured on the beam (jump sigma ~0.075 per
-  // step, strip sigma ~0.065-0.073 at strips 15-16). The 40K residue stops
-  // in strips 15-16, so no tail smoothness or zigzag condition is set: any
-  // step ceiling there removes the residues. The falling-tail check instead
-  // starts at each trace's own post-window peak.
+  /// The tag, in the order the conditions are applied. Everything in sigma
+  /// resolves through the noise measured on the beam (jump sigma ~0.075 per
+  /// step, strip sigma ~0.065-0.073 at strips 15-16). The 40K residue stops
+  /// in strips 15-16, so the falling-tail check starts at each trace's own
+  /// post-window peak.
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN = 2;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX = 10;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_BEAM_UPSTREAM_OF_REAC = kTRUE;
-  // Post-reaction smoothness at the shared 2.5 sigma to strip 12.
-  gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_SMOOTHNESS = kTRUE;
+  // Post-reaction smoothness at the shared 2.5 sigma, every step to the end.
   // Persistence: 3 strips after the reaction each more than 2 sigma of their
   // spread above the beam. The 40K excess is ~0.25, about 4 sigma.
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_ABOVE_NSIGMA = 2.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_ABOVE_STRIPS = 3;
-  // Falling tail after the peak: from the largest deposit in the post window
-  // to strip 16 no rise above 2 sigma of a step (0.15). A residue peaks once
-  // and declines to its stop; the tags that leaked at reaction strip 6 fell
-  // back to the beam and rose again at strips 12-14 before dropping at 16.
-  gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_FALL_AFTER_PEAK = kTRUE;
+  /// Falling tail after the peak: from the largest deposit in the post window
+  /// to strip 16 no rise above 2 sigma of a step (0.15). A residue peaks once
+  /// and declines to its stop; the tags that leaked at reaction strip 6 fell
+  /// back to the beam and rose again at strips 12-14 before dropping at 16.
   gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_RISE_NSIGMA = 3.0;
-  // No return: after the peak, once back at or below the beam the trace must
-  // not rise above 2 sigma of its spread over the beam again. The tags that
-  // leaked at reaction strip 6 returned to 1.0 at strips 10-11 and sat at
-  // 1.15-1.25 over strips 12-14, a rise too slow for the per-step ceiling.
+  /// No return: after the peak, once back at or below the beam the trace must
+  /// not rise above 2 sigma of its spread over the beam again. The tags that
+  /// leaked at reaction strip 6 returned to 1.0 at strips 10-11 and sat at
+  /// 1.15-1.25 over strips 12-14, a rise too slow for the per-step ceiling.
   gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_RETURN_NSIGMA = 2.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_RERISE_NSIGMA = 2.0;
-  // Below the beam after the reaction, and already on the way down: strips
-  // 15 and 16 both more than 1 sigma of their spread under the beam. A
-  // residue crosses the beam at strips 10-13 and declines to the exit (the
-  // templates at reaction strips 2-6: 0.87 at 15, 0.45-0.55 at 16). Strip 16
-  // alone let through a class that sits 10-15% high all the way to strip 15
-  // and drops by half in one strip, which dominated the tags from strip 7
-  // on; those have strip 15 at 1.1 and fail here.
-  gInstance.STRIP_SUM_SCATTER_CONFIG.LATE_STRIP_BELOW_NSIGMA = {{15, 1.0},
-                                                                {16, 1.0}};
   gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_STRIP_16_BELOW_BEAM = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.END_STRIP_MAX = 1.0;
 
-  // The plane the regions are fitted in: x sums strips 1-13, y the four
-  // strips after the reaction, capped at strip 16. A change here reprojects
-  // the cache from the reservoir rather than refilling.
+  /// The plane the regions are fitted in: x sums strips 1-13, y the four
+  /// strips after the reaction, capped at strip 16. A change here reprojects
+  /// the cache from the reservoir rather than refilling.
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_LO = 1;
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_HI = 13;
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS = 4;
@@ -129,11 +118,6 @@ void InitDatasetConfig() {
   // Regions and display.
   gInstance.STRIP_SUM_SCATTER_CONFIG.AN_REGION_MODE =
       StripSumScatterConfig::AN_REGION_ALL_TAGGED;
-  // Per-strip override: AN_REGION_ALL_TAGGED counts every event the tag
-  // leaves as (a,n) with no fit, for strips where the tag conditions alone
-  // isolate the residues, e.g. {{5,
-  // StripSumScatterConfig::AN_REGION_ALL_TAGGED}}.
-  gInstance.STRIP_SUM_SCATTER_CONFIG.AN_REGION_MODE_STRIPS = {};
   gInstance.STRIP_SUM_SCATTER_CONFIG.REGION_CUT_REDRAW = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MIN = 11;
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MAX = 15;
@@ -145,7 +129,6 @@ void InitDatasetConfig() {
   gInstance.STRIP_SUM_SCATTER_CONFIG.MAX_STRIP_SUM_WORKERS = 8;
   gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_RUN_PLOTS = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS = kTRUE;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.PLOT_PARITY_REJECTED_GRID = kFALSE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.RERUN_SIM = kFALSE;
 
   // Cross section: 37Cl on helium at 400 Torr, the (a,n) channel only, with

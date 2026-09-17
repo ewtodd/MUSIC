@@ -20,6 +20,8 @@ Bool_t Profile(const TString &path, Double_t *dE, Double_t &e_strip0) {
   TTree *mc = static_cast<TTree *>(f.Get("MC"));
   if (!t || !mc)
     return kFALSE;
+  // Remix-MUSIC-Sim's own layout, not the events tree's: 18 slots per side,
+  // with the unsegmented strips 0 and 17 parked in the left array.
   Float_t left[18], right[18];
   t->SetBranchAddress("Left_0_17_dE", left);
   t->SetBranchAddress("RightdE", right);

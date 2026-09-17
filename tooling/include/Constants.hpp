@@ -14,17 +14,16 @@
 
 /**
  * @file Constants.hpp
- * @brief The dataset configuration, and how it is layered.
+ * @brief Dataset configuration.
  *
  * Configuration is split in two. The struct definitions and the tooling-wide
  * defaults live here and in `Constants.cpp`; each dataset then overrides only
  * the fields it cares about in `analysis/<dataset>/config/Constants.cpp`, which
  * is compiled into that dataset's binaries.
  *
- * On top of that sits the epoch layer. A dataset spanning several acquisition
- * eras declares a RunEpoch per era, and the `Active*()` accessors read the
- * active epoch when one is set and the flat block otherwise. See RunEpoch for
- * why a half-populated epoch is an error rather than a fallback.
+ * There is additionally an option for epochs. A dataset spanning several
+ * acquisition eras declares a RunEpoch per era, and the `Active*()` accessors
+ * read the active epoch when one is set and the flat block otherwise.
  */
 
 /**
@@ -32,140 +31,92 @@
  * @brief Whether per-hit and per-event progress logging is compiled in.
  *
  * Compile-time so the branch leaves the hot loop entirely when off. Define it
- * to `0` on the compiler command line to disable.
+ * to `1` on the compiler command line to enable.
  *
- * @note Logging outside hot loops — per-file and per-run summaries — is
- *       unconditional and not covered by this.
+ * @note Logging outside hot loops (per-file and per-run summaries) is
+ *       unconditional and not covered by this option.
  */
 #ifndef MUSIC_HOT_PATH_LOGGING
-#define MUSIC_HOT_PATH_LOGGING 1
+#define MUSIC_HOT_PATH_LOGGING 0
 #endif
 
 /**
- * @brief Everything governing the reaction search in the strip-sum scatters.
+ * @brief Options which govern the reaction search in the 2D histograms
+ * (strip-sum-scatter).
  *
- * Two kinds of knob live here, and the distinction decides what a change costs:
- * those that are part of the **built** quantity, where a change reprojects the
- * cache, and those that are part of the **tagging**, where a change refills it.
- * Each field says which it is. The cache fingerprints them all, so either
- * happens automatically.
+ * There are two kinds of controls; ones which define which events populating
+ * the histograms, and ones which define how the histograms are constructed.
+ * Each field says which it is. The cache fingerprints them all, so rebuilds
+ * should happen automatically if they are needed.
  */
 struct StripSumScatterConfig {
   enum PureBeamGate { PURE_BEAM_GATE_S0_S1, PURE_BEAM_GATE_S1_S2 };
   PureBeamGate PURE_BEAM_GATE;
 
-  /// Strips summed onto the scatter y-axis after the trigger strip: y spans
-  /// reac+1 .. min(reac+POST_TRIGGER_SUM_STRIPS, POST_WINDOW_LAST_STRIP), so
-  /// the window shrinks at deep strips instead of running into the region
-  /// where the recoil slows and its excess turns into a deficit. ApJ 983:142
-  /// did this by hand (five strips at 3-8, two at 9-12, one at 13);
-  /// POST_WINDOW_STRIPS sets a strip's window length outright, to reproduce
-  /// such a table. Part of the built quantity, so a change re-projects the
-  /// cache rather than refilling.
+  /// Number of strips summed onto the scatter y-axis after the trigger strip:
+  /// y spans reac+1 .. min(reac+POST_TRIGGER_SUM_STRIPS,
+  /// POST_WINDOW_LAST_STRIP)
   Int_t POST_TRIGGER_SUM_STRIPS;
   Int_t POST_WINDOW_LAST_STRIP;
-  std::map<Int_t, Int_t> POST_WINDOW_STRIPS;
+
   /// Cap on worker threads for the scatter fill.
   Int_t MAX_STRIP_SUM_WORKERS;
 
   Int_t REACTION_STRIP_MIN;
   Int_t REACTION_STRIP_MAX;
 
-  /// Smoothness after the reaction: every strip-to-strip step from reac+1 to
-  /// REQUIRE_SMOOTHNESS_END_STRIP must be under REQUIRE_SMOOTHNESS_NSIGMA
-  /// times that strip's measured strip-to-strip beam noise
-  /// (StripSumScatter::JumpSigma), so the cut carries between datasets. The
-  /// published 87Rb macros used 1.2 in their beam = 12 units, 0.10 in beam
-  /// units, about 2.5 sigma of that data's noise; copied unconverted as 1.2
-  /// it was a dead cut. Gated by REQUIRE_SMOOTHNESS. Part of the tagging, so
-  /// a change refills.
-  Int_t REQUIRE_SMOOTHNESS_END_STRIP;
-  Double_t REQUIRE_SMOOTHNESS_NSIGMA;
-  /// The tail-shape conditions of the published 87Rb per-strip macros
-  /// (TracesVisu2.C at A9-A11), each in sigma of the measured noise so the
-  /// same setting means the same thing on every dataset, and each off at 0 or
-  /// less. Numerator only, like END_STRIP_MAX: they describe the residue, not
-  /// the beam, so they do not enter the per-strip denominator.
-  /// Smoothness continued from REQUIRE_SMOOTHNESS_END_STRIP+1 to the last
-  /// strip with its own, looser, step in JumpSigma of each strip (macros:
-  /// 1.5/12 over strips 13-17, ~3.5 sigma of the 87Rb noise).
-  Double_t TAIL_SMOOTHNESS_NSIGMA;
-  /// Falling tail: from TAIL_FALL_FROM_STRIP to the last strip no
-  /// strip-to-strip rise above TAIL_RISE_NSIGMA x JumpSigma of the strip
-  /// (macros: any rise above 0.1/12 from strip 14 on, ~0.2 sigma). A residue
-  /// produced at a late strip is slowing and its deposit falls; a beam
-  /// particle on a pole-zero undershoot, or pileup, does not. FROM_STRIP 0 or
-  /// less: off.
+  /// Every strip-to-strip step from reac+1 to
+  /// the last strip must be under SMOOTHNESS_NSIGMA times that strip's
+  /// measured beam spread (StripSumScatter::StripSigma). 0 or less = off.
+  Double_t SMOOTHNESS_NSIGMA;
+
+  /// From TAIL_FALL_FROM_STRIP to the last strip, allow no
+  /// strip-to-strip rise above TAIL_RISE_NSIGMA x StripSigma of the strip.
+  /// FROM_STRIP 0 or less = off.
   Int_t TAIL_FALL_FROM_STRIP;
   Double_t TAIL_RISE_NSIGMA;
-  /// Start the falling-tail check at the trace's own peak instead of a fixed
-  /// strip: the maximum deposit over the post window reac .. YHiOf(reac),
-  /// after which a residue only declines. Adapts to the reaction strip, so
-  /// it removes a trace that returns to the beam and rises again before its
-  /// stop, which a fixed start strip lets through at early reactions. Takes
-  /// precedence over TAIL_FALL_FROM_STRIP; needs TAIL_RISE_NSIGMA > 0.
-  Bool_t TAIL_FALL_AFTER_PEAK;
-  /// No return: after the post-window peak, once the trace has come back
-  /// down to within TAIL_RETURN_NSIGMA x StripSigma above the beam it must
-  /// not rise above TAIL_RERISE_NSIGMA x StripSigma above the beam again. A
-  /// residue stays above the beam until it stops; a tag that returns to the
-  /// beam and climbs again is a beam particle with a later disturbance. Two
-  /// thresholds so noise around the beam level cannot toggle it. RERISE 0 or
-  /// less: off.
+
+  /// After the post-window peak, once the trace has come
+  /// back down to within TAIL_RETURN_NSIGMA x StripSigma above the beam it must
+  /// not rise above TAIL_RERISE_NSIGMA x StripSigma above the beam again.
+  /// RERISE 0 or less = off.
   Double_t TAIL_RETURN_NSIGMA;
   Double_t TAIL_RERISE_NSIGMA;
-  /// Per-strip ceilings downstream of the reaction, strip -> sigma below the
-  /// beam in that strip's measured spread (StripSumScatter::StripSigma):
-  /// total[s] < 1 - nsigma x StripSigma(s). Applied on top of END_STRIP_MAX
-  /// (macros: strip 16 below 11.9/12 and strip 17 below 11.3-11.5/12, i.e.
-  /// 0.4 and 1.5-2.5 sigma of the 87Rb spread). Empty: off.
-  std::map<Int_t, Double_t> LATE_STRIP_BELOW_NSIGMA;
-  /// Zigzag veto: with d[k] = total[k] - total[k-1], reject when for any k in
-  /// ZIGZAG_FROM_STRIP .. ZIGZAG_TO_STRIP-1 the derivative changes sign
-  /// between d[k] and d[k+1] and the swing |d[k+1] - d[k]| exceeds
-  /// ZIGZAG_SWING_NSIGMA x sqrt(3) x JumpSigma(k), the swing's width for
-  /// independent strip noise (macros at A10/A11: strips 11-15, 0.9/12, ~1
-  /// sigma). A single-strip spike veto. NSIGMA 0 or less: off.
-  Int_t ZIGZAG_FROM_STRIP;
-  Int_t ZIGZAG_TO_STRIP;
-  Double_t ZIGZAG_SWING_NSIGMA;
-  /// Persistence of the excess: every strip from reac+1 to reac+
+
+  /// Every strip from reac+1 to reac+
   /// POST_ABOVE_STRIPS (capped at the last strip) must sit more than
   /// POST_ABOVE_NSIGMA x StripSigma(s) above the beam, total[s] > 1 + nsigma
-  /// x StripSigma(s). A noise tag is one strip high and its neighbours are
-  /// not; a residue stays high for several strips (macros at A5-A8: strips
-  /// reac+1 .. 9-12 above 12.5-12.65, i.e. 4 strips at ~1.2 sigma of the
-  /// 87Rb spread). NSIGMA or STRIPS 0 or less: off.
+  /// x StripSigma(s).
   Double_t POST_ABOVE_NSIGMA;
   Int_t POST_ABOVE_STRIPS;
-  /// Divide the plane y by the event's own mean deposit over strips 1 ..
-  /// reac-1, as the published macros did (their `ratio`), so per-event beam
-  /// energy and gain jitter cancel instead of widening the beam ridge. Keeps
-  /// y in strips-worth units (beam = 1 per strip). Part of the built
-  /// quantity, so a change re-projects; the region cuts must be refit.
+
+  /// Normalize the partial dE sum on y axis by the event's own mean deposit
+  /// over strips 1 .. reac-1, so per-event beam
+  /// energy and gain jitter cancel instead of making events harder to see.
   Bool_t Y_RATIO_TO_UPSTREAM;
 
   /// Minimum jump at the reaction strip for a tag, in sigma of the measured
-  /// strip-to-strip beam noise (StripSumScatter::JumpSigma). Part of the
-  /// tagging, so a change refills.
+  /// beam spread of that strip (StripSumScatter::StripSigma).
   Double_t REAC_JUMP_NSIGMA;
-  Double_t REAC_JUMP_MAX;
+
+  // Maximum value allowed at the final strip
   Double_t END_STRIP_MAX;
 
-  Double_t PILEUP_THRESHOLD;
-  Double_t NOISE_THRESHOLD;
-
-  Bool_t REJECT_NOISE;
-  Double_t NOISE_THRESH_PY;
+  /// Event-level cuts before any reaction is asked about, in sigma of each
+  /// strip's measured beam spread (StripSumScatter::StripSigma). An event is
+  /// pileup when PILEUP_MIN_STRIPS or more of strips 1-16 read at or above
+  /// 1 + PILEUP_NSIGMA x StripSigma(s), and noise when NOISE_MIN_STRIPS or
+  /// more read at or below 1 - NOISE_NSIGMA x StripSigma(s). Applied to the
+  /// beam denominator too, so they cancel in the cross section. Both are
+  /// inactive while the noise itself is being measured, when the clipped
+  /// widths stand in for them. Part of the tagging, so a change refills.
+  Double_t PILEUP_NSIGMA;
+  Int_t PILEUP_MIN_STRIPS;
+  Double_t NOISE_NSIGMA;
   Int_t NOISE_MIN_STRIPS;
 
-  Bool_t REJECT_PILEUP;
-  Double_t PILEUP_THRESH_PY;
-  Int_t PILEUP_MIN_STRIPS;
-
   /// Redraw the regions for this reaction strip even if saved ones exist, and
-  /// overwrite only that strip's entry. Without it the only way to redraw was
-  /// to delete the whole cut file, which discarded every other strip's work.
+  /// overwrite only that strip's entry.
   Bool_t REGION_CUT_REDRAW;
 
   /// compute-regions: the (a,n) region is the reaction component's
@@ -175,75 +126,30 @@ struct StripSumScatterConfig {
   /// downstream knows the difference.
   Double_t AN_REGION_NSIGMA;
   Double_t AA_REGION_NSIGMA;
-  /// How compute-regions defines the (a,n) region. MIXTURE: the ellipse of
-  /// the mixture's reaction component, for a compact island beyond the beam
-  /// (87Rb). RIDGE_BAND: everything between AN_RIDGE_NSIGMA_LO and _HI
-  /// conditional sigma above the beam ridge, free in x across the window, for
-  /// a reaction cloud that spreads along x and sits below the beam in total
-  /// energy (37Cl, where the neutron carries energy out). The (a,a') region
-  /// is the beam ellipse in both. ALL_TAGGED: no fit at all -- every event
-  /// the tag leaves is the reaction, the region is the whole build window
-  /// and the cross section takes the tagged count with no enclosed-fraction
-  /// correction and no region systematic. For strips where the tag
-  /// conditions alone isolate the residues; no (a,a') region is written.
-  enum AnRegionMode {
-    AN_REGION_MIXTURE,
-    AN_REGION_RIDGE_BAND,
-    AN_REGION_ALL_TAGGED
-  };
-  AnRegionMode AN_REGION_MODE;
-  /// Per-strip override of AN_REGION_MODE, reaction strip -> mode, for a
-  /// dataset where the tag is clean at some strips and not others. Strips
-  /// absent from the map use AN_REGION_MODE.
-  std::map<Int_t, AnRegionMode> AN_REGION_MODE_STRIPS;
-  /// The mode in force at a reaction strip.
-  AnRegionMode AnRegionModeFor(Int_t reac) const {
-    std::map<Int_t, AnRegionMode>::const_iterator it =
-        AN_REGION_MODE_STRIPS.find(reac);
-    return it == AN_REGION_MODE_STRIPS.end() ? AN_REGION_MODE : it->second;
-  }
-  Double_t AN_RIDGE_NSIGMA_LO;
-  Double_t AN_RIDGE_NSIGMA_HI;
 
-  /// Tolerance in sigma of each strip's measured beam spread
+  /// How compute-regions defines the (a,n) region. MIXTURE: a 2D
+  /// Gaussian mixture per strip, beam plus reaction; the (a,n) region is the
+  /// reaction component's AN_REGION_NSIGMA ellipse and the (a,a') region
+  /// the beam's AA_REGION_NSIGMA ellipse, and the cross section takes the
+  /// count the fit attributes to the reaction. ALL_TAGGED: use selection
+  /// from strip-sum-scatter if event selection is strict enough to eliminate
+  /// scattering events.build window and the cross section takes the tagged
+  /// count with no enclosed-fraction correction and no region systematic.
+  enum AnRegionMode { AN_REGION_MIXTURE, AN_REGION_ALL_TAGGED };
+  AnRegionMode AN_REGION_MODE;
+
+  /// How close to require strips to be to beam prior to the reaction,
+  /// in sigma of each strip's measured beam spread
   /// (StripSumScatter::StripSigma). Part of the tagging, so a change refills.
   Bool_t REQUIRE_BEAM_UPSTREAM_OF_REAC;
   Double_t BEAM_UPSTREAM_NSIGMA;
 
-  /// Both-ends multiplicity cut: reject an event when more than MAX strips in
-  /// 1..COUNT_TO had BOTH ends fire. Read off raw ADC, so it is independent of
-  /// IGNORE_SHORT_STRIPS. Charge sharing means a displaced track lights the
-  /// short end on every strip of one parity at once, and tagging on a summed
-  /// trace then enriches for those -- this removes them. MAX < 0 disables it.
-  /// COUNT_TO < 16 restricts the count to strips upstream of the reaction,
-  /// where the sim has no sharing at all, without penalising products
-  /// downstream.
+  /// Use the segmentation of strips to reject an event when more than MAX
+  /// strips in 1..COUNT_TO had BOTH ends fire. Read off raw ADC, so it is
+  /// independent of IGNORE_SHORT_STRIPS. MAX < 0 disables it. COUNT_TO < 16
+  /// restricts the count to strips upstream of the reaction.
   Int_t BOTH_MULT_MAX;
   Int_t BOTH_MULT_COUNT_TO;
-
-  Bool_t REJECT_OFFBEAM;
-  Double_t OFFBEAM_DIST;
-  Int_t OFFBEAM_MIN_STRIPS;
-  /// Reject events whose even strips and odd strips disagree by more than this
-  /// fraction, |mean(even 2..16) / mean(odd 1..16) - 1|, before the tag. A beam
-  /// particle or a residue reads the same on both parities to within the
-  /// noise; an event that arrives on the pole-zero undershoot of the previous
-  /// pulse reads low on every channel of the group with the wrong pole-zero
-  /// (the R channels in the SOLARIS 37Cl runs), a sawtooth at 0.65 on even
-  /// strips and 1.0 on odd. Applied to the beam denominator too, so it
-  /// cancels. 0 or less: off.
-  Double_t PARITY_ASYM_MAX;
-
-  /// Diagnostic only: when set, run an extra pass over the events (gated by
-  /// PARITY_ASYM_MAX > 0) that fills a histogram of the Grid `#DeltaE` of
-  /// events that pass the cheap pre-tag cuts (all strips fired, pileup, noise,
-  /// offbeam) and are then rejected by the parity cut, and save BOTH a decoded
-  /// a.u. view (grid_adc / 16384, [0,1]) and a raw ADC view ([0,
-  /// GRID_MAX_ADC]), each with a log-y axis. Purely visual; does not change
-  /// what is tagged and is NOT part of the cache fingerprint (the reservoir
-  /// keeps only tagged + beam events, so it cannot be rebuilt from cache
-  /// anyway). Requires the Grid branch to be enabled. Off by default.
-  Bool_t PLOT_PARITY_REJECTED_GRID;
 
   Double_t TRIGGER_NSIGMA;
   Double_t TRIGGER_CFD_FRAC;
@@ -285,46 +191,30 @@ struct StripSumScatterConfig {
   Bool_t RERUN_SIM;
   Int_t CANDIDATE_REAC_STRIP;
 
-  Bool_t REQUIRE_SMOOTHNESS;
   Bool_t REQUIRE_GATE_S3_S4;
   Bool_t REQUIRE_GATE_S5_S6;
   Bool_t SKIP_SAVGOL_PLOTS;
+
   /// Skip the per-run beam-gate figures, the only output under
   /// plots/strip_sum_scatter/run<N>, so no run folders are created. The
   /// gates themselves are still fitted and applied.
   Bool_t SKIP_RUN_PLOTS;
+
   /// Also draw the per-region mean traces with RMS bands (the
   /// region_mean_traces_* figures) next to the trace overlays. Off by
   /// default: the overlay already carries the beam mean and its measured
   /// sigma band.
   Bool_t PLOT_REGION_MEAN_TRACES;
-
-  /// template-match: an event is classed at the strip whose (a,n) template
-  /// fits it best when that chi-square beats the flat beam's by more than
-  /// TEMPLATE_DELTA_CHI2 (25 is a 5 sigma-equivalent). A strip needs
-  /// TEMPLATE_MIN_EVENTS tagged events inside its region to have a template.
-  /// The bootstrap resamples each template TEMPLATE_BOOTSTRAP_TRIALS times
-  /// for its efficiency and a flat trace TEMPLATE_BEAM_TRIALS times for the
-  /// false-positive rate.
-  Double_t TEMPLATE_DELTA_CHI2;
-  Int_t TEMPLATE_MIN_EVENTS;
-  Long64_t TEMPLATE_BOOTSTRAP_TRIALS;
-  Long64_t TEMPLATE_BEAM_TRIALS;
   Bool_t REQUIRE_STRIP_16_BELOW_BEAM;
-
-  /// Also render the selected region traces under the OTHER decode
-  /// (long-side-only <-> L+R sum) from the same calibration and the
-  /// same selected events, into a separate plot plus a text dump.
-  Bool_t ALT_DECODE_REGION_TRACES;
 
   void SetDefaults();
 };
 
-// One TALYS calculation: what the plot calls it, and the input lines that
-// select it (see CrossSectionConfig::TALYS_MODELS).
-// One measured reaction channel; see CrossSectionConfig::CHANNELS.
+/// TALYS calculation with name for plot and parameters to actually
+/// run TALYS (see CrossSectionConfig::TALYS_MODELS).
+/// One measured reaction channel; see CrossSectionConfig::CHANNELS.
 /**
- * @brief One reaction channel the cross section is extracted for.
+ * @brief One reaction channel for which the cross section is extracted.
  *
  * A dataset declares these in `CrossSectionConfig::CHANNELS`, one per reaction
  * being counted.
@@ -379,12 +269,9 @@ Int_t TargetGasA(TargetGas gas);
 Double_t TargetGasAtomsPerMolecule(TargetGas gas);
 
 /**
- * @brief What the cross section needs about the *experiment* rather than the
- * analysis.
+ * @brief Experimental details needed to properly calculate the cross section.
  *
- * The gas the beam reacts in, and which reactions are being counted. Nothing
- * here is specific to any one dataset — a second experiment supplies its own
- * values and reuses the tool unchanged.
+ * The gas in which the beam reacts, and which reactions are being counted.
  */
 struct CrossSectionConfig {
   TargetGas TARGET_GAS;
@@ -415,7 +302,7 @@ struct CrossSectionConfig {
   /// the dataset's sim_root_files directory.
   TString BEAM_SIM_FILE;
 
-  /// Reaction strips to report a cross section for.
+  /// Reaction strips for which to calculate a cross-section.
   Int_t XS_STRIP_MIN;
   Int_t XS_STRIP_MAX;
 
@@ -455,6 +342,7 @@ public:
   Int_t SOL_N_SPLIT_WORKERS;
 
   TString COMPASS_BASE_DIR;
+
   /// Flat run list, used when EPOCHS is empty. When EPOCHS is populated the
   /// pipeline walks the epochs instead and this is ignored; binaries that run
   /// with no active epoch then take the runs of the epochs named in
@@ -492,22 +380,23 @@ public:
   /// its own beam-like events; MIN_EVENTS is the smallest sample that is
   /// trusted, BEAM_LO/HI the window (x the channel's beam peak) every long
   /// end must sit in for an event to count as beam, and APPLY_MAX_US how far
-  /// back the correction looks. The trapezoid baseline is an average over a
-  /// few hundred microseconds, so pulses beyond 100 us still move it: the
-  /// pole-zero study (PoleZeroMUSIC, scripts/kernel_study.sh) found the
-  /// reach the binding limit of the correction and took it to the kernel's
-  /// 316 us edge (kNBins 12->15, kLogHi -4.0->-3.5), worth ~3 ADC of RMS on
-  /// the mismatched chains out-of-sample.
+  /// back the correction looks.
   Bool_t PULSE_HISTORY_CORRECTION;
   Long64_t PULSE_HISTORY_MIN_EVENTS;
   Double_t PULSE_HISTORY_BEAM_LO;
   Double_t PULSE_HISTORY_BEAM_HI;
+
   /// Looser window for the long ends of the chain whose kernel is being
-  /// fitted; the tight one above applies to the other chain. Tight on both
-  /// would cut off the large undershoots the kernel exists to describe.
+  /// fit; the one above is used on strips that are not actively being fit
+  /// in order to find actual beam-like events.
   Double_t PULSE_HISTORY_OWN_LO;
   Double_t PULSE_HISTORY_OWN_HI;
+
+  // How far back to check and apply a correction. The trapezoid baseline is an
+  // average over a
+  /// few hundred microseconds, so pulses beyond 100 us still move it.
   Double_t PULSE_HISTORY_APPLY_MAX_US;
+
   /// Kernel bands in the previous pulse's amplitude, in units of the channel's
   /// beam peak: 1 is one kernel linear in the amplitude; N > 1 fits one kernel
   /// per band [0, 0.5), [0.5, 1.5), ..., [N-1.5, inf), i.e. single beam, twice,
@@ -526,7 +415,13 @@ public:
   Bool_t SKIP_EXISTING;
   Bool_t SAVE_PLOTS;
 
-  Bool_t SKIP_CALIBRATION;
+  /// Skip the per-run energy-resolution TOML (Calibration_Run<N>_eres.toml,
+  /// the Remix-MUSIC-Sim control input). That TOML is the whole of the eres
+  /// work: it is aggregated from the beam-peak fits the calibration tree
+  /// already holds, so nothing else is computed or written for it. The
+  /// per-subfile calibration and the ridge-ratio aggregation are unaffected.
+  /// Off by default.
+  Bool_t SKIP_ERES_TOML;
 
   /// Number of sample traces to save during event build and normed summary
   /// passes (0 = disabled). Saved as overlays in events_summary and
@@ -544,6 +439,7 @@ public:
 
   Double_t STRIP_DE_OVERVIEW_MIN_NORMED;
   Double_t STRIP_DE_OVERVIEW_MAX_NORMED;
+
   /// n-sigma of the per-strip beam gate in the beam calibration: strip s is
   /// gated by the ellipse on the (strip s-1, strip s) raw totals, which is what
   /// defines that strip's beam sample.
@@ -581,7 +477,6 @@ public:
 
   std::map<std::pair<Int_t, Int_t>, TString> channelMap;
   std::map<std::pair<Int_t, Int_t>, TString> channelMap64;
-  std::map<std::pair<Int_t, Int_t>, Long64_t> ttfOffsetPs;
 
   DatasetConfig();
 };

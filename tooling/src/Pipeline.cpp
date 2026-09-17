@@ -26,7 +26,7 @@ void PrintMemUsage(const char *label) {
 }
 
 Bool_t EnsureRunHeaderFused(Int_t run, UShort_t &header) {
-  if (BinaryToRoot::ReadHeaderSidecar(run, header))
+  if (BinaryToRoot::ReadHeaderFile(run, header))
     return kTRUE;
 
   if (Constants::ActiveUseSolarisData()) {
@@ -71,7 +71,7 @@ Bool_t EnsureRunHeaderFused(Int_t run, UShort_t &header) {
     header = p.second;
   }
 
-  BinaryToRoot::WriteHeaderSidecar(run, header);
+  BinaryToRoot::WriteHeaderFile(run, header);
   return kTRUE;
 }
 
@@ -87,9 +87,9 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
   PulseHistory::Result history;
   Bool_t history_done = kFALSE;
 
-  // SKIP_EXISTING skips the expensive data processing (binary read, timing,
-  // event build, calibration) when the events file already exists -- but the
-  // plots below are still (re)made from that existing file.
+  /// SKIP_EXISTING skips the expensive data processing (binary read, timing,
+  /// event build, calibration) when the events file already exists -- but the
+  /// plots below are still (re)made from that existing file.
   const Bool_t skip_processing =
       Constants::cfg.SKIP_EXISTING &&
       FusedExists(FileSet::EventsName(spec) + ".root");
@@ -150,7 +150,7 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
           InitUtils::ConvertCoMPASSBinToHits(bin_path, use_header);
       hits = parsed.first;
       if (spec.suffix == "")
-        BinaryToRoot::WriteHeaderSidecar(spec.run, parsed.second);
+        BinaryToRoot::WriteHeaderFile(spec.run, parsed.second);
     }
     t_parse = FusedSecSince(t0);
 
@@ -190,9 +190,8 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
                 << std::endl;
     }
 
-    // Pole-zero pulse-history correction on the long ends, measured on this
-    // subfile's own beam-like events. Before the build, since it changes the
-    // energies the builder dedups on.
+    // Pole-zero pulse-history correction on long ends, measured on this
+    // subfile's beam-like events; before build, changing energies it dedups on.
     if (Constants::cfg.PULSE_HISTORY_CORRECTION) {
       t0 = std::chrono::steady_clock::now();
       std::vector<Int_t> groups = PulseHistory::BuildGroupMap();
@@ -227,10 +226,9 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
                                       history);
   }
 
-  // Calibration reads the events file (freshly built or pre-existing) and
-  // fits beam peaks to derive gains, so it runs in plot-only mode too,
-  // regenerating the calibration diagnostic histograms.
-  if (!chans.empty()) {
+  // Calibration reads events file, fresh or pre-existing, and fits beam
+  // peaks for gains; runs plot-only too, regenerating diagnostic histograms.
+  {
     t0 = std::chrono::steady_clock::now();
     CalibrateBeam::CalibrateBeamOneSubfile(spec, chans);
     t_cal = FusedSecSince(t0);
@@ -259,10 +257,10 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
   return kTRUE;
 }
 
-// One epoch's worth of work (or the whole flat run list when the dataset
-// declares no epochs). The caller owns the log redirection so a multi-epoch
-// run writes one log rather than truncating it per epoch, and owns the active
-// epoch so every Active*() below reads this epoch's hardware settings.
+/// One epoch's worth of work (or the whole flat run list when the dataset
+/// declares no epochs). The caller owns the log redirection so a multi-epoch
+/// run writes one log rather than truncating it per epoch, and owns the active
+/// epoch so every Active*() below reads this epoch's hardware settings.
 static void RunActiveSelection() {
   std::vector<FileSpec> specs = FileSet::BuildRawOrProcessedFileSpecs();
   Int_t n_specs = Int_t(specs.size());
@@ -271,9 +269,9 @@ static void RunActiveSelection() {
   for (Int_t k = 0; k < n_specs; k++)
     unique_runs.insert(specs[k].run);
 
-  // The global header is only consumed when a subfile is (re)built from its
-  // BIN; a run whose subfiles are all already processed runs plot-only and
-  // never touches the raw dir, so skip its header gather entirely.
+  /// The global header is only consumed when a subfile is (re)built from its
+  /// BIN; a run whose subfiles are all already processed runs plot-only and
+  /// never touches the raw dir, so skip its header gather entirely.
   std::set<Int_t> runs_needing_header;
   for (Int_t k = 0; k < n_specs; k++) {
     Bool_t will_build = !(Constants::cfg.SKIP_EXISTING &&
@@ -299,14 +297,7 @@ static void RunActiveSelection() {
 
   EventBuilder::SlotMap slot_map = EventBuilder::BuildSlotMap();
 
-  std::vector<ChannelCal> chans;
-  if (Constants::cfg.SKIP_CALIBRATION) {
-    std::cout << "SKIP_CALIBRATION=true; skipping beam calibration and eres "
-                 "aggregation (events kept in raw ADC)."
-              << std::endl;
-  } else {
-    chans = CalibrateBeam::BuildChannels();
-  }
+  std::vector<ChannelCal> chans = CalibrateBeam::BuildChannels();
 
   Int_t n_workers =
       TMath::Min(Int_t(std::thread::hardware_concurrency()), n_specs);
@@ -347,16 +338,19 @@ static void RunActiveSelection() {
 
   std::cout << "All fused pipelines complete." << std::endl;
 
-  if (!chans.empty()) {
-    std::cout << "Phase C: per-run ridge-ratio aggregation" << std::endl;
-    for (std::set<Int_t>::const_iterator it = unique_runs.begin();
-         it != unique_runs.end(); ++it) {
-      std::vector<FileSpec> run_specs;
-      for (Int_t k = 0; k < n_specs; k++)
-        if (specs[k].run == *it)
-          run_specs.push_back(specs[k]);
-      CalibrateBeam::AggregateRidgeRatiosForRun(*it, run_specs);
-    }
+  std::cout << "Phase C: per-run ridge-ratio aggregation" << std::endl;
+  for (std::set<Int_t>::const_iterator it = unique_runs.begin();
+       it != unique_runs.end(); ++it) {
+    std::vector<FileSpec> run_specs;
+    for (Int_t k = 0; k < n_specs; k++)
+      if (specs[k].run == *it)
+        run_specs.push_back(specs[k]);
+    CalibrateBeam::AggregateRidgeRatiosForRun(*it, run_specs);
+  }
+  if (Constants::cfg.SKIP_ERES_TOML) {
+    std::cout << "SKIP_ERES_TOML=true; skipping the per-run eres TOML"
+              << std::endl;
+  } else {
     std::cout << "Phase C: per-run eres TOML aggregation" << std::endl;
     for (std::set<Int_t>::const_iterator it = unique_runs.begin();
          it != unique_runs.end(); ++it) {

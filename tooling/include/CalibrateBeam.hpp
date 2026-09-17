@@ -53,17 +53,29 @@
  * ADC into calibrated units.
  */
 struct ChannelCal {
-  TString name;                 ///< Channel name from the active channel map.
-  Char_t side;                  ///< Readout end: `'L'` or `'R'`.
-  Int_t strip;                  ///< Anode strip index this channel reads.
-  Double_t fit_adc = 0.0;       ///< Fitted beam-peak centroid, in ADC.
-  Double_t fit_sigma_adc = 0.0; ///< Fitted beam-peak width, in ADC.
-  Long64_t n_samples = 0.0;     ///< Events entering the fit.
+  TString name; ///< Channel name from the active channel map.
+  /// Readout end: `'L'` or `'R'` for the split strips 1-16, `'S'` for the
+  /// unsplit end strips 0 and 17, `'C'` for the cathode.
+  Char_t side;
+  Int_t strip; ///< Anode strip index this channel reads; `-1` for the cathode.
+  /// Beam-peak centroid, in ADC: a Gaussian fit of the peak core, or the
+  /// robust mode when the fit fails; the median for the cathode, which has
+  /// no clean peak. `0` when uncalibrated (too few samples).
+  Double_t fit_adc = 0.0;
+  /// Beam-peak width, in ADC, from the same fit, robust seed or, for the
+  /// cathode, the interquartile range over 1.349.
+  Double_t fit_sigma_adc = 0.0;
+  Long64_t n_samples = 0; ///< Events entering the fit.
   /// Left/right gain-match override. When >= 0 this is used instead of
   /// `1 / fit_adc`; when negative the reciprocal fit is used.
   ///
   /// Set by the gain-match step: the long side is anchored on its own beam
-  /// peak, the short side on `C_long / |slope|` of the charge-sharing ridge.
+  /// peak, the short side on the charge-sharing ridge's short-axis crossing,
+  /// `-intercept / slope` of a robust line through the beam-gated (short,
+  /// long) pairs. The intercept is left free rather than pinned at `C_long`
+  /// so a short-side pedestal offset does not bias the anchor. Where the
+  /// ridge is not measurable the short side falls back to the parity's
+  /// median `C_short / C_long` times `C_long`, or the global median.
   /// This puts left and right on the same charge scale, so reaction events —
   /// which share charge between ends differently than beam events do — no
   /// longer sawtooth between even and odd strips.
@@ -71,9 +83,11 @@ struct ChannelCal {
   /// Short channels only: `C_short / C_long` from this subfile's own ridge fit,
   /// or `0` when the ridge was not measurable and a fallback was used.
   ///
-  /// This is a preamplifier gain ratio and therefore fixed per channel, which
-  /// is what lets AggregateRidgeRatiosForRun() replace each subfile's value
-  /// with the run-level median over the subfiles that did measure it.
+  /// This is a preamplifier gain ratio and therefore fixed per channel. That
+  /// is what lets AggregateRidgeRatiosForRun() take the run-level median over
+  /// the subfiles that measured it (three or more) and rewrite each subfile's
+  /// stored short-side gain from that median and its own long anchor; it
+  /// edits the calibration tree, not this record.
   Double_t ridge_ratio = 0.0;
 };
 
@@ -166,7 +180,8 @@ public:
   static void AggregateRidgeRatiosForRun(Int_t run,
                                          const std::vector<FileSpec> &specs);
   /**
-   * @brief Aggregate the run's energy-resolution measurements into its TOML.
+   * @brief Aggregate the run's energy-resolution measurements into its TOML
+   * for use with Remix-MUSIC-Sim.
    * @param run   Run number.
    * @param specs That run's subfiles.
    */

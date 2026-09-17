@@ -17,9 +17,8 @@ Double_t TargetGasAtomsPerMolecule(TargetGas gas) {
 }
 
 void CrossSectionConfig::SetDefaults() {
-  // Deliberately not a working experiment: a dataset that wants a cross
-  // section has to state its own gas and beam. Zero pressure makes a dataset
-  // that forgot fail loudly rather than report a wrong number.
+  // Deliberately not a working experiment: a cross-section dataset must
+  // state its gas and beam; zero pressure makes a forgotten one fail loudly.
   TARGET_GAS = kHELIUM;
   GAS_PRESSURE_TORR = 0.0;
 
@@ -44,59 +43,36 @@ void StripSumScatterConfig::SetDefaults() {
 
   POST_TRIGGER_SUM_STRIPS = 3;
   POST_WINDOW_LAST_STRIP = 17;
-  POST_WINDOW_STRIPS.clear();
   MAX_STRIP_SUM_WORKERS = 12;
 
   REACTION_STRIP_MIN = 2;
   REACTION_STRIP_MAX = 15;
 
-  REQUIRE_SMOOTHNESS_END_STRIP = 12;
-  REQUIRE_SMOOTHNESS_NSIGMA = 2.5; // the 87Rb macros' 1.2/12 at that noise
-  TAIL_SMOOTHNESS_NSIGMA = 0.0;
+  SMOOTHNESS_NSIGMA = 2.5; // the 87Rb macros' 1.2/12 at that noise
   TAIL_FALL_FROM_STRIP = 0;
   TAIL_RISE_NSIGMA = 0.0;
-  TAIL_FALL_AFTER_PEAK = kFALSE;
   TAIL_RETURN_NSIGMA = 0.0;
   TAIL_RERISE_NSIGMA = 0.0;
-  LATE_STRIP_BELOW_NSIGMA.clear();
-  ZIGZAG_FROM_STRIP = 0;
-  ZIGZAG_TO_STRIP = 0;
-  ZIGZAG_SWING_NSIGMA = 0.0;
   POST_ABOVE_NSIGMA = 0.0;
   POST_ABOVE_STRIPS = 0;
-  Y_RATIO_TO_UPSTREAM = kFALSE;
+  Y_RATIO_TO_UPSTREAM = kTRUE;
 
   REAC_JUMP_NSIGMA = 1.0;
-  REAC_JUMP_MAX = 2.0;
   END_STRIP_MAX = 1.0;
 
-  PILEUP_THRESHOLD = 1.75;
-  NOISE_THRESHOLD = 0.85;
-
-  REJECT_NOISE = kTRUE;
-  NOISE_THRESH_PY = 0.4;
-  NOISE_MIN_STRIPS = 1;
-
-  REJECT_PILEUP = kTRUE;
-  PILEUP_THRESH_PY = 1.3;
+  PILEUP_NSIGMA = 8.0; // ~1.3 at the 87Rb spread, the old absolute value
   PILEUP_MIN_STRIPS = 1;
+  NOISE_NSIGMA = 12.0; // ~0.5 at the 87Rb spread, the old absolute value
+  NOISE_MIN_STRIPS = 1;
 
   REGION_CUT_REDRAW = kFALSE;
   AN_REGION_NSIGMA = 2.0;
   AA_REGION_NSIGMA = 2.0;
   AN_REGION_MODE = AN_REGION_MIXTURE;
-  AN_REGION_MODE_STRIPS.clear();
-  AN_RIDGE_NSIGMA_LO = 5.0;
-  AN_RIDGE_NSIGMA_HI = 15.0;
   REQUIRE_BEAM_UPSTREAM_OF_REAC = kFALSE;
   BEAM_UPSTREAM_NSIGMA = 2.0;
   BOTH_MULT_MAX = -1;      // disabled by default
   BOTH_MULT_COUNT_TO = 16; // whole trace unless narrowed
-  REJECT_OFFBEAM = kFALSE;
-  OFFBEAM_DIST = 0.3;
-  OFFBEAM_MIN_STRIPS = 4;
-  PARITY_ASYM_MAX = 0.0;
-  PLOT_PARITY_REJECTED_GRID = kFALSE;
 
   TRIGGER_NSIGMA = 5.0;
   TRIGGER_CFD_FRAC = 0.30;
@@ -131,18 +107,12 @@ void StripSumScatterConfig::SetDefaults() {
   RERUN_SIM = kFALSE;
   CANDIDATE_REAC_STRIP = 3;
 
-  REQUIRE_SMOOTHNESS = kTRUE;
   REQUIRE_GATE_S3_S4 = kFALSE;
   REQUIRE_GATE_S5_S6 = kFALSE;
   SKIP_SAVGOL_PLOTS = kFALSE;
   SKIP_RUN_PLOTS = kFALSE;
   PLOT_REGION_MEAN_TRACES = kFALSE;
-  TEMPLATE_DELTA_CHI2 = 25.0;
-  TEMPLATE_MIN_EVENTS = 20;
-  TEMPLATE_BOOTSTRAP_TRIALS = 20000;
-  TEMPLATE_BEAM_TRIALS = 200000;
   REQUIRE_STRIP_16_BELOW_BEAM = kFALSE;
-  ALT_DECODE_REGION_TRACES = kFALSE;
 }
 
 DatasetConfig::DatasetConfig() {
@@ -194,7 +164,7 @@ DatasetConfig::DatasetConfig() {
   SKIP_EXISTING = kTRUE;
   SAVE_PLOTS = kTRUE;
 
-  SKIP_CALIBRATION = kFALSE;
+  SKIP_ERES_TOML = kFALSE;
 
   SAVE_SAMPLE_TRACES = 0;
 
@@ -243,18 +213,17 @@ DatasetConfig::DatasetConfig() {
 
 namespace Constants {
 
-// The epoch currently being processed, or null outside epoch work (and for
-// datasets that declare none). Every accessor below falls back to the flat cfg
-// block when it is null, so behaviour without epochs is unchanged.
+/// The epoch currently being processed, or null outside epoch work (and for
+/// datasets that declare none). Every accessor below falls back to the flat cfg
+/// block when it is null, so behaviour without epochs is unchanged.
 static const RunEpoch *gActiveEpoch = nullptr;
 
 void SetActiveEpoch(const RunEpoch *epoch) { gActiveEpoch = epoch; }
 const RunEpoch *GetActiveEpoch() { return gActiveEpoch; }
 
 const RunEpoch *EpochForRun(Int_t run) {
-  // Only untagged epochs are addressable by run number. A tagged epoch exists
-  // precisely because its run numbers collide with another era's, so answering
-  // from the number alone would be a coin flip; those are addressed by tag.
+  // Only untagged epochs are addressable by run number; a tagged one's runs
+  // collide with another era's (a bare number is a coin flip), so use its tag.
   for (Int_t e = 0; e < Int_t(cfg.EPOCHS.size()); e++) {
     const RunEpoch &ep = cfg.EPOCHS[e];
     if (ep.file_tag.Length() > 0)
@@ -305,9 +274,9 @@ std::vector<Int_t> RunRange(Int_t first, Int_t last) {
   return runs;
 }
 
-// Runs for a binary that runs with no active epoch: the enabled epochs named
-// in CROSS_SECTION_CONFIG.EPOCHS, or all enabled epochs when that is empty.
-// Computed once; the config does not change after static init.
+/// Runs for a binary that runs with no active epoch: the enabled epochs named
+/// in CROSS_SECTION_CONFIG.EPOCHS, or all enabled epochs when that is empty.
+/// Computed once; the config does not change after static init.
 static const std::vector<Int_t> &EpochUnionRuns() {
   static std::vector<Int_t> runs;
   static Bool_t built = kFALSE;

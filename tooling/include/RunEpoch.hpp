@@ -18,9 +18,9 @@ enum RunSource {
 /**
  * @brief One acquisition period of a dataset.
  *
- * The 37Cl data spans a CoMPASS era and two SOLARIS eras, which differ in
- * digitiser, channel map, board count, trigger window and ADC scale. Those
- * settings therefore cannot live as one flat block per dataset.
+ * Used if there are multiple acquisitions with different configurations, using
+ * different DAQ software, etc.
+ *
  *
  * @warning **Every epoch must declare every field.** `Constants::Active*()`
  *          reads the active epoch when one is set and the flat `DatasetConfig`
@@ -28,12 +28,8 @@ enum RunSource {
  *          half-populated epoch is a configuration error, not a silent fallback
  *          to another era's value — and it will not announce itself.
  *
- * @note Deliberately absent: any selector for the left/right gain-matching
- *       method. There is one method — the ridge/shoulder anchor plus the eSum
- *       pass — it is the one that reproduces the reference traces, and making
- *       it configurable is how the `kPerEndBeamPeak` regression reached the
- *       late runs.
  */
+
 struct RunEpoch {
   TString name;     ///< Epoch name, used in logs and plot paths.
   RunSource source; ///< Acquisition system for this era.

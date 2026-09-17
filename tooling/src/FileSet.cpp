@@ -9,10 +9,8 @@ TString FileSet::CompassBinPath(const FileSpec &s) {
 }
 
 TString FileSet::SolBinPath(const FileSpec &s) {
-  // SOLARIS naming: music_exp1915_<RUN3DIGITS>_00_66222_<SEQ3DIGITS>.sol
-  // suffix is empty for _000, or "_1" -> _001, etc.
-  // Chunk suffix "_cNNN" (seq 0) or "_<seq>_cNNN" resolves to _chunkNNN.sol
-  // in split dir.
+  // SOLARIS naming: music_exp1915_<RUN3>_00_66222_<SEQ3>.sol; suffix is empty
+  // for _000, else "_1"->_001; chunk "_cNNN"/"_<seq>_cNNN" -> _chunkNNN.sol
   Int_t cPos = s.suffix.Index("_c");
   if (cPos >= 0) {
     TString chunkIdx = s.suffix(cPos + 2, s.suffix.Length() - cPos - 2);

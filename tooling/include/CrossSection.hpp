@@ -11,8 +11,7 @@
  *
  * where `N_reac` is the number of reactions of that channel at that strip, and
  * `N_beam` the number of beam particles that reached it **under every cut a
- * reaction there also had to pass** — so those cuts cancel in the ratio rather
- * than needing their own efficiency.
+ * reaction there also had to pass**.
  *
  * `N_reac` comes from one of two places:
  *
@@ -23,12 +22,14 @@
  *   component, uncorrected, with the fit-versus-core disagreement taken as the
  *   region systematic.
  *
- * Beam energies come from the simulated unreacted beam, calibrated against the
- * measured per-strip energy loss, so each strip's centre-of-mass energy is the
- * simulation's rather than a nominal dE/dx table's — see BeamEnergies. Each
+ * Beam energies come from the simulated unreacted beam, whose stopping model
+ * is chosen to put the beam's Bragg peak in the strip the data shows it in,
+ * so each strip's centre-of-mass energy is the simulation's rather than a
+ * nominal dE/dx table's — see BeamEnergies. Each
  * channel's TALYS curve is the sum of the residual channels its exit list
  * names, and its shape sets that channel's effective energies.
  */
+
 #include <Rtypes.h>
 #include <TString.h>
 #include <map>
@@ -102,16 +103,20 @@ private:
 
   Bool_t LoadCache();
   Bool_t LoadBeam();
+
   // Every residual-production graph of every model in
   // root_files/talys/talys_xs.root, keyed by model then (Z, A).
   void LoadTalys();
+
   // The channel's curves: per model, the sum over its exits' residues.
   std::vector<TalysCurve> ChannelCurves(const CrossSectionChannel &ch) const;
   Bool_t RunChannel(const CrossSectionChannel &ch, ChannelResult &out);
+
   // One strip's point, or kFALSE (with a printed reason) when it has none.
   Bool_t Strip(const CrossSectionChannel &ch,
                const std::vector<TalysCurve> &talys, Int_t reac, Point &pt);
   void CompareReference(const ChannelResult &r) const;
+
   // The figure for these channels; name is the file's basename.
   void Draw(const std::vector<const ChannelResult *> &rs,
             const TString &name) const;
@@ -129,6 +134,7 @@ private:
   Double_t dE_[18], e_strip0_ = 0.0, cm_frac_ = 0.0, e_mid_[17];
   std::vector<TString> talys_labels_;
   std::vector<std::map<std::pair<Int_t, Int_t>, TGraph *>> talys_raw_;
+
   // Unfolding state carried from one strip to the next within a channel.
   Int_t prev_reac_ = -1;
   Double_t prev_true_ = 0.0, prev_migrate_ = 0.0;

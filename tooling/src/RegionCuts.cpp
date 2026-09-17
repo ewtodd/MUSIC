@@ -14,7 +14,6 @@
 
 // ---------------------------------------------------------------------------
 // Store
-// ---------------------------------------------------------------------------
 
 namespace RegionCutStore {
 
@@ -162,9 +161,9 @@ TCutG *Load(const char *name, Int_t reac) {
   return ReadFrom(LegacyPath(), Key(name, reac), name);
 }
 
-// Hand-drawn only. A per-cut file written by the interactive draw carries no
-// n_assigned; one written by compute-regions does and is skipped. Then the
-// pre-split RegionCuts.root, which only ever held drawn cuts.
+/// Hand-drawn only. A per-cut file written by the interactive draw carries no
+/// n_assigned; one written by compute-regions does and is skipped. Then the
+/// pre-split RegionCuts.root, which only ever held drawn cuts.
 TCutG *LoadDrawn(const char *name, Int_t reac) {
   TString path = Path(name, reac);
   if (!gSystem->AccessPathName(path)) {
@@ -182,7 +181,6 @@ TCutG *LoadDrawn(const char *name, Int_t reac) {
 
 // ---------------------------------------------------------------------------
 // Finder
-// ---------------------------------------------------------------------------
 
 namespace {
 
@@ -207,10 +205,10 @@ Double_t LogNorm(const Gauss2D &g) {
                   std::sqrt(1.0 - g.rho * g.rho));
 }
 
-// A component from weighted moments (sum w, sum wx, sum wy, sum wxx, sum wyy,
-// sum wxy). Widths are floored at a bin, the correlation clamped, and the
-// amplitude is the peak height in counts per bin of a Gaussian holding sw
-// events, which is what ModelHist needs to draw it on the data's scale.
+/// A component from weighted moments (sum w, sum wx, sum wy, sum wxx, sum wyy,
+/// sum wxy). Widths are floored at a bin, the correlation clamped, and the
+/// amplitude is the peak height in counts per bin of a Gaussian holding sw
+/// events, which is what ModelHist needs to draw it on the data's scale.
 Gauss2D MomentsToGauss(Double_t sw, Double_t sx, Double_t sy, Double_t sxx,
                        Double_t syy, Double_t sxy, Double_t bwx, Double_t bwy) {
   Gauss2D g;
@@ -240,10 +238,8 @@ Double_t WidthAtMax(TH1D *h, Double_t &at) {
                     (h->GetBinCenter(hi) - h->GetBinCenter(lo)) / 2.355);
 }
 
-// Height above the ridge: RegionCutFinder::AboveRidge, declared in the header
-// so cross-section can rebuild a band. The reaction island lives at u ~ 4;
-// the ridge itself, whatever its x, is at u ~ 0. This is the separation a
-// plain y projection washes out.
+// Height above the ridge (AboveRidge, declared in the header): island lives
+// at u ~ 4, the ridge at u ~ 0 — a separation a plain y projection washes out.
 using RegionCutFinder::AboveRidge;
 
 // The fitted mixture evaluated per bin over the window, in a copy of the
@@ -256,18 +252,16 @@ TH2F *ModelHist(TH2F *scatter, const RegionFit &fit, Int_t reac) {
   for (Int_t i = ax->FindBin(fit.x_lo); i <= ax->FindBin(fit.x_hi); i++)
     for (Int_t j = ay->FindBin(fit.y_lo); j <= ay->FindBin(fit.y_hi); j++) {
       Double_t x = ax->GetBinCenter(i), y = ay->GetBinCenter(j);
-      m->SetBinContent(i, j,
-                       Bigaus(fit.beam, x, y) +
-                           (fit.has_reac ? Bigaus(fit.reac, x, y) : 0.0));
+      m->SetBinContent(i, j, Bigaus(fit.beam, x, y) + Bigaus(fit.reac, x, y));
     }
   return m;
 }
 
-// The beam-like component from its core: the maximum and FWHM of each
-// projection seed a +-2 sigma box, and the box's moments give the component.
-// No minimiser: on a peak of 1e5 counts per bin Minuit's bigaus fit runs the
-// amplitude to its bound and walks the mean out of the window, while the
-// moments are exact. Returns kFALSE (with why) on an empty core.
+/// The beam-like component from its core: the maximum and FWHM of each
+/// projection seed a +-2 sigma box, and the box's moments give the component.
+/// No minimiser: on a peak of 1e5 counts per bin Minuit's bigaus fit runs the
+/// amplitude to its bound and walks the mean out of the window, while the
+/// moments are exact. Returns kFALSE (with why) on an empty core.
 Bool_t BeamFromCore(TH2F *scatter, Int_t reac, Int_t bx0, Int_t bx1, Int_t by0,
                     Int_t by1, Gauss2D &beam, TString &why) {
   TAxis *ax = scatter->GetXaxis(), *ay = scatter->GetYaxis();
@@ -324,13 +318,8 @@ RegionFit FitMixture(TH2F *scatter, Int_t reac, Double_t x_lo, Double_t x_hi,
   if (!BeamFromCore(scatter, reac, bx0, bx1, by0, by1, beam, fit.why))
     return fit;
 
-  // Reaction seed. The island is both above the ridge (u ~ 4) and beyond the
-  // beam in x, while the beam's own tail above the ridge spreads over the
-  // ridge's x range. So: in the band 3..15 conditional sigma above the ridge,
-  // take the x maximum beyond +3 sigma_x of the beam, and seed at the centroid
-  // of that neighbourhood. A local maximum in any 1D projection is not
-  // required -- the real beam tail is heavier than Gaussian and the island
-  // usually sits on a slope, not a bump.
+  // Seed: the island, u ~ 4 above the ridge and beyond the beam in x, is the
+  // x maximum beyond +3 sigma_x in 3..15 sigma above the ridge at its centroid.
   TH1D hx(Form("rcf_hx_%d", reac), "", 80, x_lo, x_hi);
   hx.SetDirectory(nullptr);
   for (Int_t i = bx0; i <= bx1; i++)
@@ -374,14 +363,8 @@ RegionFit FitMixture(TH2F *scatter, Int_t reac, Double_t x_lo, Double_t x_hi,
   reac_g.mx = s[1] / s[0];
   reac_g.my = s[2] / s[0];
 
-  // Classification EM over the window, trimmed and capped: a bin joins the
-  // reaction component only if it is above the ridge (u > 2), within 3 sigma
-  // of the component, and the component's log-density with its prior beats
-  // the beam's. Each component is then re-estimated from the moments of its
-  // bins, the reaction's widths capped at twice the beam's. Without the trim
-  // and cap the reaction component swallows the beam's non-Gaussian halo and
-  // ends up as a wide blob on the ridge; the prior is what keeps a bin four
-  // sigma down the beam tail with the beam.
+  // EM: a bin joins the reaction only if above the ridge, within 3 sigma of it,
+  // and log-density beats the beam's; the prior keeps 4-sigma tail bins with it
   Double_t n_beam = 0.0, n_reac = 0.0;
   Double_t total = 0.0;
   for (Int_t i = bx0; i <= bx1; i++)
@@ -399,11 +382,8 @@ RegionFit FitMixture(TH2F *scatter, Int_t reac, Double_t x_lo, Double_t x_hi,
           continue;
         const Double_t x = ax->GetBinCenter(i), y = ay->GetBinCenter(j);
         const Double_t d2r = Mahal2(reac_g, x, y);
-        // Admission starts where the seed search did, 3 sigma above the
-        // ridge: letting bins in from 2 sigma handed the component the
-        // beam's upper tail sheet, which it then tilted along the ridge to
-        // absorb, and at strips where the island is only ~3 sigma_x off the
-        // ridge that doubled the count with background.
+        // Admission at 3 sigma above the ridge: at 2 sigma the component takes
+        // the beam's tail sheet; ~3 sigma_x off the ridge, doubles the count.
         const Bool_t to_reac =
             AboveRidge(beam, x, y) > 3.0 && d2r < 9.0 &&
             (lp_r - 0.5 * d2r) > (lp_b - 0.5 * Mahal2(beam, x, y));
@@ -424,18 +404,12 @@ RegionFit FitMixture(TH2F *scatter, Int_t reac, Double_t x_lo, Double_t x_hi,
         MomentsToGauss(mb[0], mb[1], mb[2], mb[3], mb[4], mb[5], bwx, bwy);
     Gauss2D nr =
         MomentsToGauss(mr[0], mr[1], mr[2], mr[3], mr[4], mr[5], bwx, bwy);
-    // The island is the beam blob displaced by the reaction. In the
-    // simulation, which has no background to confuse the measurement, it is
-    // 4-6% wider than the beam in x and 8-10% in y at every strip: the
-    // vertex position within the strip and the kinematics add that little.
-    // So the cap is 1.1x. Anything looser lets the component take in beam
-    // tail at strips where the island sits only ~3 sigma_x off the ridge
-    // (at 1.5x, strip 5 held 931 events against 781 at the beam's width).
+    // Island = beam blob displaced by the reaction: in sim 4-6% wider in x,
+    // 8-10% in y, so the cap is 1.1x; looser takes tail ~3 sigma_x off ridge.
     nr.sx = TMath::Min(nr.sx, 1.1 * nb.sx);
     nr.sy = TMath::Min(nr.sy, 1.1 * nb.sy);
-    // The island's x-y correlation comes from the same beam-energy spread as
-    // the beam blob's, so it cannot exceed it: a reaction component more
-    // elongated along the ridge than the beam is tracing the beam's tail.
+    // Island x-y correlation comes from the same beam-energy spread, so it
+    // cannot exceed the beam's; more elongation along ridge traces beam tail.
     if (std::fabs(nr.rho) > std::fabs(nb.rho))
       nr.rho = nr.rho < 0 ? -std::fabs(nb.rho) : std::fabs(nb.rho);
     const Bool_t moved = std::fabs(nr.mx - reac_g.mx) > 0.1 * bwx ||
@@ -468,45 +442,6 @@ RegionFit FitMixture(TH2F *scatter, Int_t reac, Double_t x_lo, Double_t x_hi,
 Double_t AboveRidge(const Gauss2D &b, Double_t x, Double_t y) {
   return ((y - b.my) - b.rho * (b.sy / b.sx) * (x - b.mx)) /
          (b.sy * std::sqrt(1.0 - b.rho * b.rho));
-}
-
-RegionFit FitBeam(TH2F *scatter, Int_t reac, Double_t x_lo, Double_t x_hi,
-                  Double_t y_lo, Double_t y_hi) {
-  RegionFit fit;
-  fit.x_lo = x_lo;
-  fit.x_hi = x_hi;
-  fit.y_lo = y_lo;
-  fit.y_hi = y_hi;
-  fit.has_reac = kFALSE;
-  TAxis *ax = scatter->GetXaxis(), *ay = scatter->GetYaxis();
-  if (!BeamFromCore(scatter, reac, ax->FindBin(x_lo), ax->FindBin(x_hi),
-                    ay->FindBin(y_lo), ay->FindBin(y_hi), fit.beam, fit.why))
-    return fit;
-  fit.reac = fit.beam;
-  fit.reac.amp = 0.0;
-  fit.ok = kTRUE;
-  return fit;
-}
-
-TCutG *RidgeBandCut(const char *name, const Gauss2D &beam, Double_t nsig_lo,
-                    Double_t nsig_hi, Double_t x_lo, Double_t x_hi,
-                    Double_t y_lo, Double_t y_hi) {
-  // y on the ridge line at x, plus n conditional sigma; clipped to the window.
-  auto edge = [&](Double_t x, Double_t n) {
-    const Double_t y = beam.my +
-                       beam.rho * (beam.sy / beam.sx) * (x - beam.mx) +
-                       n * beam.sy * std::sqrt(1.0 - beam.rho * beam.rho);
-    return TMath::Max(y_lo, TMath::Min(y_hi, y));
-  };
-  TCutG *c = new TCutG(name, 5);
-  c->SetPoint(0, x_lo, edge(x_lo, nsig_lo));
-  c->SetPoint(1, x_hi, edge(x_hi, nsig_lo));
-  c->SetPoint(2, x_hi, edge(x_hi, nsig_hi));
-  c->SetPoint(3, x_lo, edge(x_lo, nsig_hi));
-  c->SetPoint(4, x_lo, edge(x_lo, nsig_lo));
-  c->SetLineColor(kBlack);
-  c->SetLineWidth(2);
-  return c;
 }
 
 TCutG *EllipseCut(const char *name, const Gauss2D &g, Double_t nsigma,
@@ -543,9 +478,8 @@ void SaveFigures(TH2F *scatter, Int_t reac, const RegionFit &fit, TCutG *an,
   scatter->GetYaxis()->SetRangeUser(fit.y_lo, fit.y_hi);
   const Int_t cReac = kRed + 1, cBeam = kAzure + 1;
 
-  // 1. The regions on the scatter, with each fitted component's 1/2/3 sigma
-  //    contours dashed behind them, so the fit and the cut it produced are
-  //    both on the page.
+  // 1. Regions on the scatter, each fitted component's 1/2/3 sigma contours
+  // dashed behind, so fit and cut are both on the page.
   {
     TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
     c->SetLogz(kTRUE);
@@ -562,8 +496,6 @@ void SaveFigures(TH2F *scatter, Int_t reac, const RegionFit &fit, TCutG *an,
       eb->SetLineWidth(1);
       eb->Draw("L SAME");
       tmp.push_back(eb);
-      if (!fit.has_reac)
-        continue;
       TCutG *er = EllipseCut(Form("cr%d_%d", k, reac), fit.reac, k);
       er->SetLineColor(cReac);
       er->SetLineStyle(2);

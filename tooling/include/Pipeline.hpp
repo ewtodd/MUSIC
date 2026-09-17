@@ -46,8 +46,8 @@ public:
   /**
    * @brief Run the whole pipeline over the configured subfiles.
    *
-   * Takes no arguments — every knob lives in `Constants.hpp` /
-   * `Constants.cpp` and the `control/` TOMLs. Output goes to
+   * Takes no arguments — every option lives in `Constants.hpp` /
+   * `Constants.cpp`. Output goes to
    * Paths::ResultsDir(), and progress is logged to
    * `<dataset dir>/pipeline_fused.log`.
    *

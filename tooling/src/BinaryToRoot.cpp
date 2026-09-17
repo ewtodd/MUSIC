@@ -1,18 +1,18 @@
 #include "BinaryToRoot.hpp"
 
-TString BinaryToRoot::HeaderSidecarName(Int_t run) {
+TString BinaryToRoot::HeaderFileName(Int_t run) {
   return Form("DataR_run_%d.header", run);
 }
 
-void BinaryToRoot::WriteHeaderSidecar(Int_t run, UShort_t header) {
-  TString path = IO::GetRootFilesBaseDir() + "/" + HeaderSidecarName(run);
+void BinaryToRoot::WriteHeaderFile(Int_t run, UShort_t header) {
+  TString path = IO::GetRootFilesBaseDir() + "/" + HeaderFileName(run);
   gSystem->mkdir(gSystem->DirName(path), kTRUE);
   std::ofstream f(path.Data());
   f << "0x" << std::hex << header << std::endl;
 }
 
-Bool_t BinaryToRoot::ReadHeaderSidecar(Int_t run, UShort_t &header) {
-  TString path = IO::GetRootFilesBaseDir() + "/" + HeaderSidecarName(run);
+Bool_t BinaryToRoot::ReadHeaderFile(Int_t run, UShort_t &header) {
+  TString path = IO::GetRootFilesBaseDir() + "/" + HeaderFileName(run);
   if (gSystem->AccessPathName(path))
     return kFALSE;
   std::ifstream f(path.Data());

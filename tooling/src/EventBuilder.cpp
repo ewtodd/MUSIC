@@ -1,12 +1,16 @@
 #include "EventBuilder.hpp"
 #include "EventsSummary.hpp"
 
+// Compile-time toggle for the streaming pass's every-10M-entry progress line.
+static const Bool_t kLogStreamProgress = kTRUE;
+
 void EventBuilder::ResetEventState(EventState &e) {
-  for (Int_t k = 0; k < 18; k++) {
+  for (Int_t k = 0; k < 16; k++) {
     e.leftdE[k] = 0;
     e.rightdE[k] = 0;
-    e.totaldE[k] = 0;
   }
+  e.strip0dE = 0;
+  e.strip17dE = 0;
   for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++)
     e.hits[k] = 0;
   e.cathode = -1;
@@ -94,14 +98,15 @@ void EventBuilder::AssignHit(EventState &e, PerChannelData *pc,
   }
 
   if (wins) {
+    // Slots 1-16 are the left ends of strips 1-16, 17-32 the right ends.
     if (slot == Constants::ARR_SLOT_STRIP_0)
-      e.totaldE[0] = energy;
+      e.strip0dE = energy;
     else if (slot <= 16)
-      e.leftdE[slot] = energy;
+      e.leftdE[slot - 1] = energy;
     else if (slot <= 32)
-      e.rightdE[slot - 16] = energy;
+      e.rightdE[slot - 17] = energy;
     else if (slot == Constants::ARR_SLOT_STRIP_17)
-      e.totaldE[17] = energy;
+      e.strip17dE = energy;
     else if (slot == Constants::ARR_SLOT_CATHODE)
       e.cathode = energy;
     else if (slot == Constants::ARR_SLOT_GRID)
@@ -118,14 +123,15 @@ void EventBuilder::AssignHit(EventState &e, PerChannelData *pc,
 }
 
 Bool_t EventBuilder::CheckEventComplete(const EventState &e) {
-  if (e.totaldE[0] == 0)
+  if (e.strip0dE == 0)
     return kFALSE;
+  // The long end of strips 1-14: L on odd strips, R on even.
   for (Int_t strip = 1; strip <= 14; strip += 2) {
-    if (e.leftdE[strip] == 0)
+    if (e.leftdE[strip - 1] == 0)
       return kFALSE;
   }
   for (Int_t strip = 2; strip <= 15; strip += 2) {
-    if (e.rightdE[strip] == 0)
+    if (e.rightdE[strip - 1] == 0)
       return kFALSE;
   }
   return kTRUE;
@@ -155,32 +161,30 @@ struct EventCounters {
   Long64_t events_with_multi_anode_hit;
   Long64_t dropped_anode_hits_total;
   Long64_t dropped_cathode_hits_total;
-  // Per-required-channel miss counts over all events: how often each
-  // completeness-required long strip / guard strip was zero. miss_long is
-  // indexed by strip 1..16 (counts L==0 for odd strips, R==0 for even).
+  /// Per-required-channel miss counts over all events: how often each
+  /// completeness-required long end or unsegmented strip was zero. miss_long is
+  /// indexed by strip 1..16 (counts L==0 for odd strips, R==0 for even).
   Long64_t miss_long[17];
   Long64_t miss_strip0;
   Long64_t miss_strip17;
 };
 
 void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
-                   UShort_t *left_0_17_branch, UShort_t *rightdE_branch,
+                   UShort_t *leftdE_branch, UShort_t *rightdE_branch,
+                   UShort_t &strip0_branch, UShort_t &strip17_branch,
                    UShort_t *hits_branch, Short_t &cathode_branch,
                    Short_t &grid_branch, UInt_t &flags_or_branch,
                    ULong64_t &seed_ts_branch, SummaryHistograms &hSum,
                    EventCounters &c, Long64_t event_idx = -1,
                    std::vector<TGraph *> *sample_traces = nullptr,
                    Long64_t sample_stride = 0, Int_t *n_sampled = nullptr) {
-  for (Int_t s = 1; s < 17; s++)
-    e.totaldE[s] = e.leftdE[s] + e.rightdE[s];
-
   // Collect sample traces for overlay plot
   if (sample_traces && event_idx >= 0 && sample_stride > 0 &&
       event_idx % sample_stride == 0 &&
       Int_t(sample_traces->size()) < Constants::cfg.SAVE_SAMPLE_TRACES) {
     Double_t total[18];
     for (Int_t s = 0; s < 18; s++)
-      total[s] = Double_t(e.totaldE[s]);
+      total[s] = Double_t(e.Total(s));
     sample_traces->push_back(EventsSummary::BuildTraceFromTotals(total));
     if (n_sampled)
       (*n_sampled)++;
@@ -207,12 +211,12 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
 
   // Per-required-channel miss tally (over all events): which completeness
   // channel was zero. Long side = L for odd strips, R for even strips.
-  if (e.totaldE[0] == 0)
+  if (e.strip0dE == 0)
     c.miss_strip0++;
-  if (e.totaldE[17] == 0)
+  if (e.strip17dE == 0)
     c.miss_strip17++;
   for (Int_t s = 1; s <= 16; s++) {
-    Int_t v = (s % 2 == 1) ? e.leftdE[s] : e.rightdE[s];
+    Int_t v = (s % 2 == 1) ? e.leftdE[s - 1] : e.rightdE[s - 1];
     if (v == 0)
       c.miss_long[s]++;
   }
@@ -226,15 +230,12 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
     if (Constants::ActiveDedupStrategy() == kDISCARD && any_anode_multi)
       reject = kTRUE;
     if (!reject) {
-      for (Int_t k = 0; k < 18; k++) {
-        left_0_17_branch[k] = UShort_t(e.leftdE[k]);
+      for (Int_t k = 0; k < 16; k++) {
+        leftdE_branch[k] = UShort_t(e.leftdE[k]);
         rightdE_branch[k] = UShort_t(e.rightdE[k]);
       }
-      // Guard strips are single-ended: their energy lives in totaldE[0]/[17]
-      // (leftdE/rightdE are 0 there). Park them in the left array at 0/17 so
-      // the recompute total[s] = left_0_17[s] + rightdE[s] reproduces them too.
-      left_0_17_branch[0] = UShort_t(e.totaldE[0]);
-      left_0_17_branch[17] = UShort_t(e.totaldE[17]);
+      strip0_branch = UShort_t(e.strip0dE);
+      strip17_branch = UShort_t(e.strip17dE);
       for (Int_t k = 0; k < Constants::N_ARR_SLOTS; k++)
         hits_branch[k] = UShort_t(e.hits[k]);
       cathode_branch = Short_t(e.cathode);
@@ -244,26 +245,26 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
       output_tree->Fill();
 
       for (Int_t s = 0; s < 18; s++)
-        hSum.h_music->Fill(Double_t(s), Double_t(e.totaldE[s]));
+        hSum.h_music->Fill(Double_t(s), Double_t(e.Total(s)));
 
       for (Int_t s = 1; s <= 16; s++) {
         const Bool_t lIsLong = (s % 2) != 0;
-        hSum.h2_long_vs_short[s]->Fill(
-            Double_t(lIsLong ? e.rightdE[s] : e.leftdE[s]),
-            Double_t(lIsLong ? e.leftdE[s] : e.rightdE[s]));
+        hSum.h2_long_vs_short[s - 1]->Fill(
+            Double_t(lIsLong ? e.rightdE[s - 1] : e.leftdE[s - 1]),
+            Double_t(lIsLong ? e.leftdE[s - 1] : e.rightdE[s - 1]));
       }
 
       if (hSum.h1_cathode && e.had_cathode)
         hSum.h1_cathode->Fill(Double_t(e.cathode));
 
       if (hSum.h1_strip17)
-        hSum.h1_strip17->Fill(Double_t(e.totaldE[17]));
+        hSum.h1_strip17->Fill(Double_t(e.strip17dE));
 
       if (hSum.h2_strip0_vs_grid)
-        hSum.h2_strip0_vs_grid->Fill(Double_t(e.grid), Double_t(e.totaldE[0]));
+        hSum.h2_strip0_vs_grid->Fill(Double_t(e.grid), Double_t(e.strip0dE));
 
       if (hSum.h1_strip0)
-        hSum.h1_strip0->Fill(Double_t(e.totaldE[0]));
+        hSum.h1_strip0->Fill(Double_t(e.strip0dE));
 
       if (hSum.h1_grid)
         hSum.h1_grid->Fill(Double_t(e.grid));
@@ -304,26 +305,26 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     return kFALSE;
   }
 
-  // ADC energies are 14-bit unsigned at the source; store them as UShort_t, not
-  // Int_t. Index 0/17 of left_0_17_dE hold the single-ended guard strips
-  // (Strip0/Strip17), indices 1..16 the left ends of the split anodes; the
-  // right ends live in rightdE (which is 0 at 0/17). The full per-strip deposit
-  // is recomputed as left_0_17_dE[s] + rightdE[s] on read -- it holds for all
-  // 18 indices since rightdE is 0 at the guards -- so no TotaldE branch is
-  // stored.
-  UShort_t left_0_17_dE[18], rightdE[18];
+  /// ADC energies are 14-bit unsigned at the source; store them as UShort_t,
+  /// not Int_t. LeftdE and RightdE hold the two ends of the segmented strips
+  /// 1-16, indexed by strip - 1; Strip0dE and Strip17dE the two unsegmented
+  /// strips. A strip's deposit is left + right, computed on read, and never
+  /// stored.
+  UShort_t leftdE[16], rightdE[16], strip0dE, strip17dE;
   UShort_t hits_arr[36];
-  // 14-bit ADC (<=16383), so Short_t holds every value with room to spare while
-  // preserving Cathode's -1 "no cathode hit" sentinel (Grid is non-negative but
-  // shares the type for symmetry). Unsplit anode/guard values are non-negative,
-  // hence the UShort_t arrays above.
+  /// 14-bit ADC (<=16383), so Short_t holds every value with room to spare
+  /// while preserving Cathode's -1 "no cathode hit" sentinel (Grid is
+  /// non-negative but shares the type for symmetry). Anode values are
+  /// non-negative, hence the UShort_t above.
   Short_t cathode, grid;
   UInt_t flags_or;
   ULong64_t seed_ts;
 
   TTree *output_tree = new TTree("events", "MUSIC events");
-  output_tree->Branch("Left_0_17_dE", left_0_17_dE, "Left_0_17_dE[18]/s");
-  output_tree->Branch("RightdE", rightdE, "RightdE[18]/s");
+  output_tree->Branch("LeftdE", leftdE, "LeftdE[16]/s");
+  output_tree->Branch("RightdE", rightdE, "RightdE[16]/s");
+  output_tree->Branch("Strip0dE", &strip0dE, "Strip0dE/s");
+  output_tree->Branch("Strip17dE", &strip17dE, "Strip17dE/s");
   output_tree->Branch("Hits", hits_arr, "Hits[36]/s");
   output_tree->Branch("Cathode", &cathode, "Cathode/S");
   output_tree->Branch("Grid", &grid, "Grid/S");
@@ -397,7 +398,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       output_file->Close();
       delete output_file;
       for (Int_t s = 1; s <= 16; s++)
-        delete hSum.h2_long_vs_short[s];
+        delete hSum.h2_long_vs_short[s - 1];
       delete hSum.h_music;
       delete hSum.h_mult;
       delete hSum.h1_cathode;
@@ -500,9 +501,8 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       cathode_hits_total++;
 
     if (ref_mode) {
-      // --- Reference-channel mode ---
-      // Reference hit seeds a new event; non-reference hits queue until
-      // next reference hit (or end of stream).
+      // --- Reference-channel mode --- a reference hit seeds a new event;
+      // non-reference hits queue until the next reference hit (or stream end).
       if (slot == ref_slot) {
         // Grid ADC window filter: skip reference hits outside the accepted
         // range so they don't seed an event.
@@ -529,18 +529,15 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
           pending.clear();
 
           // Finalize the completed event.
-          FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
-                        hits_arr, cathode, grid, flags_or, seed_ts, hSum, cnt,
-                        event_idx, &sample_traces, sample_stride, &n_sampled);
+          FinalizeEvent(cur_event, pc_cur, output_tree, leftdE, rightdE,
+                        strip0dE, strip17dE, hits_arr, cathode, grid, flags_or,
+                        seed_ts, hSum, cnt, event_idx, &sample_traces,
+                        sample_stride, &n_sampled);
           event_idx++;
         }
 
-        // Seed the new event from this reference hit, and store its energy in
-        // the event it seeds. Assigning it to the outgoing event instead puts a
-        // different ion's reference amplitude in every event, uncorrelated with
-        // the anode signals it sits beside -- and the beam gate cuts on it.
-        // Time-window mode below already assigns the seeding hit to its own
-        // event.
+        // This hit seeds the new event, keeping its energy; the outgoing
+        // event gets a different ion's amplitude, uncorrelated with its anodes.
         ResetEventState(cur_event);
         ResetPerChannelData(cur_per_channel);
         cur_ref_ts = h.timestamp;
@@ -561,9 +558,8 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
         }
       }
     } else {
-      // --- Time-window mode (REFERENCE_CHANNEL == "NONE") ---
-      // First unassigned hit opens a window; all hits within window_ps
-      // belong to that event. Dedup still applies, ref_ts = window anchor.
+      // --- Time-window mode (REFERENCE_CHANNEL == "NONE") --- first hit
+      // opens a window, hits in window_ps join; dedup applies, ref_ts = anchor.
       if (!have_cur) {
         ResetEventState(cur_event);
         ResetPerChannelData(cur_per_channel);
@@ -577,9 +573,10 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
                   h.flags, dedup_strat);
       } else {
         // Window exceeded — finalize and start new window.
-        FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
-                      hits_arr, cathode, grid, flags_or, seed_ts, hSum, cnt,
-                      event_idx, &sample_traces, sample_stride, &n_sampled);
+        FinalizeEvent(cur_event, pc_cur, output_tree, leftdE, rightdE, strip0dE,
+                      strip17dE, hits_arr, cathode, grid, flags_or, seed_ts,
+                      hSum, cnt, event_idx, &sample_traces, sample_stride,
+                      &n_sampled);
         event_idx++;
         ResetEventState(cur_event);
         ResetPerChannelData(cur_per_channel);
@@ -590,7 +587,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       }
     }
 
-    if (i % 10000000 == 0)
+    if (kLogStreamProgress && i % 10000000 == 0)
       std::cout << "  Stream progress: " << i << "/" << n_entries << std::endl;
   }
 
@@ -608,9 +605,9 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       }
       pending.clear();
     }
-    FinalizeEvent(cur_event, pc_cur, output_tree, left_0_17_dE, rightdE,
-                  hits_arr, cathode, grid, flags_or, seed_ts, hSum, cnt,
-                  event_idx, &sample_traces, sample_stride, &n_sampled);
+    FinalizeEvent(cur_event, pc_cur, output_tree, leftdE, rightdE, strip0dE,
+                  strip17dE, hits_arr, cathode, grid, flags_or, seed_ts, hSum,
+                  cnt, event_idx, &sample_traces, sample_stride, &n_sampled);
     event_idx++;
   }
 
@@ -623,7 +620,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     output_file->Close();
     delete output_file;
     for (Int_t s = 1; s <= 16; s++)
-      delete hSum.h2_long_vs_short[s];
+      delete hSum.h2_long_vs_short[s - 1];
     delete hSum.h_music;
     delete hSum.h_mult;
     delete hSum.h1_cathode;

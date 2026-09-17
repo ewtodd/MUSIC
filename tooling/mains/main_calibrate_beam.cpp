@@ -4,16 +4,15 @@
 #include <cstdlib>
 #include <iostream>
 
-// Resolve the epoch from the run number in a file label ("run100_8_c000") and
-// make it active for the run. Without this the tool would calibrate on the flat
-// DatasetConfig while the pipeline uses the epoch's hardware settings, and the
-// two would silently disagree.
+/// Resolve the epoch from the run number in a file label ("run100_8_c000")
+/// and make it active. Without this the tool would calibrate on the flat
+/// DatasetConfig while the pipeline uses the epoch's hardware settings, and
+/// the two would silently disagree.
 static Bool_t SetEpochFromLabel(const TString &file_label) {
   if (Constants::cfg.EPOCHS.empty())
     return kTRUE;
-  // A tagged label ("compass_run37_1") names its epoch outright. Run numbers
-  // repeat across acquisition systems, so the tag is the only thing that
-  // disambiguates them; fall back to the run number only for untagged eras.
+  // A tagged label ("compass_run37_1") names its epoch outright; run numbers
+  // repeat across systems; the tag disambiguates, run number only if untagged.
   for (Int_t e = 0; e < Int_t(Constants::cfg.EPOCHS.size()); e++) {
     const RunEpoch &ep = Constants::cfg.EPOCHS[e];
     if (ep.file_tag.Length() > 0 && file_label.BeginsWith(ep.file_tag + "_")) {

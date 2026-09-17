@@ -2,7 +2,6 @@
 #define TIMING_HPP
 
 #include "BinaryUtils.hpp"
-#include "ChannelTiming.hpp"
 #include "Constants.hpp"
 #include "FileSet.hpp"
 #include "GpuAccel.hpp"
