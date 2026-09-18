@@ -247,6 +247,20 @@ Int_t AmpBinOf(Double_t e_prev, Double_t mode, Int_t n_amp) {
   return TMath::Min(a, n_amp - 1);
 }
 
+// What a band covers, in the beam pulse's units: the first is everything
+// below half a beam pulse, the last is open ended. Latex for the figures,
+// plain text for the log.
+TString BandLabel(Int_t a, Int_t n_amp, Bool_t latex) {
+  if (n_amp <= 1)
+    return "";
+  const char *times = latex ? "#times" : "x";
+  if (a == 0)
+    return Form("< 0.5%s beam", times);
+  if (a == n_amp - 1)
+    return Form("%s %.1f%s beam", latex ? "#geq" : ">=", a - 0.5, times);
+  return Form("~%d%s beam", a, times);
+}
+
 std::vector<Int_t> BuildGroupMap() {
   const Int_t nch = Constants::ActiveNChannels();
   std::vector<Int_t> gm(Constants::ActiveNBoards() * nch, kNone);
@@ -1181,9 +1195,8 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
       const char *gn = GroupTag(g);
       res.dev_vs_pred[g] =
           new TH2D(Form("h_ph_dev_vs_pred_%s_%s", gn, tag.Data()),
-                   ";Predicted Deviation from Mean "
-                   "[ADC];#splitline{Measured}{Deviation from Mean [ADC]}",
-                   120, -600.0, 600.0, 120, -600.0, 600.0);
+                   ";Predicted Deviation [ADC];Measured Deviation [ADC]", 120,
+                   -600.0, 600.0, 120, -600.0, 600.0);
       res.dev_before[g] = new TH1D(
           Form("h_ph_dev_before_%s_%s", gn, tag.Data()),
           Form(";%s #minus Mean %s [ADC];Events", gn, gn), 240, -600.0, 600.0);
@@ -1382,7 +1395,8 @@ TString Report(const Result &res, const TString &file_label) {
       if (K.n_amp == 1)
         s += "      kernel:";
       else
-        s += Form("      kernel, previous pulse ~%dx beam:", a);
+        s += Form("      kernel, previous pulse %s:",
+                  BandLabel(a, K.n_amp, kFALSE).Data());
       for (Int_t b = 0; b < kNBins; b++)
         s += Form(" %.0fus:%+.3f", BinCentreUs(b), K.k[a][b]);
       s += "\n";
@@ -1425,13 +1439,17 @@ TString Report(const Result &res, const TString &file_label) {
       } else {
         // No form: the size of the binned kernel past the trapezoid, so a
         // channel that differs from its group can be seen in the log.
+        const Int_t b_from = BinOf(4.7e-6);
+        const Double_t from_us =
+            TMath::Power(10.0, kLogLo + b_from * (kLogHi - kLogLo) / kNBins) *
+            1.0e6;
         Double_t kmax = 0.0;
         for (Int_t a = 0; a < C.n_amp; a++)
-          for (Int_t b = 4; b < kNBins; b++)
+          for (Int_t b = b_from; b < kNBins; b++)
             if (TMath::Abs(C.k[a][b]) > TMath::Abs(kmax))
               kmax = C.k[a][b];
-        s += Form("  max|k| beyond 4.6 us %+.3f  (group kernel R^2 %.3f)", kmax,
-                  C.r2_group);
+        s += Form("  max|k| beyond %.1f us %+.3f  (group kernel R^2 %.3f)",
+                  from_us, kmax, C.r2_group);
       }
       s += "\n";
     }
@@ -1440,6 +1458,19 @@ TString Report(const Result &res, const TString &file_label) {
 }
 
 namespace {
+
+// A legend in the right-hand column, sized to its rows at the standard text
+// size so long entries neither shrink nor spill; top corner or bottom, one
+// or two columns, with the header (set by the caller) on a row of its own.
+TLegend *RightLegend(Int_t nentries, Bool_t header, Bool_t top,
+                     Double_t x1 = 0.62, Int_t ncols = 1) {
+  const Int_t nrows = (header ? 1 : 0) + (nentries + ncols - 1) / ncols;
+  const Double_t h = 0.048 * nrows + 0.02;
+  TLegend *leg = top ? PlottingUtils::AddLegend(x1, 0.89, 0.87 - h, 0.87)
+                     : PlottingUtils::AddLegend(x1, 0.89, 0.15, 0.15 + h);
+  leg->SetNColumns(ncols);
+  return leg;
+}
 
 // One kernel figure: the binned coefficients as points, the form as a curve
 // over them when it was fitted (solid where applied, dashed where the bins
@@ -1461,13 +1492,14 @@ void DrawKernelFigure(const Kernel &K, const TString &subdir,
                   "Relative Amplitude Shift");
   TLegend *leg = nullptr;
   if (K.n_amp > 1 || K.form_ok) {
-    // The tail of every kernel runs to zero at the right; the legend goes
-    // into whichever right-hand corner the kernel leaves empty, the top for
-    // an undershoot (negative kernel) and the bottom for an overshoot.
-    if (TMath::Abs(ylo) > yhi)
-      leg = PlottingUtils::AddLegend(0.55, 0.89, 0.15, 0.40);
-    else
-      leg = PlottingUtils::AddLegend(0.55, 0.89, 0.62, 0.87);
+    // The tail of every kernel runs to zero at the right, so the legend goes
+    // into the right-hand corner away from the zero line: the top for an
+    // overshoot (positive kernel), the bottom for an undershoot.
+    leg = RightLegend(K.n_amp * (K.form_ok ? 2 : 1), K.form_ok,
+                      !(TMath::Abs(ylo) > yhi), 0.45);
+    if (K.form_ok)
+      leg->SetHeader(Form("#tau = %.0f #mus%s", K.tau_us,
+                          K.tau_given ? " (given)" : " (profiled)"));
   }
   for (Int_t a = 0; a < K.n_amp; a++) {
     TGraph *gr = new TGraph();
@@ -1478,10 +1510,14 @@ void DrawKernelFigure(const Kernel &K, const TString &subdir,
     gr->SetLineColor(colors[a % kMaxAmpBins]);
     gr->SetLineWidth(2);
     gr->Draw(K.form_ok ? "P SAME" : "PL SAME");
+    // "< 0.5x beam, bins" per band, or just "Bins" for one kernel.
+    const TString band = BandLabel(a, K.n_amp, kTRUE);
+    const char *sep = K.n_amp > 1 ? ", " : "";
     if (leg)
       leg->AddEntry(gr,
-                    K.n_amp > 1 ? Form("Previous pulse ~%d#times beam, bins", a)
-                                : "Bins",
+                    Form("%s%s%s%s", band.Data(), sep,
+                         K.n_amp > 1 ? "bins" : "Bins",
+                         K.form_ok && !K.form ? " (applied)" : ""),
                     "p");
     if (K.form_ok) {
       const Int_t nf = 200;
@@ -1495,9 +1531,8 @@ void DrawKernelFigure(const Kernel &K, const TString &subdir,
       gf->SetLineStyle(K.form ? 1 : 2);
       gf->Draw("L SAME");
       leg->AddEntry(gf,
-                    Form("%sform, #tau %.0f #mus%s%s",
-                         K.n_amp > 1 ? Form("~%d#times beam, ", a) : "",
-                         K.tau_us, K.tau_given ? " given" : "",
+                    Form("%s%s%s%s", band.Data(), sep,
+                         K.n_amp > 1 ? "form" : "Form",
                          K.form ? " (applied)" : ""),
                     "l");
     }
@@ -1559,12 +1594,12 @@ void SavePlots(Result &res, const TString &file_label) {
       }
     TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
     TH1F *frame = c->DrawFrame(xlo, ylo - 0.02, xhi, yhi + 0.02);
-    frame->SetTitle(Form(";log_{10}(#Deltat [#mus]);Relative Amplitude "
-                         "Shift%s",
-                         G.n_amp > 1 ? " (previous pulse ~1#times beam)" : ""));
-    TLegend *leg = TMath::Abs(ylo) > yhi
-                       ? PlottingUtils::AddLegend(0.62, 0.89, 0.15, 0.50)
-                       : PlottingUtils::AddLegend(0.62, 0.89, 0.52, 0.87);
+    frame->SetTitle(";log_{10}(#Deltat [#mus]);Relative Amplitude Shift");
+    TLegend *leg = RightLegend(Int_t(chans.size()) + 1, G.n_amp > 1,
+                               !(TMath::Abs(ylo) > yhi), 0.58, 2);
+    if (G.n_amp > 1)
+      leg->SetHeader(
+          Form("Previous pulse %s", BandLabel(band, G.n_amp, kTRUE).Data()));
     for (size_t k = 0; k < chans.size(); k++) {
       const Kernel &K = res.kernel_ch[chans[k]];
       TGraph *gr = new TGraph();
@@ -1618,7 +1653,7 @@ void SavePlots(Result &res, const TString &file_label) {
       res.dev_after[g]->SetLineColor(kRed + 1);
       res.dev_after[g]->SetLineWidth(2);
       res.dev_after[g]->Draw("HIST SAME");
-      TLegend *leg = PlottingUtils::AddLegend(0.62, 0.89, 0.72, 0.88);
+      TLegend *leg = RightLegend(2, kFALSE, kTRUE, 0.55);
       leg->AddEntry(res.dev_before[g],
                     Form("Before, RMS %.1f", res.kernel[g].rms_before), "l");
       leg->AddEntry(res.dev_after[g],
@@ -1637,7 +1672,7 @@ void SavePlots(Result &res, const TString &file_label) {
       res.dtprev_after[g]->SetMarkerColor(kRed + 1);
       res.dtprev_after[g]->SetLineWidth(2);
       res.dtprev_after[g]->Draw("SAME");
-      TLegend *leg = PlottingUtils::AddLegend(0.62, 0.89, 0.15, 0.30);
+      TLegend *leg = RightLegend(2, kFALSE, kFALSE);
       leg->AddEntry(res.dtprev_before[g], "Before", "l");
       leg->AddEntry(res.dtprev_after[g], "After", "l");
       leg->Draw();
@@ -1660,11 +1695,10 @@ void SavePlots(Result &res, const TString &file_label) {
       TProfile *first = prof[chans[0]];
       first->SetMinimum(pass == 0 ? -300.0 : -100.0);
       first->SetMaximum(pass == 0 ? 200.0 : 100.0);
-      first->SetTitle(Form(";log_{10}(#Deltat [#mus]);Channel #minus Mean "
-                           "[ADC], %s",
-                           pass == 0 ? "before" : "after"));
+      first->SetTitle(";log_{10}(#Deltat [#mus]);Channel #minus Mean [ADC]");
       PlottingUtils::ConfigureAndDrawHistogram(first, ChannelColor(0));
-      TLegend *leg = PlottingUtils::AddLegend(0.62, 0.89, 0.15, 0.50);
+      TLegend *leg = RightLegend(Int_t(chans.size()), kTRUE, kFALSE, 0.58, 2);
+      leg->SetHeader(pass == 0 ? "Before correction" : "After correction");
       leg->AddEntry(first, res.name_ch[chans[0]].Data(), "l");
       for (size_t k = 1; k < chans.size(); k++) {
         TProfile *p = prof[chans[k]];

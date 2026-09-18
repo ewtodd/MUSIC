@@ -86,7 +86,7 @@ TagThresholds StripSumScatter::NominalThresholds() {
   T.tail_rerise_nsigma = C.TAIL_RERISE_NSIGMA;
   T.post_above_nsigma = C.POST_ABOVE_NSIGMA;
   T.post_above_strips = C.POST_ABOVE_STRIPS;
-  T.end_strip_max = C.END_STRIP_MAX;
+  T.end_strip_nsigma = C.END_STRIP_NSIGMA;
   T.cliff_max = C.TAIL_CLIFF_MAX_FRACTION;
   return T;
 }
@@ -106,22 +106,27 @@ StripSumScatter::ThresholdVariants() {
     Double_t TagThresholds::*field;
     Bool_t on;
     Double_t step;
+    Bool_t any_sign; // the threshold stays meaningful at or below zero
   };
   const Var vars[] = {
-      {"upstream", &TagThresholds::upstream_nsigma, nom.require_upstream, ds},
-      {"jump", &TagThresholds::jump_nsigma, kTRUE, ds},
-      {"smooth", &TagThresholds::smooth_nsigma, nom.smooth_nsigma > 0.0, ds},
+      {"upstream", &TagThresholds::upstream_nsigma, nom.require_upstream, ds,
+       kFALSE},
+      {"jump", &TagThresholds::jump_nsigma, kTRUE, ds, kFALSE},
+      {"smooth", &TagThresholds::smooth_nsigma, nom.smooth_nsigma > 0.0, ds,
+       kFALSE},
       {"tailrise", &TagThresholds::tail_rise_nsigma,
-       nom.tail_rise_nsigma > 0.0 && nom.tail_fall_from_strip > 0, ds},
+       nom.tail_rise_nsigma > 0.0 && nom.tail_fall_from_strip > 0, ds, kFALSE},
       {"return", &TagThresholds::tail_return_nsigma,
-       nom.tail_rerise_nsigma > 0.0, ds},
+       nom.tail_rerise_nsigma > 0.0, ds, kFALSE},
       {"rerise", &TagThresholds::tail_rerise_nsigma,
-       nom.tail_rerise_nsigma > 0.0, ds},
+       nom.tail_rerise_nsigma > 0.0, ds, kFALSE},
       {"post", &TagThresholds::post_above_nsigma,
-       nom.post_above_nsigma > 0.0 && nom.post_above_strips > 0, ds},
-      {"end", &TagThresholds::end_strip_max, kTRUE, C.CUT_VARIATION_END_STEP},
+       nom.post_above_nsigma > 0.0 && nom.post_above_strips > 0, ds, kFALSE},
+      // The end strip is always tested; its threshold, mean - n sigma, is
+      // meaningful for any n, so the shift is never skipped.
+      {"end", &TagThresholds::end_strip_nsigma, kTRUE, ds, kTRUE},
       {"cliff", &TagThresholds::cliff_max, nom.cliff_max > 0.0,
-       C.CUT_VARIATION_CLIFF_STEP},
+       C.CUT_VARIATION_CLIFF_STEP, kFALSE},
   };
   for (size_t v = 0; v < sizeof(vars) / sizeof(vars[0]); v++) {
     if (!vars[v].on || !(vars[v].step > 0.0))
@@ -129,8 +134,9 @@ StripSumScatter::ThresholdVariants() {
     for (Int_t dir = +1; dir >= -1; dir -= 2) {
       TagThresholds T = nom;
       T.*(vars[v].field) = nom.*(vars[v].field) + dir * vars[v].step;
-      // A variation must not switch a condition off (or on): keep it above 0.
-      if (!(T.*(vars[v].field) > 0.0))
+      // A variation must not switch a condition off (or on): keep it above 0
+      // where zero means off.
+      if (!vars[v].any_sign && !(T.*(vars[v].field) > 0.0))
         continue;
       out.push_back(
           std::make_pair(TString(vars[v].name) + (dir > 0 ? "+" : "-"), T));
@@ -240,7 +246,10 @@ TagCut StripSumScatter::RejectReason(const EnergyView &ev, Int_t reac,
   if (Constants::cfg.IGNORE_STRIP_17 ||
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_STRIP_16_BELOW_BEAM)
     end_strip = 16;
-  if (!(ev.Total(end_strip) < T.end_strip_max))
+  // The end strip below the beam by n sigma of its own spread: a residue
+  // that has stopped (or is stopping) reads low there, the beam does not.
+  if (!(ev.Total(end_strip) <
+        StripMean(end_strip) - T.end_strip_nsigma * StripSigma(end_strip)))
     return kCutEndStrip;
   // A stop is gradual: the last step may take only part of the fall from the
   // peak. The elastic class keeps its excess to end_strip-1 and drops there.
@@ -1249,8 +1258,7 @@ void StripSumScatter::ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
   }
 }
 
-TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
-                                          std::map<Int_t, TChain *> &chains) {
+TString StripSumScatter::BuildFingerprint(const FileSet::GateGroups &groups) {
   const Int_t kReacMin =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
   const Int_t kReacMax =
@@ -1260,7 +1268,7 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
   const Double_t kSmoothNSigma =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SMOOTHNESS_NSIGMA;
   const Double_t kEndStripMax =
-      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.END_STRIP_MAX;
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.END_STRIP_NSIGMA;
 
   const Int_t kGateStripX =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_X;
@@ -1280,9 +1288,9 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
   // Two parts split by the bar. Before: what decides tagging and keeping; a
   // change there refills. After: plane-only, re-projected from the reservoir.
   TString s = Form(
-      "v32 reac[%d,%d] bmult[%d,%d] pileup=%.2fsig,%d noise=%.2fsig,%d "
+      "v33 reac[%d,%d] bmult[%d,%d] pileup=%.2fsig,%d noise=%.2fsig,%d "
       "jump=%.2fsig smooth=%.2fsig "
-      "s17=%.3f gate[s%d,s%d,%.2f,%.2f,%d,%.3f,%.3f]",
+      "end=%.2fsig gate[s%d,s%d,%.2f,%.2f,%d,%.3f,%.3f]",
       kReacMin, kReacMax, Constants::cfg.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_MAX,
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_COUNT_TO,
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PILEUP_NSIGMA,
@@ -1302,8 +1310,8 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
               C.TAIL_CLIFF_MAX_FRACTION);
     // The variation steps: the variant counts in the cache depend on them.
     if (C.CUT_VARIATION)
-      s += Form(" var[%.2fsig,%.3f,%.2f]", C.CUT_VARIATION_NSIGMA_STEP,
-                C.CUT_VARIATION_END_STEP, C.CUT_VARIATION_CLIFF_STEP);
+      s += Form(" var[%.2fsig,%.2f]", C.CUT_VARIATION_NSIGMA_STEP,
+                C.CUT_VARIATION_CLIFF_STEP);
     s += " beam[";
     for (Int_t strip = 1; strip <= 17; strip++)
       s += Form("%s%.4f/%.4f", strip == 1 ? "" : ",", StripMean(strip),
@@ -1335,9 +1343,10 @@ TString StripSumScatter::BuildFingerprint(const std::vector<Int_t> &run_order,
 
   // Display windows are deliberately absent: they no longer change what is
   // built, so retuning them must not invalidate the cache.
-  for (Int_t i = 0; i < Int_t(run_order.size()); i++) {
-    Int_t run = run_order[i];
-    s += Form(" r%d:%lld", run, chains[run]->GetEntries());
+  for (Int_t i = 0; i < Int_t(groups.order.size()); i++) {
+    const Int_t key = groups.order[i];
+    s += Form(" %s:%lld", groups.label.find(key)->second.Data(),
+              groups.chain.find(key)->second->GetEntries());
   }
 
   // The built quantity: build range, binning, the x range and each strip's
@@ -2126,8 +2135,10 @@ void StripSumScatter::WriteCache(const TString &cacheName,
 /// parallel: each call touches only its own chain and returns its own result,
 /// with no shared state to guard.
 SingleRunFitResult
-StripSumScatter::FitRunGates(Int_t run, TChain *chain,
+StripSumScatter::FitRunGates(Int_t key, const TString &label, TChain *chain,
                              const std::vector<GateSpec> &activeGates) {
+  (void)key;
+  const TString run = label; // the group's name in every message
   SingleRunFitResult res;
   if (!chain || chain->GetEntries() == 0)
     return res;
@@ -2138,8 +2149,8 @@ StripSumScatter::FitRunGates(Int_t run, TChain *chain,
   {
     std::vector<GateSpec> emptyPrior;
     std::vector<BeamFit2D> emptyGates;
-    const TString tag = Form("run%d", run);
-    const TString subdir = Form("strip_sum_scatter/run%d", run);
+    const TString tag = label;
+    const TString subdir = "strip_sum_scatter/" + label;
     Int_t ent_sx = 0, ent_sy = 1;
     const Char_t *ent_tag = "s0/s1";
     if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PURE_BEAM_GATE ==
@@ -2156,11 +2167,11 @@ StripSumScatter::FitRunGates(Int_t run, TChain *chain,
       be.s1_s2 = ent_ell;
     if (ent_ell.ok) {
       std::lock_guard<std::mutex> lk(g_log_mutex);
-      std::cout << "  run " << run << " beam ellipse " << ent_tag << ": mu=("
+      std::cout << "  " << run << " beam ellipse " << ent_tag << ": mu=("
                 << ent_ell.mu_x << "," << ent_ell.mu_y << ")" << std::endl;
     } else {
       std::lock_guard<std::mutex> lk(g_log_mutex);
-      std::cerr << "  run " << run << " beam ellipse " << ent_tag
+      std::cerr << "  " << run << " beam ellipse " << ent_tag
                 << " failed; skipping run" << std::endl;
       return res;
     }
@@ -2170,13 +2181,13 @@ StripSumScatter::FitRunGates(Int_t run, TChain *chain,
           FindBeamGate(chain, 15, 16, emptyPrior, emptyGates, tag, subdir);
       if (be.s15_s16.ok) {
         std::lock_guard<std::mutex> lk(g_log_mutex);
-        std::cout << "  run " << run << " beam ellipse s15/s16: mu=("
+        std::cout << "  " << run << " beam ellipse s15/s16: mu=("
                   << be.s15_s16.mu_x << "," << be.s15_s16.mu_y << ")"
                   << std::endl;
       } else {
         std::lock_guard<std::mutex> lk(g_log_mutex);
-        std::cerr << "  run " << run
-                  << " beam ellipse s15/s16 failed; skipping run" << std::endl;
+        std::cerr << "  " << run << " beam ellipse s15/s16 failed; skipping run"
+                  << std::endl;
         return res;
       }
     } else {
@@ -2185,13 +2196,13 @@ StripSumScatter::FitRunGates(Int_t run, TChain *chain,
           FindBeamGate(chain, 16, 17, emptyPrior, emptyGates, tag, subdir);
       if (be.s16_s17.ok) {
         std::lock_guard<std::mutex> lk(g_log_mutex);
-        std::cout << "  run " << run << " beam ellipse s16/s17: mu=("
+        std::cout << "  " << run << " beam ellipse s16/s17: mu=("
                   << be.s16_s17.mu_x << "," << be.s16_s17.mu_y << ")"
                   << std::endl;
       } else {
         std::lock_guard<std::mutex> lk(g_log_mutex);
-        std::cerr << "  run " << run
-                  << " beam ellipse s16/s17 failed; skipping run" << std::endl;
+        std::cerr << "  " << run << " beam ellipse s16/s17 failed; skipping run"
+                  << std::endl;
         return res;
       }
     }
@@ -2204,19 +2215,18 @@ StripSumScatter::FitRunGates(Int_t run, TChain *chain,
   std::vector<GateSpec> priorSpecs;
   Bool_t allOk = kTRUE;
   for (Int_t gi = 0; gi < Int_t(activeGates.size()); gi++) {
-    BeamFit2D g = FindBeamGate(chain, activeGates[gi].sx, activeGates[gi].sy,
-                               priorSpecs, runGates, Form("run%d", run),
-                               Form("strip_sum_scatter/run%d", run));
+    BeamFit2D g =
+        FindBeamGate(chain, activeGates[gi].sx, activeGates[gi].sy, priorSpecs,
+                     runGates, label, "strip_sum_scatter/" + label);
     if (g.ok) {
       std::lock_guard<std::mutex> lk(g_log_mutex);
-      std::cout << "  run " << run << " beam gate s" << activeGates[gi].sx
-                << "/s" << activeGates[gi].sy << ": mu=(" << g.mu_x << ","
-                << g.mu_y << ")" << std::endl;
+      std::cout << "  " << run << " beam gate s" << activeGates[gi].sx << "/s"
+                << activeGates[gi].sy << ": mu=(" << g.mu_x << "," << g.mu_y
+                << ")" << std::endl;
     } else {
       std::lock_guard<std::mutex> lk(g_log_mutex);
-      std::cerr << "  run " << run << " beam gate s" << activeGates[gi].sx
-                << "/s" << activeGates[gi].sy << " failed; skipping run"
-                << std::endl;
+      std::cerr << "  " << run << " beam gate s" << activeGates[gi].sx << "/s"
+                << activeGates[gi].sy << " failed; skipping run" << std::endl;
       allOk = kFALSE;
     }
     runGates.push_back(g);
@@ -2230,9 +2240,12 @@ StripSumScatter::FitRunGates(Int_t run, TChain *chain,
 /// One run's scatter fill. Each call builds PRIVATE scatter histograms and its
 /// own reservoir slice, so the runs never touch shared state; the caller merges
 /// them in run order, which makes the threaded result identical to sequential.
-SingleRunFillResult StripSumScatter::FillRunScatters(
-    Int_t run, TChain *chain, const std::vector<GateSpec> &activeGates,
-    const std::vector<BeamFit2D> &runGates, const BeamEllipses &runBeam) {
+SingleRunFillResult
+StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
+                                 const std::vector<GateSpec> &activeGates,
+                                 const std::vector<BeamFit2D> &runGates,
+                                 const BeamEllipses &runBeam) {
+  const Int_t run = key; // unique per task: names the private histograms
   const Int_t kReacMin =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
   const Int_t kReacMax =
@@ -2280,7 +2293,7 @@ SingleRunFillResult StripSumScatter::FillRunScatters(
   Int_t nReac = kReacMax - kReacMin + 1;
   {
     std::lock_guard<std::mutex> lk(g_log_mutex);
-    std::cout << "Run " << run << ": filling " << nReac
+    std::cout << "  " << label << ": filling " << nReac
               << " reaction-strip scatters over " << n << " events..."
               << std::endl;
   }
@@ -2479,8 +2492,8 @@ void StripSumScatter::ReprojectFromReservoir() {
             << " tagged entries." << std::endl;
 }
 
-void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
-                                   std::map<Int_t, TChain *> &chains) {
+void StripSumScatter::FillScatters(const FileSet::GateGroups &groups) {
+  const std::vector<Int_t> &runOrder = groups.order;
   const Int_t kReacMin =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
   const Int_t kReacMax =
@@ -2502,11 +2515,15 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
 
   std::vector<GateSpec> activeGates = ActiveGates();
 
-  // Pre-index the chains so worker threads only touch their own run.
+  // Pre-index the chains so worker threads only touch their own group: a
+  // run's chunks on SOLARIS, one subfile on CoMPASS.
   const Int_t nRuns = Int_t(runOrder.size());
   std::vector<TChain *> chainVec(nRuns);
-  for (Int_t i = 0; i < nRuns; i++)
-    chainVec[i] = chains[runOrder[i]];
+  std::vector<TString> labelVec(nRuns);
+  for (Int_t i = 0; i < nRuns; i++) {
+    chainVec[i] = groups.chain.find(runOrder[i])->second;
+    labelVec[i] = groups.label.find(runOrder[i])->second;
+  }
 
   Int_t n_workers =
       TMath::Min(Int_t(std::thread::hardware_concurrency()), nRuns);
@@ -2514,14 +2531,14 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
       n_workers, Constants::cfg.STRIP_SUM_SCATTER_CONFIG.MAX_STRIP_SUM_WORKERS);
   if (n_workers < 1)
     n_workers = 1;
-  std::cout << "strip-sum-scatter: " << nRuns << " runs on " << n_workers
+  std::cout << "strip-sum-scatter: " << nRuns << " gate groups on " << n_workers
             << " workers" << std::endl;
 
   // Phase 1: beam ellipses + series gates, one task per run. The gates within
   // a run stay sequential -- each only sees events passing the prior ones.
   std::vector<SingleRunFitResult> fits(nRuns);
   RunIndexedParallel(nRuns, n_workers, [&](Int_t i) {
-    fits[i] = FitRunGates(runOrder[i], chainVec[i], activeGates);
+    fits[i] = FitRunGates(runOrder[i], labelVec[i], chainVec[i], activeGates);
   });
 
   // Phase 2: fill, split per file, not per run: a CoMPASS run is hundreds of
@@ -2537,7 +2554,12 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
       idx_of_run[runOrder[i]] = i;
     std::vector<FileSpec> specs = FileSet::BuildProcessedFileSpecs();
     for (Int_t k = 0; k < Int_t(specs.size()); k++) {
-      std::map<Int_t, Int_t>::const_iterator it = idx_of_run.find(specs[k].run);
+      // The file's gate group: its run on SOLARIS, itself on CoMPASS.
+      std::map<TString, Int_t>::const_iterator kit =
+          groups.key_of.find(FileSet::EventsName(specs[k]));
+      if (kit == groups.key_of.end())
+        continue;
+      std::map<Int_t, Int_t>::const_iterator it = idx_of_run.find(kit->second);
       if (it == idx_of_run.end() || !fits[it->second].ok)
         continue;
       TString full = IO::GetRootFilesBaseDir() + "/" +
@@ -2614,7 +2636,7 @@ void StripSumScatter::FillScatters(const std::vector<Int_t> &runOrder,
       TChain ch("events");
       ch.Add(tasks[t].path);
       if (ch.GetEntries() > 0)
-        fills[t] = FillRunScatters(runOrder[i], &ch, activeGates,
+        fills[t] = FillRunScatters(runOrder[i], labelVec[i], &ch, activeGates,
                                    fits[i].series_gates, fits[i].pure_beam);
     }
     std::lock_guard<std::mutex> lk(merge_mutex);
@@ -2893,15 +2915,17 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
     DrawRegionMeanTraces(Form("region_mean_traces_reac%d", reac),
                          "strip_sum_scatter", tr_beam, tr_aa, tr_an, 0.6, 1.6,
                          "#DeltaE [a.u.]");
-  Double_t adc_y_lo = 0.0, adc_y_hi = 0.0;
-  TraceYRange(tr_beam_adc, tr_aa_adc, tr_an_adc, adc_y_lo, adc_y_hi);
-  DrawRegionTraces(Form("region_traces_reac%d_adc", reac), "strip_sum_scatter",
-                   tr_beam_adc, tr_aa_adc, tr_an_adc, adc_y_lo, adc_y_hi,
-                   "#DeltaE [ADC]");
-  if (kMeanTraces)
-    DrawRegionMeanTraces(Form("region_mean_traces_reac%d_adc", reac),
-                         "strip_sum_scatter", tr_beam_adc, tr_aa_adc, tr_an_adc,
-                         adc_y_lo, adc_y_hi, "#DeltaE [ADC]");
+  if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PLOT_ADC_TRACES) {
+    Double_t adc_y_lo = 0.0, adc_y_hi = 0.0;
+    TraceYRange(tr_beam_adc, tr_aa_adc, tr_an_adc, adc_y_lo, adc_y_hi);
+    DrawRegionTraces(Form("region_traces_reac%d_adc", reac),
+                     "strip_sum_scatter", tr_beam_adc, tr_aa_adc, tr_an_adc,
+                     adc_y_lo, adc_y_hi, "#DeltaE [ADC]");
+    if (kMeanTraces)
+      DrawRegionMeanTraces(Form("region_mean_traces_reac%d_adc", reac),
+                           "strip_sum_scatter", tr_beam_adc, tr_aa_adc,
+                           tr_an_adc, adc_y_lo, adc_y_hi, "#DeltaE [ADC]");
+  }
   if (!kSkipSg) {
     DrawRegionTraces(Form("region_traces_reac%d_sg", reac), "strip_sum_scatter",
                      tr_beam_sg, tr_aa_sg, tr_an_sg, 0.6, 1.6, "#DeltaE [a.u.]",
@@ -2943,27 +2967,31 @@ Bool_t StripSumScatter::Prepare() {
                                 Paths::ResultsDir() + "/root_files");
   gROOT->SetBatch(kTRUE);
 
-  std::vector<Int_t> run_order;
-  std::map<Int_t, TChain *> chain_by_run = FileSet::GroupEventsByRun(run_order);
+  // The gate groups: a run's chunks on SOLARIS, one subfile on CoMPASS. Every
+  // per-group step below runs one task per group.
+  FileSet::GateGroups groups = FileSet::GroupEventsForGating();
+  const std::vector<Int_t> &run_order = groups.order;
+  std::map<Int_t, TChain *> &chain_by_run = groups.chain;
   if (run_order.empty()) {
     std::cerr << "strip-sum-scatter: no runs found" << std::endl;
     return kFALSE;
   }
+  const TString first_label = groups.label[run_order[0]];
 
   // Every level and step cut is in sigma of the beam, so the beam comes
-  // first: the first run's entrance and exit ellipses select its beam
+  // first: the first group's entrance and exit ellipses select its beam
   // events, and each strip's mean and width over them are the reference.
   // The fingerprint stamps the resolved thresholds.
   Double_t strip_mean[18], strip_sigma[18];
   {
     std::vector<GateSpec> no_gates;
-    SingleRunFitResult first =
-        FitRunGates(run_order[0], chain_by_run[run_order[0]], no_gates);
+    SingleRunFitResult first = FitRunGates(
+        run_order[0], first_label, chain_by_run[run_order[0]], no_gates);
     if (!first.pure_beam.ok ||
         !MeasureBeamNoise(chain_by_run[run_order[0]], first.pure_beam,
                           strip_mean, strip_sigma)) {
-      std::cerr << "strip-sum-scatter: cannot measure the beam on run "
-                << run_order[0] << std::endl;
+      std::cerr << "strip-sum-scatter: cannot measure the beam on "
+                << first_label << std::endl;
       for (Int_t i = 0; i < Int_t(run_order.size()); i++)
         delete chain_by_run[run_order[i]];
       return kFALSE;
@@ -2976,8 +3004,8 @@ Bool_t StripSumScatter::Prepare() {
     const Int_t kReacMax =
         Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
     TString line = Form("strip-sum-scatter: beam mean (sigma) from the gated "
-                        "sample of run %d:",
-                        run_order[0]);
+                        "sample of %s:",
+                        first_label.Data());
     for (Int_t strip = 1; strip <= 17; strip++)
       line += Form(" s%d %.4f (%.4f)", strip, strip_mean[strip],
                    strip_sigma[strip]);
@@ -2990,13 +3018,13 @@ Bool_t StripSumScatter::Prepare() {
   }
 
   // Build fingerprint and try cache.
-  TString fingerprint = BuildFingerprint(run_order, chain_by_run);
+  TString fingerprint = BuildFingerprint(groups);
   TString cache_name = CacheName();
 
   Bool_t loaded = TryLoadCache(cache_name, fingerprint);
 
   if (!loaded) {
-    FillScatters(run_order, chain_by_run);
+    FillScatters(groups);
     WriteCache(cache_name, fingerprint);
   }
 
@@ -3054,9 +3082,10 @@ void StripSumScatter::DrawAllTaggedTraces(const TString &subdir) {
   for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
     const UInt_t bit = (1u << ReacIndex(reac));
     std::vector<TGraph *> tr_tag, tr_tag_adc;
-    for (Int_t k = 0; k < Int_t(m_reservoir.size()) &&
-                      Int_t(tr_tag.size()) < kTracesPerRegion;
-         k++) {
+    // Every tagged event at this strip, uncapped: in the all-tagged mode the
+    // count IS these traces, so the figure shows all of them. Only the beam
+    // sample above is capped.
+    for (Int_t k = 0; k < Int_t(m_reservoir.size()); k++) {
       const TraceEvt &e = m_reservoir[k];
       if (e.beam_flat || !(e.reac_mask & bit))
         continue;
@@ -3074,15 +3103,17 @@ void StripSumScatter::DrawAllTaggedTraces(const TString &subdir) {
     if (kMeanTraces)
       DrawRegionMeanTraces(Form("all_tagged_mean_traces_reac%d", reac), subdir,
                            tr_beam, none, tr_tag, 0.6, 1.6, "#DeltaE [a.u.]");
-    Double_t adc_y_lo = 0.0, adc_y_hi = 0.0;
-    TraceYRange(tr_beam_adc, none, tr_tag_adc, adc_y_lo, adc_y_hi);
-    DrawRegionTraces(Form("all_tagged_traces_reac%d_adc", reac), subdir,
-                     tr_beam_adc, none, tr_tag_adc, adc_y_lo, adc_y_hi,
-                     "#DeltaE [ADC]", kTRUE, "Tagged");
-    if (kMeanTraces)
-      DrawRegionMeanTraces(Form("all_tagged_mean_traces_reac%d_adc", reac),
-                           subdir, tr_beam_adc, none, tr_tag_adc, adc_y_lo,
-                           adc_y_hi, "#DeltaE [ADC]");
+    if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PLOT_ADC_TRACES) {
+      Double_t adc_y_lo = 0.0, adc_y_hi = 0.0;
+      TraceYRange(tr_beam_adc, none, tr_tag_adc, adc_y_lo, adc_y_hi);
+      DrawRegionTraces(Form("all_tagged_traces_reac%d_adc", reac), subdir,
+                       tr_beam_adc, none, tr_tag_adc, adc_y_lo, adc_y_hi,
+                       "#DeltaE [ADC]", kTRUE, "Tagged");
+      if (kMeanTraces)
+        DrawRegionMeanTraces(Form("all_tagged_mean_traces_reac%d_adc", reac),
+                             subdir, tr_beam_adc, none, tr_tag_adc, adc_y_lo,
+                             adc_y_hi, "#DeltaE [ADC]");
+    }
     for (Int_t i = 0; i < Int_t(tr_tag.size()); i++)
       delete tr_tag[i];
     for (Int_t i = 0; i < Int_t(tr_tag_adc.size()); i++)

@@ -130,6 +130,25 @@ public:
   GroupEventsByRun(std::vector<Int_t> &run_order);
 
   /**
+   * @brief The events files grouped into the units the beam gates are fitted
+   * on.
+   *
+   * SOLARIS: one group per run, its chunks chained together, keyed by run
+   * number and labelled `run<N>` -- unchanged from GroupEventsByRun(). CoMPASS:
+   * one group per subfile, keyed by a unique id and labelled by the file
+   * (FileLabel()), so a dataset of two runs in hundreds of subfiles gates and
+   * fills one file per task instead of one run per task.
+   */
+  struct GateGroups {
+    std::vector<Int_t> order;        ///< Group keys in processing order.
+    std::map<Int_t, TChain *> chain; ///< Chain per key. **Caller owns.**
+    std::map<Int_t, TString> label;  ///< Label per key, for logs and plots.
+    std::map<TString, Int_t> key_of; ///< Group key per EventsName().
+  };
+  /// @brief Build the gate groups; see GateGroups.
+  static GateGroups GroupEventsForGating();
+
+  /**
    * @brief Stride that visits at most @p max_points of @p n_total entries.
    *
    * For scatter plots, where drawing every entry costs time and renders as a

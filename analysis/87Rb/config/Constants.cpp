@@ -8,13 +8,11 @@ static DatasetConfig gInstance;
 const DatasetConfig &cfg = gInstance;
 
 void InitDatasetConfig() {
-  // Data source: CoMPASS binaries, runs 16 and 20.
   gInstance.USE_SOLARIS_DATA = kFALSE;
   gInstance.COMPASS_BASE_DIR = "/labdata/MUSIC/87Rb/";
   gInstance.RUN_NUMBERS = {16, 20};
   gInstance.N_CHUNKS = -1; // all
 
-  // Detector readout: four 16-channel boards, channel map, ADC limits.
   gInstance.N_BOARDS = 4;
   gInstance.N_CHANNELS = 16;
   gInstance.channelMap = {
@@ -51,8 +49,6 @@ void InitDatasetConfig() {
   gInstance.STRIP_DE_MIN_NORMED = 0;
   gInstance.STRIP_DE_MAX_NORMED = 4;
 
-  // Event building: no reference channel, boards already in sync, both ends
-  // of every split strip summed.
   gInstance.REFERENCE_CHANNEL = "NONE";
   gInstance.EVENT_TIME_WINDOW_US = 8;
   gInstance.DEDUP_STRATEGY = kDISCARD;
@@ -67,67 +63,41 @@ void InitDatasetConfig() {
   gInstance.SKIP_EXISTING = kTRUE;
   gInstance.SAVE_PLOTS = kFALSE;
 
-  // Beam calibration.
   gInstance.SIM_BEAM_FILE = "traces_87Rb_beam.root";
 
-  // Strip-sum scatter: event-level cuts before any reaction is asked about.
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_X = 0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_Y = 1;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X = 5.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y = 5.0;
 
-  // Both-ends multiplicity: a displaced track lights the short end on every
-  // strip of one parity at once.
   gInstance.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_MAX = 3;
   gInstance.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_COUNT_TO = 16;
 
-  /// The tag, in the order the conditions are applied. Everything in sigma
-  /// resolves through the noise measured on the beam (jump sigma 0.037-0.045
-  /// per step at strips 11-17, strip sigma 0.026 at 16-17).
-  ///
-  /// The tail-shape conditions come from the published per-strip macros
-  /// (/labdata/MUSIC/87Rb/analysis/A9-A11/TracesVisu2.C). Their own values in
-  /// beam units -- rise ceiling 0.1/12 = 0.008, strip 16 below 0.99, strip 17
-  /// below 0.958 -- are 0.2-1 sigma of that
-  /// noise and together kept 0.35% of the tags (5.3M -> 18k at strip 2 on
-  /// 2026-09-14), which starved the mixture fit. All are numerator only.
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN = 2;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX = 12;
+
   gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_BEAM_UPSTREAM_OF_REAC = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.BEAM_UPSTREAM_NSIGMA = 2.0;
+
   gInstance.STRIP_SUM_SCATTER_CONFIG.REAC_JUMP_NSIGMA = 1.0;
-  /// Post-reaction smoothness at the shared 2.5 sigma on every step to the
-  /// end, the macros' 1.2/12 = 0.10 at this noise; it mostly removes noise
-  /// tags, whose step at reac+1 mirrors the tagging fluctuation.
-  /// Falling tail from strip 14 with a 2 sigma rise ceiling (0.08): beam-like
-  /// tags rise by 0.08-0.14 at p95, so ~90% pass and a residue, which falls,
-  /// passes more often; the efficiency stays bounded.
-  gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_FALL_FROM_STRIP = 14;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_RISE_NSIGMA = 2.0;
-  /// Persistence: the excess must hold for 3 strips after the reaction, each
-  /// more than 1 sigma of its spread (0.04) above the beam. The macros at
-  /// A5-A8 asked for strips reac+1 .. 9-12 above 12.5-12.65, ~1.2 sigma. A
-  /// noise tag passes ~16% per strip, 0.4% over three; an (a,n) excess of
-  /// 6-18% is 1.5-4.5 sigma and passes at every strip.
-  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_ABOVE_NSIGMA = 1.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_ABOVE_NSIGMA = 1.75;
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_ABOVE_STRIPS = 3;
 
-  /// The plane the regions are fitted in: x sums strips 1-16, y the six
-  /// strips after the reaction, capped at strip 14. A change here reprojects
-  /// the cache from the reservoir rather than refilling.
-  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS = 6;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_WINDOW_LAST_STRIP = 14;
-  // The macros' per-event `ratio` normalisation of the post window. Left off:
-  // it changes the plane, so every region cut would need refitting first.
-  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_RATIO_TO_UPSTREAM = kFALSE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.SMOOTHNESS_NSIGMA = 8.0;
 
-  /// Regions and display. compute-regions (a separate, read-only pass over
-  /// the scatter cache) fits a bivariate Gaussian mixture per strip and saves
-  /// these ellipses as the region cuts, overwriting the per-cut files.
-  /// Hand-drawn cuts stay in RegionCuts.root and in region_cuts_hand_<date>/.
-  gInstance.STRIP_SUM_SCATTER_CONFIG.AN_REGION_NSIGMA = 5.0;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.AA_REGION_NSIGMA = 5.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_RISE_NSIGMA = 0.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_RETURN_NSIGMA = 1.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_RERISE_NSIGMA = 4.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.END_STRIP_NSIGMA = 3.5;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_CLIFF_MAX_FRACTION = 0.5;
+
+  gInstance.STRIP_SUM_SCATTER_CONFIG.AN_REGION_MODE =
+      StripSumScatterConfig::AN_REGION_ALL_TAGGED;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CUT_VARIATION_NSIGMA_STEP = 0.1;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_RATIO_TO_UPSTREAM = kTRUE;
+
   gInstance.STRIP_SUM_SCATTER_CONFIG.REGION_CUT_REDRAW = kTRUE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_RUN_PLOTS = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MIN = 13;
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MAX = 21;
   gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MIN = 0;
@@ -139,13 +109,10 @@ void InitDatasetConfig() {
       {7, {5, 7.5}},   {8, {5, 7.5}},    {9, {4, 6.5}},    {10, {3, 5.5}},
       {11, {2, 4.5}},  {12, {1.2, 3.2}}, {13, {0.5, 1.8}}, {14, {0.5, 1.8}},
       {15, {0.5, 1.8}}};
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 10;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 2;
 
-  // Plotting.
   gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS = kTRUE;
 
-  // Cross section: 87Rb on helium at 555 Torr, the inclusive (a,xn) channel
-  // against ApJ 983:142 Table 2.
   gInstance.CROSS_SECTION_CONFIG.TARGET_GAS = kHELIUM;
   gInstance.CROSS_SECTION_CONFIG.GAS_PRESSURE_TORR = 555.0;
   gInstance.CROSS_SECTION_CONFIG.BEAM_A = 87;
@@ -155,22 +122,9 @@ void InitDatasetConfig() {
   gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MIN = 2;
   gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MAX = 11;
 
-  /// TALYS Hauser-Feshbach for the plot, written by talys-xs. The paper used
-  /// the Atomki-V2 alpha potential, which TALYS 2.2 does not carry; its
-  /// default Avrigeanu (2014) potential, alphaomp 6, tracks it closely at
-  /// these energies (ApJ 983:142 Figure 1) and is the shape the effective
-  /// energies come from. McFadden-Satchler (alphaomp 2) has the most
-  /// different energy dependence of TALYS's eight and is the check on them.
   gInstance.CROSS_SECTION_CONFIG.TALYS_MODELS = {
       {"TALYS HF, Avrigeanu", {"alphaomp 6"}},
       {"TALYS HF, McFadden-Satchler", {"alphaomp 2"}}};
-  /// One channel: the inclusive (a,xn), (a,n) + (a,2n), against ApJ 983:142
-  /// Table 2 -- effective centre-of-mass energy [MeV] with its +/-
-  /// uncertainties (the strip's extent about it, asymmetric because the
-  /// thick-target-yield correction puts E_eff above the midpoint), sigma(a,xn)
-  /// [mb] and the quadrature sum of its statistical and systematic
-  /// uncertainties [mb]. Ten strips, 13.01 down to 8.09 MeV: rows are strips
-  /// 2 to 11 (the published analysis tree has A2..A11).
   gInstance.CROSS_SECTION_CONFIG.CHANNELS = {
       {"an",
        "(#alpha, xn)",
@@ -190,7 +144,6 @@ void InitDatasetConfig() {
        "Foug#grave{e}res et al. (2025)"}};
 }
 
-// Static initializer runs before main
 struct InitGuard {
   InitGuard() { InitDatasetConfig(); }
 };

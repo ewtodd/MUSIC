@@ -102,14 +102,13 @@ struct StripSumScatterConfig {
 
   /// Cut-variation systematic. With CUT_VARIATION on, the fill also counts
   /// the tagged events per strip with each active threshold shifted up and
-  /// down by its step, one threshold at a time: the sigma-scaled ones by
-  /// NSIGMA_STEP sigma, END_STRIP_MAX by END_STEP, TAIL_CLIFF_MAX_FRACTION by
-  /// CLIFF_STEP. The cross section takes, per threshold, the larger of the
-  /// two count changes and adds them in quadrature as the point's
-  /// systematic. The counts travel with the cache.
+  /// down by its step, one threshold at a time: the sigma-scaled ones
+  /// (END_STRIP_NSIGMA among them) by NSIGMA_STEP sigma,
+  /// TAIL_CLIFF_MAX_FRACTION by CLIFF_STEP. The cross section takes, per
+  /// threshold, the larger of the two count changes and adds them in
+  /// quadrature as the point's systematic. The counts travel with the cache.
   Bool_t CUT_VARIATION;
   Double_t CUT_VARIATION_NSIGMA_STEP;
-  Double_t CUT_VARIATION_END_STEP;
   Double_t CUT_VARIATION_CLIFF_STEP;
 
   /// Normalize the partial dE sum on y axis by the event's own mean deposit
@@ -121,8 +120,13 @@ struct StripSumScatterConfig {
   /// beam spread of that strip (StripSumScatter::StripSigma).
   Double_t REAC_JUMP_NSIGMA;
 
-  // Maximum value allowed at the final strip
-  Double_t END_STRIP_MAX;
+  /// The end strip (17, or 16 with REQUIRE_STRIP_16_BELOW_BEAM or
+  /// IGNORE_STRIP_17) must read below the beam there by this many sigma of
+  /// its measured spread: total[end] < mean[end] - n x StripSigma(end). A
+  /// stopped or stopping residue is low there, the beam and a still-flying
+  /// elastic are not. Always applied; 0 is "below the beam mean", a negative
+  /// value allows that much above it.
+  Double_t END_STRIP_NSIGMA;
 
   /// Event-level cuts before any reaction is asked about, in sigma of each
   /// strip's measured beam spread (StripSumScatter::StripSigma). An event is
@@ -218,8 +222,9 @@ struct StripSumScatterConfig {
   Bool_t SKIP_SAVGOL_PLOTS;
 
   /// Skip the per-run beam-gate figures, the only output under
-  /// `plots/strip_sum_scatter/run<N>`, so no run folders are created. The
-  /// gates themselves are still fitted and applied.
+  /// `plots/strip_sum_scatter/<group>` (a run on SOLARIS, a subfile on
+  /// CoMPASS), so no such folders are created. The gates themselves are still
+  /// fitted and applied.
   Bool_t SKIP_RUN_PLOTS;
 
   /// Also draw the per-region mean traces with RMS bands (the
@@ -227,6 +232,10 @@ struct StripSumScatterConfig {
   /// default: the overlay already carries the beam mean and its measured
   /// sigma band.
   Bool_t PLOT_REGION_MEAN_TRACES;
+  /// Also draw the trace overlays in raw ADC (the *_adc figures) next to the
+  /// calibrated ones, in strip-sum-scatter and in compute-regions' all-tagged
+  /// overlays alike. Off by default.
+  Bool_t PLOT_ADC_TRACES;
   Bool_t REQUIRE_STRIP_16_BELOW_BEAM;
 
   void SetDefaults();

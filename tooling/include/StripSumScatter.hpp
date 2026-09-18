@@ -69,7 +69,7 @@ enum TagCut {
   kCutTailRise,  ///< A rise in the tail (TAIL_RISE_NSIGMA).
   kCutRerise,    ///< Back at the beam, then above it again (TAIL_RERISE_*).
   kCutPostAbove, ///< The excess did not persist (POST_ABOVE_*).
-  kCutEndStrip,  ///< The end strip not below END_STRIP_MAX.
+  kCutEndStrip,  ///< The end strip not END_STRIP_NSIGMA below the beam.
   kCutCliff,     ///< The fall happened in the last step (TAIL_CLIFF_*).
   kNTagCuts
 };
@@ -96,7 +96,7 @@ struct TagThresholds {
   Double_t tail_rerise_nsigma = 0.0;
   Double_t post_above_nsigma = 0.0;
   Int_t post_above_strips = 0;
-  Double_t end_strip_max = 0.0;
+  Double_t end_strip_nsigma = 0.0;
   Double_t cliff_max = 0.0;
 };
 
@@ -320,9 +320,10 @@ public:
    *        reaction strip, against the beam band.
    *
    * The all-tagged mode's counterpart of the interactive overlay: no region
-   * cut, every event tagged at the strip is drawn, in calibrated units and in
-   * raw ADC (and the mean traces when `PLOT_REGION_MEAN_TRACES`). Needs the
-   * reservoir, so call after Prepare().
+   * cut, and every event tagged at the strip is drawn with no cap (the
+   * `TRACES_PER_CLASS` cap applies to the beam sample only), in calibrated
+   * units, in raw ADC when `PLOT_ADC_TRACES`, and as mean traces when
+   * `PLOT_REGION_MEAN_TRACES`. Needs the reservoir, so call after Prepare().
    *
    * @param subdir Plot subdirectory the figures go to.
    */
@@ -425,8 +426,7 @@ private:
   /// tagged event, so a plane or axes change needs only this and not a
   /// 25-minute pass over the events files.
   void ReprojectFromReservoir();
-  void FillScatters(const std::vector<Int_t> &runOrder,
-                    std::map<Int_t, TChain *> &chains);
+  void FillScatters(const FileSet::GateGroups &groups);
 
   void PlotScatters();
 
@@ -489,12 +489,16 @@ private:
                           const std::vector<TGraph *> &aa,
                           const std::vector<TGraph *> &an, Double_t &y_min,
                           Double_t &y_max);
+  /// One gate group (FileSet::GateGroups): a run's chunks on SOLARIS, one
+  /// subfile on CoMPASS. `label` names it in logs and plot folders.
   static SingleRunFitResult
-  FitRunGates(Int_t run, TChain *chain,
+  FitRunGates(Int_t key, const TString &label, TChain *chain,
               const std::vector<GateSpec> &activeGates);
-  static SingleRunFillResult FillRunScatters(
-      Int_t run, TChain *chain, const std::vector<GateSpec> &activeGates,
-      const std::vector<BeamFit2D> &runGates, const BeamEllipses &runBeam);
+  static SingleRunFillResult
+  FillRunScatters(Int_t key, const TString &label, TChain *chain,
+                  const std::vector<GateSpec> &activeGates,
+                  const std::vector<BeamFit2D> &runGates,
+                  const BeamEllipses &runBeam);
   static TCutG *PromptCut(TCanvas *c, const char *name, const char *label);
   static void SaveRegionCuts(Int_t reac, TCutG *cut_an, TCutG *cut_aa);
   static TCutG *LoadRegionCut(const char *name, Int_t reac);
@@ -521,8 +525,7 @@ private:
 
   static TString
   SimFingerprint(const std::vector<RemixSim::SimFileSpec> &specs);
-  static TString BuildFingerprint(const std::vector<Int_t> &run_order,
-                                  std::map<Int_t, TChain *> &chains);
+  static TString BuildFingerprint(const FileSet::GateGroups &groups);
   static void YBounds(Double_t *y_lo, Double_t *y_hi);
   static TString PrettyLabel(const TString &tag);
 

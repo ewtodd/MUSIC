@@ -31,8 +31,9 @@ namespace PulseHistory {
 
 /// Flag set on a hit whose correction was clamped rather than applied in full.
 const UInt_t kFlagClamped = 0x2000;
-/// Bins in the kernel, spanning #kLogLo to #kLogHi in log10 of dt.
-const Int_t kNBins = 15;
+/// Bins in the kernel, spanning #kLogLo to #kLogHi in log10 of dt: twelve
+/// per decade, 0.083 dex each.
+const Int_t kNBins = 30;
 const Double_t kLogLo = -6.0; ///< Lowest dt bin edge: log10 of 1 us in seconds.
 const Double_t kLogHi =
     -3.5; ///< Highest dt bin edge: log10 of 316 us in seconds.

@@ -83,12 +83,11 @@ void StripSumScatterConfig::SetDefaults() {
   TAIL_CLIFF_MAX_FRACTION = 0.0;
   CUT_VARIATION = kTRUE;
   CUT_VARIATION_NSIGMA_STEP = 0.5;
-  CUT_VARIATION_END_STEP = 0.05;
   CUT_VARIATION_CLIFF_STEP = 0.1;
   Y_RATIO_TO_UPSTREAM = kTRUE;
 
   REAC_JUMP_NSIGMA = 1.0;
-  END_STRIP_MAX = 1.0;
+  END_STRIP_NSIGMA = 0.0; // below the beam mean
 
   PILEUP_NSIGMA = 8.0; // ~1.3 at the 87Rb spread, the old absolute value
   PILEUP_MIN_STRIPS = 1;
@@ -142,6 +141,7 @@ void StripSumScatterConfig::SetDefaults() {
   SKIP_SAVGOL_PLOTS = kFALSE;
   SKIP_RUN_PLOTS = kFALSE;
   PLOT_REGION_MEAN_TRACES = kFALSE;
+  PLOT_ADC_TRACES = kFALSE;
   REQUIRE_STRIP_16_BELOW_BEAM = kFALSE;
 }
 

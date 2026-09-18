@@ -322,6 +322,33 @@ FileSet::GroupEventsByRun(std::vector<Int_t> &run_order) {
   return chain_by_run;
 }
 
+FileSet::GateGroups FileSet::GroupEventsForGating() {
+  GateGroups g;
+  std::vector<FileSpec> all_specs = BuildProcessedFileSpecs();
+  const Bool_t per_file = !Constants::cfg.USE_SOLARIS_DATA;
+  Int_t next_key = 0;
+  for (Int_t i = 0; i < Int_t(all_specs.size()); i++) {
+    const FileSpec &s = all_specs[i];
+    const TString name = EventsName(s);
+    TString full = IO::GetRootFilesBaseDir() + "/" + name + ".root";
+    if (gSystem->AccessPathName(full)) {
+      std::cerr << "Missing events file: " << full << std::endl;
+      continue;
+    }
+    // CoMPASS: a fresh key per file; SOLARIS: the run number, shared by its
+    // chunks.
+    const Int_t key = per_file ? next_key++ : s.run;
+    if (g.chain.find(key) == g.chain.end()) {
+      g.chain[key] = new TChain("events");
+      g.order.push_back(key);
+      g.label[key] = per_file ? FileLabel(s) : TString(Form("run%d", s.run));
+    }
+    g.chain[key]->Add(full);
+    g.key_of[name] = key;
+  }
+  return g;
+}
+
 Long64_t FileSet::SampleStride(Long64_t n_total, Long64_t max_points) {
   Long64_t n_visit =
       (max_points > 0 && n_total > max_points) ? max_points : n_total;
