@@ -345,6 +345,11 @@ struct CrossSectionConfig {
   /// enters the measured points.
   Bool_t EFFECTIVE_ENERGY;
 
+  /// Stamp the cross-section figures "PRELIMINARY" (large, faint, across the
+  /// plot area) so a figure that leaves the analysis before its systematics
+  /// are settled says so on its face.
+  Bool_t PRELIMINARY;
+
   /// Epochs whose runs feed the cross-section chain (strip-sum-scatter,
   /// compute-regions, cross-section), by name. Those binaries run with no
   /// active epoch, so this is what their run list is built from. Empty: every

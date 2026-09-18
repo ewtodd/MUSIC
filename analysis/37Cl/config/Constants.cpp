@@ -136,6 +136,7 @@ void InitDatasetConfig() {
   gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MIN = 2;
   gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MAX = 8;
   gInstance.CROSS_SECTION_CONFIG.EFFECTIVE_ENERGY = kFALSE;
+  gInstance.CROSS_SECTION_CONFIG.PRELIMINARY = kTRUE;
   gInstance.CROSS_SECTION_CONFIG.EPOCHS = {"late"};
   gInstance.CROSS_SECTION_CONFIG.CHANNELS = {
       {"an", "(#alpha, n)", {"n"}, {}, ""}};

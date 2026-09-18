@@ -16,6 +16,7 @@
 #include <TH1F.h>
 #include <TH2F.h>
 #include <TKey.h>
+#include <TLatex.h>
 #include <TLegend.h>
 #include <TMath.h>
 #include <TNamed.h>
@@ -674,6 +675,18 @@ void CrossSection::Draw(const std::vector<const ChannelResult *> &rs,
   for (Int_t k = 0; k < Int_t(drawn.size()); k++)
     leg->AddEntry(drawn[k].first, drawn[k].second, "l");
   leg->Draw();
+  // The stamp: red, bold, in the top-left corner of the plot area (just
+  // inside the frame's margins), drawn last so it sits over the frame.
+  if (Constants::cfg.CROSS_SECTION_CONFIG.PRELIMINARY) {
+    TLatex *stamp = new TLatex();
+    stamp->SetNDC();
+    stamp->SetTextAlign(13); // left, top
+    stamp->SetTextSize(0.05);
+    stamp->SetTextFont(62);
+    stamp->SetTextColor(kRed + 1);
+    stamp->DrawLatex(c->GetLeftMargin() + 0.02, 1.0 - c->GetTopMargin() - 0.02,
+                     "PRELIMINARY");
+  }
   PlottingUtils::SaveFigure(c, name, "cross_section", PlotSaveOptions::kLOG);
   delete c;
 }

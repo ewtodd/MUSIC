@@ -57,6 +57,7 @@ void CrossSectionConfig::SetDefaults() {
   XS_STRIP_MIN = 3;
   XS_STRIP_MAX = 15;
   EFFECTIVE_ENERGY = kTRUE;
+  PRELIMINARY = kFALSE;
   EPOCHS.clear();
 
   CHANNELS.clear();
