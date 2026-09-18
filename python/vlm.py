@@ -448,6 +448,7 @@ class EventClassifier:
               f"({config.VLM_DTYPE}, {config.VLM_DEVICE})")
         self.model = self._load_model()
         self.model.eval()
+        self._float_dtype = None
         self._logits_kwarg = self._resolve_logits_kwarg()
         if self.builder.n_image_tokens < 0:
             self.builder.n_image_tokens = self.builder.measure_budget(
@@ -550,6 +551,28 @@ class EventClassifier:
                 last = exc
         raise RuntimeError(
             f"no auto class could load {self.model_id}: {last}")
+
+    def _to_model(self, inputs):
+        """Move processor output to the model's device, with pixel_values in
+        the model's floating dtype.
+
+        The processor hands back float32 pixels. The E-series vision tower
+        casts them itself on the way into its patch convolution; the 12B
+        Unified variant does not -- its first op is a LayerNorm straight on
+        the pixels, which raises on float32 input against bf16 weights. The
+        cast is harmless where it was already happening and required where
+        it was not. The dtype is read off the first floating parameter
+        rather than model.dtype, so a quantized load (int8 weights, bf16
+        norms) still resolves to the right one."""
+        if self._float_dtype is None:
+            self._float_dtype = next(
+                p.dtype for p in self.model.parameters()
+                if p.is_floating_point())
+        inputs = inputs.to(self.model.device)
+        if "pixel_values" in inputs:
+            inputs["pixel_values"] = inputs["pixel_values"].to(
+                self._float_dtype)
+        return inputs
 
     def _report_timing(self):
         """Where the wall clock actually goes, as a share of the three
@@ -658,7 +681,7 @@ class EventClassifier:
         torch = self._torch
         probe = np.zeros((batch, config.VLM_IMG_H, config.VLM_IMG_W, 3),
                          dtype=np.uint8)
-        inputs = self.builder.build_inputs(probe).to(self.model.device)
+        inputs = self._to_model(self.builder.build_inputs(probe))
         runs = self._image_token_runs(inputs["input_ids"][0])
         if not runs:
             print("  prefix cache: no image tokens found, staying uncached")
@@ -770,7 +793,7 @@ class EventClassifier:
         torch = self._torch
         timed = bool(config.VLM_TIMING_EVERY)
         t0 = time.perf_counter() if timed else 0.0
-        inputs = self.builder.build_inputs(images).to(self.model.device)
+        inputs = self._to_model(self.builder.build_inputs(images))
         if timed:
             torch.cuda.synchronize()
             self._timing["processor"] += time.perf_counter() - t0

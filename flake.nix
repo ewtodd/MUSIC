@@ -72,6 +72,21 @@
                           "setuptools"
                         ];
                       });
+                      # The 12B rung of the VLM ladder is the gemma4_unified
+                      # architecture, which transformers gained in 5.10.0;
+                      # this pin carries 5.5.4. 5.13.1 is the newest release
+                      # whose dependency bounds the pinned tokenizers
+                      # (0.22.2), safetensors (0.8.0) and huggingface-hub
+                      # (1.16) still satisfy -- 5.14+ wants tokenizers 0.23.
+                      transformers = python-prev.transformers.overridePythonAttrs (old: rec {
+                        version = "5.13.1";
+                        src = final.fetchFromGitHub {
+                          owner = "huggingface";
+                          repo = "transformers";
+                          tag = "v${version}";
+                          hash = "sha256-7khrrnATvSl7Wo8yvsZ2Shyzv6saXUkcs8lvF23Fbe4=";
+                        };
+                      });
                       # transformers and accelerate depend on `torch`, while
                       # the shell below asks for `torch-bin`. Without this,
                       # buildEnv is handed two different torch-2.12.0 store
@@ -79,6 +94,45 @@
                       # Aliasing collapses the set onto one derivation.
                       torch = python-final.torch-bin;
                       torchvision = python-final.torchvision-bin;
+                      # bitsandbytes reads its CUDA settings off `torch`
+                      # (cudaSupport ? torch.cudaSupport), which the wheel
+                      # build above does not carry. `.override` on the stock
+                      # package is too late -- the python builder's disabled
+                      # check forces the derivation, and with it that
+                      # default, before the override lands -- so the file is
+                      # called directly with the settings given outright.
+                      # CUDA 13 moved the crt/ headers (crt/host_config.h,
+                      # crt/host_defines.h) out of cuda_nvcc into cuda_crt,
+                      # which the derivation knows nothing about: nvcc's
+                      # compiler test wants them via CUDA_HOME, and the
+                      # host-side pythonInterface.cpp via the include path,
+                      # so cuda_crt goes into both. The
+                      # kernels compile for the 8.9 capability set at the
+                      # top; doCheck is off because the test suite wants a
+                      # GPU the sandbox does not have.
+                      bitsandbytes =
+                        (python-final.callPackage
+                          (nixpkgs + "/pkgs/development/python-modules/bitsandbytes") {
+                            cudaSupport = true;
+                            cudaPackages = final.cudaPackages;
+                            rocmSupport = false;
+                          }).overridePythonAttrs (old:
+                          let
+                            cudaHome = final.symlinkJoin {
+                              name = "cuda-native-redist-crt";
+                              paths = [ old.env.CUDA_HOME final.cudaPackages.cuda_crt ];
+                            };
+                          in
+                          {
+                            doCheck = false;
+                            buildInputs = (old.buildInputs or [ ]) ++ [
+                              final.cudaPackages.cuda_crt
+                            ];
+                            env = old.env // {
+                              CUDA_HOME = cudaHome;
+                              NVCC_PREPEND_FLAGS = "-I${cudaHome}/include -L${cudaHome}/lib";
+                            };
+                          });
                     })
                   ];
                 })
@@ -144,6 +198,9 @@
                   # AutoProcessor for gemma4 instantiates Gemma4VideoProcessor
                   # even for a still image, and that hard-requires torchvision.
                   torchvision
+                  # 8-bit / 4-bit weights for the 12B rung of the ladder
+                  # (config.VLM_LOAD_IN); bf16 12B does not fit a 24 GB card.
+                  bitsandbytes
                 ]
               ))
             ]
