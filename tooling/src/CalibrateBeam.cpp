@@ -746,7 +746,7 @@ Double_t RidgeShortAnchor(const std::vector<Float_t> &v_short,
   return -inter / slope;
 }
 
-/// One plot per strip under <plot_subdir>/ridge, named ridge_s<NN>: the
+/// One plot per strip under `<plot_subdir>/ridge`, named `ridge_s<NN>`: the
 /// beam-gated long-vs-short plane, the slice medians the fit was actually given
 /// (black), and the fitted line (violet). Drawn for every strip, including the
 /// ones whose fit was rejected, so a bad ridge can be seen rather than inferred

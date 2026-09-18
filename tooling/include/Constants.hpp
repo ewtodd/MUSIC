@@ -218,7 +218,7 @@ struct StripSumScatterConfig {
   Bool_t SKIP_SAVGOL_PLOTS;
 
   /// Skip the per-run beam-gate figures, the only output under
-  /// plots/strip_sum_scatter/run<N>, so no run folders are created. The
+  /// `plots/strip_sum_scatter/run<N>`, so no run folders are created. The
   /// gates themselves are still fitted and applied.
   Bool_t SKIP_RUN_PLOTS;
 
@@ -242,7 +242,7 @@ struct StripSumScatterConfig {
  * being counted.
  */
 struct CrossSectionChannel {
-  /// Names the region cut (region_<name>), the tag-efficiency records and the
+  /// Names the region cut (`region_<name>`), the tag-efficiency records and the
   /// output figure. "an", "ap".
   TString name;
   /// The reaction as it appears in the plot title after the dataset name,
@@ -355,9 +355,9 @@ struct CrossSectionConfig {
 
   /// The reaction channels measured on this dataset. Everything up to the
   /// tag is shared -- a jump is a jump whatever the residue -- and everything
-  /// after it is per channel: the region cut (region_<name>), the count in it,
-  /// the tag-efficiency record, the TALYS curve, the label, the published
-  /// table, the figure (cross_section_<name>).
+  /// after it is per channel: the region cut (`region_<name>`), the count in
+  /// it, the tag-efficiency record, the TALYS curve, the label, the published
+  /// table, the figure (`cross_section_<name>`).
   std::vector<CrossSectionChannel> CHANNELS;
 
   void SetDefaults();
