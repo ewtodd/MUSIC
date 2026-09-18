@@ -5,6 +5,7 @@
 #include <Rtypes.h>
 #include <TString.h>
 #include <TSystem.h>
+#include <TTree.h>
 #include <algorithm>
 #include <fstream>
 #include <iostream>
@@ -79,6 +80,38 @@ public:
   /// @brief Whether a tag denotes an energy-resolution simulation.
   /// @param tag Simulation tag.
   static Bool_t IsEresTag(const TString &tag);
+
+  /**
+   * @brief One entry of a simulation's `events_MeV` tree.
+   *
+   * The layout is the experimental events tree's: strips 1-16 are read at a
+   * left and a right end, held in arrays of 16 indexed by `strip - 1`; strips
+   * 0 and 17 are unsegmented and each a single value. Energies are MeV.
+   * Left() and Right() give the 18-strip view the analysis works in, with the
+   * unsegmented strips counted wholly on the left and zero on the right.
+   */
+  struct Event {
+    Float_t left[16];  ///< Left end of strips 1-16, index `strip - 1`.
+    Float_t right[16]; ///< Right end of strips 1-16, index `strip - 1`.
+    Float_t strip0;    ///< Strip 0, unsegmented.
+    Float_t strip17;   ///< Strip 17, unsegmented.
+
+    Event();
+
+    /**
+     * @brief Bind to an `events_MeV` tree and set up the branch addresses.
+     * @param t Tree to read. Borrowed; must outlive this event.
+     * @return `kTRUE` if the expected branches were found.
+     */
+    Bool_t Attach(TTree *t);
+
+    /// @brief Left end of strip `s` (1-16), or the whole of strip 0 or 17.
+    Double_t Left(Int_t s) const;
+    /// @brief Right end of strip `s` (1-16); zero for strips 0 and 17.
+    Double_t Right(Int_t s) const;
+    /// @brief The strip's deposit, `Left(s) + Right(s)`.
+    Double_t Total(Int_t s) const { return Left(s) + Right(s); }
+  };
 
 private:
   static Bool_t SimFileSpecTagLess(const SimFileSpec &a, const SimFileSpec &b);

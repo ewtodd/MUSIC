@@ -10,17 +10,14 @@ static DatasetConfig gInstance;
 const DatasetConfig &cfg = gInstance;
 
 void InitDatasetConfig() {
-  // Data source: SOLARIS raw files, split into time chunks before building.
   gInstance.USE_SOLARIS_DATA = kTRUE;
   gInstance.SOL_BASE_DIR = "/labdata/MUSIC/New-37Cl/data_raw/";
   gInstance.SOL_SPLIT_DIR = "/labdata/MUSIC/New-37Cl/data_split/";
   gInstance.SOL_N_SPLIT_WORKERS = 32;
   gInstance.SOL_SPLIT_CHUNK_SECONDS = 120;
   gInstance.COMPASS_BASE_DIR = "/labdata/MUSIC/37Cl/";
-  gInstance.N_CHUNKS = -1; // all
-  gInstance.EPOCHS.push_back(MakeEpoch("late", RunRange(97, 137)));
+  gInstance.N_CHUNKS = -1;
 
-  // Detector readout: one 64-channel board, channel map, per-channel limits.
   gInstance.N_BOARDS = 1;
   gInstance.N_CHANNELS = 64;
   gInstance.HAS_CATHODE = kFALSE;
@@ -49,90 +46,87 @@ void InitDatasetConfig() {
   gInstance.STRIP_DE_MIN_NORMED = 0;
   gInstance.STRIP_DE_MAX_NORMED = 4;
 
-  // Event building: seeded on the grid, one hit per channel per event, with
-  // the long-end pole-zero undershoot of previous pulses removed per subfile.
   gInstance.REFERENCE_CHANNEL = "Grid";
   gInstance.REFERENCE_CHANNEL_MIN_ADC = 900;
   gInstance.REFERENCE_CHANNEL_MAX_ADC = 3600;
   gInstance.EVENT_TIME_WINDOW_US = 5.0;
   gInstance.DEDUP_STRATEGY = kLARGEST_ENERGY;
   gInstance.PULSE_HISTORY_CORRECTION = kTRUE;
+
+  gInstance.PULSE_HISTORY_GROUPS.long_left.enabled = kTRUE;
+  gInstance.PULSE_HISTORY_GROUPS.long_left.kernel = kPulseHistoryBinned;
+  gInstance.PULSE_HISTORY_GROUPS.long_left.tau_us = 25;
+  gInstance.PULSE_HISTORY_GROUPS.long_right.enabled = kTRUE;
+  gInstance.PULSE_HISTORY_GROUPS.long_right.kernel = kPulseHistoryBinned;
+  gInstance.PULSE_HISTORY_GROUPS.long_right.tau_us = 10;
+  gInstance.PULSE_HISTORY_GROUPS.short_left.enabled = kTRUE;
+  gInstance.PULSE_HISTORY_GROUPS.short_left.kernel = kPulseHistoryForm;
+  gInstance.PULSE_HISTORY_GROUPS.short_left.tau_us = 25;
+
   gInstance.PULSE_HISTORY_APPLY_MAX_US = 316.0;
+  gInstance.PULSE_HISTORY_AMP_BINS = 2;
   gInstance.MAX_FUSED_WORKERS = 16;
-  gInstance.SKIP_EXISTING = kTRUE;
+  gInstance.SKIP_EXISTING = kFALSE;
   gInstance.SAVE_PLOTS = kFALSE;
-  gInstance.SKIP_ERES_TOML = kTRUE;
   gInstance.SAVE_SAMPLE_TRACES = 10;
 
-  // Beam calibration and gating. Strips 0 and 17 are ignored throughout, so
-  // the exit gate and the end-strip condition read strip 16.
-  gInstance.IGNORE_STRIP_0 = kTRUE;
+  gInstance.IGNORE_STRIP_0 = kFALSE;
   gInstance.IGNORE_STRIP_17 = kTRUE;
-  gInstance.BEAM_GATE_NSIGMA_X = 3;
-  gInstance.BEAM_GATE_NSIGMA_Y = 3;
+  gInstance.BEAM_GATE_NSIGMA_X = 5;
+  gInstance.BEAM_GATE_NSIGMA_Y = 5;
   gInstance.SIM_BEAM_FILE = "traces_37Cl_beam.root";
 
-  // Strip-sum scatter: event-level cuts before any reaction is asked about.
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_X = 0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_Y = 1;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X = 5.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y = 5.0;
 
-  /// The tag, in the order the conditions are applied. Everything in sigma
-  /// resolves through the noise measured on the beam (jump sigma ~0.075 per
-  /// step, strip sigma ~0.065-0.073 at strips 15-16). The 40K residue stops
-  /// in strips 15-16, so the falling-tail check starts at each trace's own
-  /// post-window peak.
+  gInstance.STRIP_SUM_SCATTER_CONFIG.PILEUP_NSIGMA = 8.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.PILEUP_MIN_STRIPS = 2;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.NOISE_NSIGMA = 12.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.NOISE_MIN_STRIPS = 2;
+
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN = 2;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX = 10;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_BEAM_UPSTREAM_OF_REAC = kTRUE;
-  // Post-reaction smoothness at the shared 2.5 sigma, every step to the end.
-  // Persistence: 3 strips after the reaction each more than 2 sigma of their
-  // spread above the beam. The 40K excess is ~0.25, about 4 sigma.
-  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_ABOVE_NSIGMA = 2.0;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_ABOVE_STRIPS = 3;
-  /// Falling tail after the peak: from the largest deposit in the post window
-  /// to strip 16 no rise above 2 sigma of a step (0.15). A residue peaks once
-  /// and declines to its stop; the tags that leaked at reaction strip 6 fell
-  /// back to the beam and rose again at strips 12-14 before dropping at 16.
-  gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_RISE_NSIGMA = 3.0;
-  /// No return: after the peak, once back at or below the beam the trace must
-  /// not rise above 2 sigma of its spread over the beam again. The tags that
-  /// leaked at reaction strip 6 returned to 1.0 at strips 10-11 and sat at
-  /// 1.15-1.25 over strips 12-14, a rise too slow for the per-step ceiling.
-  gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_RETURN_NSIGMA = 2.0;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_RERISE_NSIGMA = 2.0;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_STRIP_16_BELOW_BEAM = kTRUE;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.END_STRIP_MAX = 1.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.BEAM_UPSTREAM_NSIGMA = 2.0;
 
-  /// The plane the regions are fitted in: x sums strips 1-13, y the four
-  /// strips after the reaction, capped at strip 16. A change here reprojects
-  /// the cache from the reservoir rather than refilling.
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REAC_JUMP_NSIGMA = 2.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_ABOVE_NSIGMA = 1.5;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_ABOVE_STRIPS = 3;
+
+  gInstance.STRIP_SUM_SCATTER_CONFIG.SMOOTHNESS_NSIGMA = 0.0;
+
+  gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_RISE_NSIGMA = 0.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_RETURN_NSIGMA = 2.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_RERISE_NSIGMA = 4.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_STRIP_16_BELOW_BEAM = kTRUE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.END_STRIP_MAX = 0.80;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_CLIFF_MAX_FRACTION = 0.5;
+
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_LO = 1;
   gInstance.STRIP_SUM_SCATTER_CONFIG.X_HI = 13;
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_TRIGGER_SUM_STRIPS = 4;
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_WINDOW_LAST_STRIP = 16;
-  // Per-event ratio normalisation of y left off: it moves every region.
-  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_RATIO_TO_UPSTREAM = kFALSE;
 
-  // Regions and display.
+  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_RATIO_TO_UPSTREAM = kTRUE;
+
   gInstance.STRIP_SUM_SCATTER_CONFIG.AN_REGION_MODE =
       StripSumScatterConfig::AN_REGION_ALL_TAGGED;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.REGION_CUT_REDRAW = kTRUE;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MIN = 11;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MAX = 15;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MIN = 2;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MAX = 10;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 6;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REGION_CUT_REDRAW = kFALSE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MIN = 10;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.X_DISPLAY_MAX = 18;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MIN = 3;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MAX = 7;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 3;
 
-  // Plotting and workers.
   gInstance.STRIP_SUM_SCATTER_CONFIG.MAX_STRIP_SUM_WORKERS = 8;
   gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_RUN_PLOTS = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.RERUN_SIM = kFALSE;
 
-  // Cross section: 37Cl on helium at 400 Torr, the (a,n) channel only, with
-  // TALYS Hauser-Feshbach curves for comparison.
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CUT_VARIATION_NSIGMA_STEP = 0.2;
+
   gInstance.CROSS_SECTION_CONFIG.TARGET_GAS = kHELIUM;
   gInstance.CROSS_SECTION_CONFIG.GAS_PRESSURE_TORR = 400.0;
   gInstance.CROSS_SECTION_CONFIG.BEAM_A = 37;
@@ -146,11 +140,11 @@ void InitDatasetConfig() {
   gInstance.CROSS_SECTION_CONFIG.CHANNELS = {
       {"an", "(#alpha, n)", {"n"}, {}, ""}};
   gInstance.CROSS_SECTION_CONFIG.TALYS_MODELS = {
-      {"TALYS HF, Avrigeanu", {"alphaomp 6"}},
       {"TALYS HF, McFadden-Satchler", {"alphaomp 2"}}};
+
+  gInstance.EPOCHS.push_back(MakeEpoch("late", RunRange(97, 137)));
 }
 
-// Static initializer runs before main
 struct InitGuard {
   InitGuard() { InitDatasetConfig(); }
 };

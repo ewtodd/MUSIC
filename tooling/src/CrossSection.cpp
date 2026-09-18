@@ -420,16 +420,50 @@ Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
   const Double_t n_raw = CountInCut(h, cut, 1.0);
   if (C.AN_REGION_MODE == StripSumScatterConfig::AN_REGION_ALL_TAGGED) {
     // Every tagged event is the reaction: the count is what the tag left,
-    // with no enclosed-fraction correction and no region systematic.
+    // with no enclosed-fraction correction and no region systematic. The
+    // systematic is the cut variation: per threshold the larger change of
+    // the count under its up and down shift, added in quadrature.
     pt.n_reac = n_raw;
     pt.sigma = pt.n_reac / norm;
     pt.stat = pt.n_reac > 0.0 ? pt.sigma / std::sqrt(pt.n_reac) : 0.0;
-    pt.sys = 0.0;
+    Double_t var2 = 0.0;
+    TString detail;
+    Bool_t at_ok = kTRUE;
+    const Long64_t n_nom =
+        ReadCount(*cache_, Form("n_tagged_r%d", reac), at_ok);
+    if (TNamed *vn = static_cast<TNamed *>(cache_->Get("cut_variants"))) {
+      // Names come in "+" / "-" pairs per threshold.
+      std::map<TString, Double_t> worst;
+      TString names = vn->GetTitle(), tok;
+      Int_t from = 0;
+      while (names.Tokenize(tok, from, ",")) {
+        if (tok.IsNull())
+          continue;
+        Bool_t ok = kTRUE;
+        const Long64_t n_v =
+            ReadCount(*cache_, Form("n_tagged_r%d_%s", reac, tok.Data()), ok);
+        if (!ok)
+          continue;
+        const TString base = tok(0, tok.Length() - 1);
+        const Double_t d = std::fabs(Double_t(n_v - n_nom));
+        if (d > worst[base])
+          worst[base] = d;
+      }
+      for (std::map<TString, Double_t>::const_iterator it = worst.begin();
+           it != worst.end(); ++it) {
+        var2 += it->second * it->second;
+        detail += Form(" %s %.0f", it->first.Data(), it->second);
+      }
+    }
+    pt.sys = std::sqrt(var2) / norm;
     std::cout << Form("   %2d    [%5.2f, %5.2f]      %6.2f   %6.0f  %9.0f   "
-                      "%7.1f +- %.1f (%.1f stat; all tagged events counted, "
-                      "no region systematic)",
+                      "%7.1f +- %.1f (%.1f stat, %.1f cut variation; all "
+                      "tagged events counted%s%s)",
                       reac, pt.e_in, pt.e_out, pt.e_eff, pt.n_reac, pt.n_denom,
-                      pt.sigma, pt.Err(), pt.stat)
+                      pt.sigma, pt.Err(), pt.stat, pt.sys,
+                      detail.IsNull() ? "; no variation counts in the cache"
+                                      : "; per threshold:",
+                      detail.Data())
               << std::endl;
     delete cut;
     return kTRUE;

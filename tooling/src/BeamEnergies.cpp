@@ -1,6 +1,7 @@
 #include "BeamEnergies.hpp"
 #include "Constants.hpp"
 #include "Paths.hpp"
+#include "RemixSim.hpp"
 #include <TFile.h>
 #include <TLeaf.h>
 #include <TTree.h>
@@ -20,11 +21,9 @@ Bool_t Profile(const TString &path, Double_t *dE, Double_t &e_strip0) {
   TTree *mc = static_cast<TTree *>(f.Get("MC"));
   if (!t || !mc)
     return kFALSE;
-  // Remix-MUSIC-Sim's own layout, not the events tree's: 18 slots per side,
-  // with the unsegmented strips 0 and 17 parked in the left array.
-  Float_t left[18], right[18];
-  t->SetBranchAddress("Left_0_17_dE", left);
-  t->SetBranchAddress("RightdE", right);
+  RemixSim::Event e;
+  if (!e.Attach(t))
+    return kFALSE;
   for (Int_t s = 0; s < 18; s++)
     dE[s] = 0.0;
   const Long64_t n = t->GetEntries();
@@ -33,7 +32,7 @@ Bool_t Profile(const TString &path, Double_t *dE, Double_t &e_strip0) {
   for (Long64_t i = 0; i < n; i++) {
     t->GetEntry(i);
     for (Int_t s = 0; s < 18; s++)
-      dE[s] += left[s] + right[s];
+      dE[s] += e.Total(s);
   }
   for (Int_t s = 0; s < 18; s++)
     dE[s] /= Double_t(n);

@@ -8,7 +8,7 @@ CLAUDE.md
 QWEN.md 
 AGENTS.md
 .qwen 
-.claude
+.claude/*
 .claude/settings.json
 secrets/settings.json
 settings.json

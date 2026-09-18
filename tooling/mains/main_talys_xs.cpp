@@ -8,7 +8,10 @@
 /// channel TALYS produced as a TGraph of E_cm [MeV] vs sigma [mb], named by
 /// TALYS's own file stem (rp039090 for Z=39, A=90), into one directory per
 /// model (m0, m1, ...) of root_files/talys/talys_xs.root, with the model's
-/// label and exact input as TNameds. Which channels make up (a,xn) is the
+/// label and exact input as TNameds. Every input carries the dataset's
+/// shared settings (CrossSectionConfig::TALYS_COMMON_KEYWORDS: level
+/// density, accuracy, width fluctuations, binning) before the model's own
+/// keywords. Which channels make up (a,xn) is the
 /// analysis's business, so cross-section sums them itself. Like srim-cache in
 /// the simulator, this is the one place the external code is driven;
 /// everything downstream only reads the file.
@@ -84,6 +87,14 @@ Int_t RunModel(const TalysModel &model, const TString &work,
   input += "element " + X.BEAM_ELEMENT + "\n";
   input += Form("mass %d\n", X.BEAM_A);
   input += "energy energies\n";
+  // The shared settings first, then the model's own, which win where they
+  // repeat one (TALYS keeps the last value read).
+  if (!X.TALYS_COMMON_KEYWORDS.empty())
+    input +=
+        "#\n# common settings (CROSS_SECTION_CONFIG.TALYS_COMMON_KEYWORDS)\n";
+  for (Int_t k = 0; k < Int_t(X.TALYS_COMMON_KEYWORDS.size()); k++)
+    input += X.TALYS_COMMON_KEYWORDS[k] + "\n";
+  input += "#\n# model: " + model.label + "\n";
   for (Int_t k = 0; k < Int_t(model.keywords.size()); k++)
     input += model.keywords[k] + "\n";
   {

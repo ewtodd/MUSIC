@@ -1,9 +1,14 @@
 /// compute-regions: fit each reaction strip's (a,n) and (a,a') regions from the
 /// scatter cache and save them as cuts, exactly where hand-drawn ones go.
 ///
-/// A read-only pass over StripSumScatter_cache.root: it never fills, never
-/// touches the cache, and needs no DISPLAY. strip-sum-scatter then loads the
-/// saved cuts like any drawn ones. Re-run it after any refill.
+/// In the mixture mode this is a read-only pass over
+/// StripSumScatter_cache.root: it never fills, never touches the cache, and
+/// needs no DISPLAY; strip-sum-scatter then loads the saved cuts like any
+/// drawn ones, so re-run it after any refill. In the all-tagged mode there is
+/// nothing to draw or fit, so this is the only binary needed: it measures the
+/// beam and loads or builds the cache itself (StripSumScatter::Prepare),
+/// saves the whole build window as each strip's region, and draws every
+/// strip's tagged traces against the beam under plots/compute_regions.
 #include "Constants.hpp"
 #include "InitUtils.hpp"
 #include "Paths.hpp"
@@ -22,6 +27,17 @@ int main() {
                                 Paths::ResultsDir() + "/root_files");
   gROOT->SetBatch(kTRUE);
   const StripSumScatterConfig &C = Constants::cfg.STRIP_SUM_SCATTER_CONFIG;
+  const Bool_t all_tagged =
+      C.AN_REGION_MODE == StripSumScatterConfig::AN_REGION_ALL_TAGGED;
+
+  // All-tagged: build or load the cache here, so strip-sum-scatter need not
+  // run; the scatter object also keeps the trace reservoir for the overlays.
+  StripSumScatter scatter;
+  if (all_tagged && !scatter.Prepare()) {
+    std::cerr << "compute-regions: could not build the scatter cache"
+              << std::endl;
+    return 1;
+  }
 
   // Same resolution as StripSumScatter::TryLoadCache: the bare name lives
   // under the dataset's root_files directory.
@@ -120,5 +136,11 @@ int main() {
   f.Close();
   std::cout << "compute-regions: regions for " << nOk << " of " << nTried
             << " reaction strips" << std::endl;
+  if (all_tagged) {
+    std::cout << "compute-regions: tagged traces per reaction strip against "
+                 "the beam"
+              << std::endl;
+    scatter.DrawAllTaggedTraces("compute_regions");
+  }
   return nOk > 0 ? 0 : 1;
 }

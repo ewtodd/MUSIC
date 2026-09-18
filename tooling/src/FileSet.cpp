@@ -116,9 +116,13 @@ std::vector<TString> FileSet::DiscoverSolRunSuffixes(Int_t run) {
   std::vector<TString> suffixes;
   TString prefix = Form("music_exp1915_%03d_00_66222_", run);
 
-  // Check for split chunks first
+  // Check for split chunks first, unless splitting is off (non-positive
+  // SOL_SPLIT_CHUNK_SECONDS): then whole files only, so chunks left in the
+  // split directory from an earlier setting cannot be picked up.
   TString split_dir = Constants::cfg.SOL_SPLIT_DIR;
-  void *dirp = gSystem->OpenDirectory(split_dir);
+  void *dirp = Constants::cfg.SOL_SPLIT_CHUNK_SECONDS > 0
+                   ? gSystem->OpenDirectory(split_dir)
+                   : nullptr;
   if (dirp) {
     const Char_t *name;
     while ((name = gSystem->GetDirEntry(dirp))) {

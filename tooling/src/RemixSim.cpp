@@ -1,5 +1,40 @@
 #include "RemixSim.hpp"
 
+RemixSim::Event::Event() : strip0(0.0f), strip17(0.0f) {
+  for (Int_t k = 0; k < 16; k++) {
+    left[k] = 0.0f;
+    right[k] = 0.0f;
+  }
+}
+
+Bool_t RemixSim::Event::Attach(TTree *t) {
+  if (!t->GetBranch("LeftdE") || !t->GetBranch("Strip0dE")) {
+    std::cerr << "RemixSim: events_MeV tree has no LeftdE/Strip0dE branches; "
+                 "it predates the per-end layout and must be re-simulated"
+              << std::endl;
+    return kFALSE;
+  }
+  t->SetBranchAddress("LeftdE", left);
+  t->SetBranchAddress("RightdE", right);
+  t->SetBranchAddress("Strip0dE", &strip0);
+  t->SetBranchAddress("Strip17dE", &strip17);
+  return kTRUE;
+}
+
+Double_t RemixSim::Event::Left(Int_t s) const {
+  if (s == 0)
+    return strip0;
+  if (s == 17)
+    return strip17;
+  return left[s - 1];
+}
+
+Double_t RemixSim::Event::Right(Int_t s) const {
+  if (s == 0 || s == 17)
+    return 0.0;
+  return right[s - 1];
+}
+
 Bool_t RemixSim::SimFileSpecTagLess(const SimFileSpec &a,
                                     const SimFileSpec &b) {
   return a.tag.CompareTo(b.tag) < 0;

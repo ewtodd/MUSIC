@@ -1,5 +1,6 @@
 #include "Normalization.hpp"
 #include <TFile.h>
+#include <TMath.h>
 #include <iostream>
 
 Bool_t EnergyView::Attach(TTree *t) {
@@ -28,9 +29,13 @@ void EnergyView::LoadGains() {
   for (Int_t k = 0; k < 16; k++) {
     gain_left[k] = 0.0f;
     gain_right[k] = 0.0f;
+    offset_left[k] = 0.0f;
+    offset_right[k] = 0.0f;
   }
-  for (Int_t s = 0; s < 18; s++)
+  for (Int_t s = 0; s < 18; s++) {
     strip_factor[s] = 1.0f;
+    strip_offset[s] = 0.0f;
+  }
   gain_strip0 = 0.0f;
   gain_strip17 = 0.0f;
   gain_cathode = 0.0f;
@@ -44,25 +49,41 @@ void EnergyView::LoadGains() {
   if (!cal || cal->GetEntries() < 1)
     return;
   Float_t gl[16] = {0}, gr[16] = {0}, g0 = 0.0f, g17 = 0.0f, gc = 0.0f;
-  Float_t sf[18] = {0};
+  Float_t ol[16] = {0}, orr[16] = {0};
+  Float_t sf[18] = {0}, so[18] = {0};
   cal->SetBranchAddress("GainLeft", gl);
   cal->SetBranchAddress("GainRight", gr);
   cal->SetBranchAddress("GainStrip0", &g0);
   cal->SetBranchAddress("GainStrip17", &g17);
   cal->SetBranchAddress("GainCathode", &gc);
+  // Per-end offsets are absent on files calibrated before they were
+  // measured; absent -> 0 (no offset).
+  Bool_t has_off = cal->GetBranch("OffsetLeft") != nullptr;
+  if (has_off) {
+    cal->SetBranchAddress("OffsetLeft", ol);
+    cal->SetBranchAddress("OffsetRight", orr);
+  }
   // StripFactor is optional (added after the initial gain write, filled in by
   // FindStripCentroidAlignment on the second); absent -> default 1.0 (identity)
   Bool_t has_factor = cal->GetBranch("StripFactor") != nullptr;
   if (has_factor)
     cal->SetBranchAddress("StripFactor", sf);
+  Bool_t has_offset = cal->GetBranch("StripOffset") != nullptr;
+  if (has_offset)
+    cal->SetBranchAddress("StripOffset", so);
   cal->GetEntry(0);
   for (Int_t k = 0; k < 16; k++) {
     gain_left[k] = gl[k];
     gain_right[k] = gr[k];
+    offset_left[k] = has_off ? ol[k] : 0.0f;
+    offset_right[k] = has_off ? orr[k] : 0.0f;
   }
   if (has_factor)
     for (Int_t s = 0; s < 18; s++)
       strip_factor[s] = sf[s];
+  if (has_offset)
+    for (Int_t s = 0; s < 18; s++)
+      strip_offset[s] = so[s];
   gain_strip0 = g0;
   gain_strip17 = g17;
   gain_cathode = gc;
@@ -80,9 +101,19 @@ void EnergyView::Decode() {
     }
   }
   if (is_normed) {
+    // An end that fired carries its offset; one that did not reads 0 and
+    // stays 0. Clamped at 0 so a reading below the offset is not negative.
     for (Int_t k = 0; k < 16; k++) {
-      left[k] = Double_t(gain_left[k]) * Double_t(leftdE_adc[k]);
-      right[k] = Double_t(gain_right[k]) * Double_t(rightdE_adc[k]);
+      left[k] = leftdE_adc[k] > 0
+                    ? Double_t(gain_left[k]) *
+                          TMath::Max(0.0, Double_t(leftdE_adc[k]) -
+                                              Double_t(offset_left[k]))
+                    : 0.0;
+      right[k] = rightdE_adc[k] > 0
+                     ? Double_t(gain_right[k]) *
+                           TMath::Max(0.0, Double_t(rightdE_adc[k]) -
+                                               Double_t(offset_right[k]))
+                     : 0.0;
     }
     strip0 = Double_t(gain_strip0) * Double_t(strip0_adc);
     strip17 = Double_t(gain_strip17) * Double_t(strip17_adc);
@@ -111,15 +142,20 @@ void EnergyView::Decode() {
         left[s - 1] = 0.0;
     }
   }
-  // Per-strip multiplicative alignment: pulls each strip's peak centroid onto
-  // the pol3 trend. On every end of the strip, so the sum carries it.
+  // Per-strip two-point alignment (beam at 1.0, pile-up at 2.0 on the strip
+  // total): the factor on every end, so the sum carries it, and the offset on
+  // the long end (L on odd strips, R on even) or the unsegmented value.
   if (is_normed) {
     for (Int_t s = 1; s <= 16; s++) {
       left[s - 1] *= Double_t(strip_factor[s]);
       right[s - 1] *= Double_t(strip_factor[s]);
+      if ((s % 2) != 0)
+        left[s - 1] += Double_t(strip_offset[s]);
+      else
+        right[s - 1] += Double_t(strip_offset[s]);
     }
-    strip0 *= Double_t(strip_factor[0]);
-    strip17 *= Double_t(strip_factor[17]);
+    strip0 = strip0 * Double_t(strip_factor[0]) + Double_t(strip_offset[0]);
+    strip17 = strip17 * Double_t(strip_factor[17]) + Double_t(strip_offset[17]);
   }
 }
 

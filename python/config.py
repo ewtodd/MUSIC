@@ -24,14 +24,14 @@ N_STRIPS = 18
 
 # Trace view (mirrors EnergyView::Decode); match C++ Constants.
 IGNORE_SHORT_STRIPS = False  # split strips 1-16: long end only
-INCLUDE_GUARD_STRIPS = True  # keep guards 0/17
+INCLUDE_UNSEGMENTED_STRIPS = True  # keep the unsegmented strips 0/17
 INCLUDE_DERIVATIVE = False
 SEED = 42
 
 
 def block_widths():
-    """Long-side block width: 18 columns, or 16 with guards dropped."""
-    long_w = N_STRIPS if INCLUDE_GUARD_STRIPS else N_STRIPS - 2
+    """Long-side block width: 18 columns, or 16 with strips 0/17 dropped."""
+    long_w = N_STRIPS if INCLUDE_UNSEGMENTED_STRIPS else N_STRIPS - 2
     return (long_w, )
 
 
@@ -64,7 +64,7 @@ BLIND_OFFBEAM_MIN_STRIPS = 4
 # `prebeam`: still inside the beam blob at (reac-1, reac-2)? 1 = still beam.
 BLIND_REJECT_PREBEAM = False
 BLIND_PREBEAM_FEATURE = True
-BLIND_PREBEAM_MIN_STRIP = 2  # floor: pre-trigger pair = strips 1 and 0 (guard)
+BLIND_PREBEAM_MIN_STRIP = 2  # floor: pre-trigger pair = strips 1 and 0
 
 # Savitzky-Golay smoothing: 5-point, cubic, edge-renormalized (matches
 # StripSumScatter::SavitzkyGolay); clustering uses the SG trace, beam ref stays raw.

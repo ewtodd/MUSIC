@@ -103,15 +103,21 @@ const Double_t kMinEventsInCut = 20.0;
 } // namespace
 
 Bool_t TagEfficiency::LoadSigmas(TFile &cache) {
-  Double_t strip[18] = {0};
+  Double_t strip[18] = {0}, mean[18];
   Int_t found = 0;
-  for (Int_t s = 0; s < 18; s++)
+  for (Int_t s = 0; s < 18; s++) {
+    mean[s] = 1.0;
     if (TParameter<Double_t> *p = static_cast<TParameter<Double_t> *>(
             cache.Get(Form("strip_sigma_s%d", s)))) {
       strip[s] = p->GetVal();
       found++;
     }
-  StripSumScatter::SetStripSigma(strip);
+    // Caches written before the beam level was stored carry no mean: 1.0.
+    if (TParameter<Double_t> *p = static_cast<TParameter<Double_t> *>(
+            cache.Get(Form("strip_mean_s%d", s))))
+      mean[s] = p->GetVal();
+  }
+  StripSumScatter::SetStripNoise(mean, strip);
   return found > 0;
 }
 

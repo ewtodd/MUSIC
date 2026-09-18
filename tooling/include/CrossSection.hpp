@@ -20,7 +20,10 @@
  *   from the strip before. See TagEfficiency.hpp for the contract.
  * - Otherwise it is the count the mixture fit attributed to the reaction
  *   component, uncorrected, with the fit-versus-core disagreement taken as the
- *   region systematic.
+ *   region systematic; or, in the all-tagged region mode, every tagged event,
+ *   with the cut-variation counts the fill stored (each threshold shifted up
+ *   and down) folded into the systematic: per threshold the larger change of
+ *   the count, added in quadrature.
  *
  * Beam energies come from the simulated unreacted beam, whose stopping model
  * is chosen to put the beam's Bragg peak in the strip the data shows it in,

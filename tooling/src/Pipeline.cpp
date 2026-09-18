@@ -347,20 +347,6 @@ static void RunActiveSelection() {
         run_specs.push_back(specs[k]);
     CalibrateBeam::AggregateRidgeRatiosForRun(*it, run_specs);
   }
-  if (Constants::cfg.SKIP_ERES_TOML) {
-    std::cout << "SKIP_ERES_TOML=true; skipping the per-run eres TOML"
-              << std::endl;
-  } else {
-    std::cout << "Phase C: per-run eres TOML aggregation" << std::endl;
-    for (std::set<Int_t>::const_iterator it = unique_runs.begin();
-         it != unique_runs.end(); ++it) {
-      std::vector<FileSpec> run_specs;
-      for (Int_t k = 0; k < n_specs; k++)
-        if (specs[k].run == *it)
-          run_specs.push_back(specs[k]);
-      CalibrateBeam::AggregateEresTomlForRun(*it, run_specs);
-    }
-  }
 }
 
 void Pipeline::Run() {

@@ -90,6 +90,28 @@ struct StripSumScatterConfig {
   Double_t POST_ABOVE_NSIGMA;
   Int_t POST_ABOVE_STRIPS;
 
+  /// A residue stops gradually; the beam nucleus after a large-angle elastic
+  /// scatter keeps its excess to the second-to-last strip and falls in one
+  /// step at the last. Of the total fall from the trace's peak (over reac to
+  /// last-1) to the last strip, the share taken by the last step,
+  /// (total[last-1] - total[last]) / (total[peak] - total[last]), must stay
+  /// under this fraction. Simulated 37Cl residues give 0.2 to 0.3, the elastic
+  /// class about 0.9, a noise fake past the end-strip test about 0.7. 0 or
+  /// less = off.
+  Double_t TAIL_CLIFF_MAX_FRACTION;
+
+  /// Cut-variation systematic. With CUT_VARIATION on, the fill also counts
+  /// the tagged events per strip with each active threshold shifted up and
+  /// down by its step, one threshold at a time: the sigma-scaled ones by
+  /// NSIGMA_STEP sigma, END_STRIP_MAX by END_STEP, TAIL_CLIFF_MAX_FRACTION by
+  /// CLIFF_STEP. The cross section takes, per threshold, the larger of the
+  /// two count changes and adds them in quadrature as the point's
+  /// systematic. The counts travel with the cache.
+  Bool_t CUT_VARIATION;
+  Double_t CUT_VARIATION_NSIGMA_STEP;
+  Double_t CUT_VARIATION_END_STEP;
+  Double_t CUT_VARIATION_CLIFF_STEP;
+
   /// Normalize the partial dE sum on y axis by the event's own mean deposit
   /// over strips 1 .. reac-1, so per-event beam
   /// energy and gain jitter cancel instead of making events harder to see.
@@ -297,6 +319,15 @@ struct CrossSectionConfig {
   /// spread of that energy across shapes. Empty: no overlay, midpoint
   /// energies.
   std::vector<TalysModel> TALYS_MODELS;
+  /// Input lines written into every model's TALYS input, after the
+  /// projectile, target and energies and before the model's own keywords:
+  /// the settings all models share (level density, accuracy thresholds,
+  /// width fluctuations, pre-equilibrium, excitation-energy binning). Lines
+  /// starting with `#` are comments and go through as such. TALYS takes the
+  /// last value it reads for a keyword, so a model keyword repeating one of
+  /// these overrides it. The defaults (Constants.cpp) follow the group's
+  /// 14O(a,p) input; a dataset may replace the whole list.
+  std::vector<TString> TALYS_COMMON_KEYWORDS;
 
   /// Simulated unreacted beam, read for the energy at each strip. Relative to
   /// the dataset's sim_root_files directory.
@@ -332,12 +363,72 @@ struct CrossSectionConfig {
   void SetDefaults();
 };
 
+/**
+ * @brief Shape of the pulse-history kernel applied to a channel group.
+ *
+ * Both are fitted whenever any group asks for the form, so the report can
+ * compare them; this chooses which one corrects the group's energies.
+ */
+enum PulseHistoryKernel {
+  /// One free coefficient per logarithmic dt bin: tracks whatever the
+  /// electronics did, at the price of bin-to-bin noise on sparse groups.
+  kPulseHistoryBinned,
+  /// The pole-zero form (PoleZeroMUSIC, doc/polezero.tex Eq. kernel): the
+  /// direct tail of the previous pulse under the read point plus that pulse's
+  /// share of the trapezoid baseline,
+  ///   k(dt) = -c exp(-(dt + t_m)/tau) + c_B (exp(-t_f/tau) - exp(-dt/tau)),
+  /// the second term only once the baseline unfreezes (dt > t_f). tau is the
+  /// preamp decay: given per group (`PulseHistoryGroupOption::tau_us`) or,
+  /// when not, profiled on a grid; the profile runs either way so a given
+  /// value can be checked against what the data prefer. c and c_B are fitted
+  /// per amplitude band, c_B free because the restorer's effective window is
+  /// not known from the settings. t_m and t_f come from the trapezoid
+  /// settings below.
+  /// Gaps shorter than the trapezoid, where the previous pulse's own top and
+  /// fall sit under the read point, keep one free coefficient per bin.
+  kPulseHistoryForm
+};
+
+/// @brief Per-group pulse-history setting: whether the group is corrected and
+/// with which kernel shape.
+struct PulseHistoryGroupOption {
+  Bool_t enabled = kFALSE;
+  PulseHistoryKernel kernel = kPulseHistoryBinned;
+  /// Known preamp decay time in microseconds, for the form. Positive: the
+  /// applied form uses this tau and the report says where the free profile
+  /// lands relative to it. Zero: the profiled tau is applied.
+  Double_t tau_us = 0.0;
+};
+
+/**
+ * @brief Which channel groups the pulse-history correction fits and applies
+ * to, one setting per kernel group of PulseHistory (see PulseHistory::Group).
+ *
+ * Every group defaults to off. A group that is off keeps its channels in the
+ * beam-like selection the kernels are fitted on (that selection needs every
+ * long end and is not changed by this mask) but gets no kernel and no
+ * correction, so its energies are left as read out.
+ */
+struct PulseHistoryGroups {
+  PulseHistoryGroupOption long_left;   ///< Long end of the odd strips (L).
+  PulseHistoryGroupOption long_right;  ///< Long end of the even strips (R).
+  PulseHistoryGroupOption short_left;  ///< Short end of the even strips (L).
+  PulseHistoryGroupOption short_right; ///< Short end of the odd strips (R).
+  PulseHistoryGroupOption strip0;      ///< Strip 0, unsegmented.
+  PulseHistoryGroupOption strip17;     ///< Strip 17, unsegmented.
+};
+
 class DatasetConfig {
 public:
   /// Data source
   Bool_t USE_SOLARIS_DATA;
   TString SOL_BASE_DIR;
   TString SOL_SPLIT_DIR;
+  /// Length of the time chunks the SOLARIS `.sol` files are split into by
+  /// the preprocess step, in seconds; each chunk becomes one subfile.
+  /// Non-positive (e.g. -1) turns splitting off: the preprocess step does
+  /// nothing and the pipeline reads each whole file from #SOL_BASE_DIR as one
+  /// subfile, ignoring anything in #SOL_SPLIT_DIR.
   Double_t SOL_SPLIT_CHUNK_SECONDS;
   Int_t SOL_N_SPLIT_WORKERS;
 
@@ -403,6 +494,23 @@ public:
   /// three times the beam pulse, so a nonlinear undershoot can be followed.
   Int_t PULSE_HISTORY_AMP_BINS;
 
+  /// Which channel groups are corrected and with which kernel shape; all off
+  /// by default, so a dataset that turns PULSE_HISTORY_CORRECTION on must
+  /// also pick its groups, e.g.
+  /// `gInstance.PULSE_HISTORY_GROUPS.long_left.enabled = kTRUE;` and
+  /// `gInstance.PULSE_HISTORY_GROUPS.long_left.kernel = kPulseHistoryForm;`.
+  PulseHistoryGroups PULSE_HISTORY_GROUPS;
+
+  /// Trapezoid filter settings of the DPP-PHA, in microseconds, which fix the
+  /// two times in the pole-zero kernel form: the energy is read at
+  /// `t_m = rise + peaking` after a pulse, and the baseline stays frozen for
+  /// `t_f = 2 rise + flat` after a trigger. The form holds for gaps of at
+  /// least `(2 rise + flat) - t_m`, when the previous trapezoid has passed
+  /// under the read point. Defaults are board 66222's (2 / 3 / 1.5 us).
+  Double_t PULSE_HISTORY_TRAP_RISE_US;
+  Double_t PULSE_HISTORY_TRAP_FLAT_US;
+  Double_t PULSE_HISTORY_PEAKING_US;
+
   Bool_t IGNORE_SHORT_STRIPS;
   Bool_t IGNORE_STRIP_0;
   Bool_t IGNORE_STRIP_17;
@@ -414,14 +522,6 @@ public:
 
   Bool_t SKIP_EXISTING;
   Bool_t SAVE_PLOTS;
-
-  /// Skip the per-run energy-resolution TOML (Calibration_Run<N>_eres.toml,
-  /// the Remix-MUSIC-Sim control input). That TOML is the whole of the eres
-  /// work: it is aggregated from the beam-peak fits the calibration tree
-  /// already holds, so nothing else is computed or written for it. The
-  /// per-subfile calibration and the ridge-ratio aggregation are unaffected.
-  /// Off by default.
-  Bool_t SKIP_ERES_TOML;
 
   /// Number of sample traces to save during event build and normed summary
   /// passes (0 = disabled). Saved as overlays in events_summary and

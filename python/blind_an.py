@@ -114,8 +114,8 @@ def reaction_strip(X, baseline, margin):
     peak is computed over the same scan window (strips 2..16). baseline is the
     per-strip beam level (mean pure-beam trace, _beam_reference) -- subtracting
     it removes the L/R sawtooth. Triggered strips are absolute detector
-    indices via the guard offset."""
-    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
+    indices via the column offset."""
+    first = 0 if config.INCLUDE_UNSEGMENTED_STRIPS else 1
     ex = X.astype(np.float64) - np.asarray(baseline, dtype=np.float64)
     # Scan window: strips 2..16 (matches C++ s_lo=2, s_hi=16)
     scan = np.arange(2 - first, 17 - first)
@@ -125,10 +125,10 @@ def reaction_strip(X, baseline, margin):
     thr = config.BLIND_REAC_ONSET_FRAC * np.maximum(peak, 0.0)
     # Each strip must clear BOTH the CF fraction of peak AND the nsigma floor
     above = (ex >= np.maximum(thr[:, np.newaxis], margin))
-    above[:, 0] = False  # exclude guard strip 0
+    above[:, 0] = False  # exclude strip 0 (unsegmented)
     above[:, 1] = False  # exclude strip 1 (scan starts at strip 2)
-    if config.INCLUDE_GUARD_STRIPS:
-        above[:, 17] = False  # exclude guard strip 17
+    if config.INCLUDE_UNSEGMENTED_STRIPS:
+        above[:, 17] = False  # exclude strip 17 (unsegmented)
     onset_col = np.argmax(above, axis=1)  # first strip reaching both thresholds
     return np.where(has, onset_col + first, -1)
 
@@ -150,9 +150,9 @@ def _reaction_strip_all(X, beam_ref, beam_sigma):
 def _tail_value(X):
     """RAW #DeltaE at the last strip (strip 17), beam ~ 1. (a,n) collapses
     below beam at end of range so it drops clearly under 1. Strip maps to a
-    column via the guard offset (falls back to the last strip when 17 is
+    column via the column offset (falls back to the last strip when 17 is
     outside the view)."""
-    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
+    first = 0 if config.INCLUDE_UNSEGMENTED_STRIPS else 1
     col = 17 - first
     if not 0 <= col < X.shape[1]:
         col = X.shape[1] - 1
@@ -168,8 +168,8 @@ def _plateau_excess(X, reac):
     where there is no trigger (reac < 0). Window strips past the end of the view
     are dropped from the sum (slices where the window never fully fits are
     skipped upstream in cluster_per_reaction_strip). Strips map to columns via
-    the guard offset."""
-    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
+    the column offset."""
+    first = 0 if config.INCLUDE_UNSEGMENTED_STRIPS else 1
     Xd = X.astype(np.float64)
     reac = np.asarray(reac)
     has = reac >= 0
@@ -228,8 +228,8 @@ def _fit_beam_ellipse(a, b):
 def _beam_gate(X, pairs):
     """Keep events inside the fitted beam ellipse of EVERY strip pair in
     `pairs` (e.g. ((0, 1),) or ((0, 1), (16, 17))). Strips map to columns via
-    the guard offset; a pair with a missing column or failed fit is skipped."""
-    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
+    the column offset; a pair with a missing column or failed fit is skipped."""
+    first = 0 if config.INCLUDE_UNSEGMENTED_STRIPS else 1
     Xd = X.astype(np.float64)
     keep = np.ones(X.shape[0], dtype=bool)
     ns = config.BLIND_BEAM_NSIGMA
@@ -256,7 +256,7 @@ def _set_gate_fit(X):
     the `beamgate` feature scores membership relative to the whole-reservoir
     beam (not the per-slice data)."""
     global _GATE_FIT
-    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
+    first = 0 if config.INCLUDE_UNSEGMENTED_STRIPS else 1
     ca, cb = 0 - first, 1 - first
     if 0 <= ca < X.shape[1] and 0 <= cb < X.shape[1]:
         Xd = X.astype(np.float64)
@@ -267,8 +267,8 @@ def _beam_gate_value(X):
     """Binary `beamgate` feature: 1 if the event is INSIDE the cached (s0,s1)
     beam ellipse (entered as beam), 0 otherwise -- the beam-entrance gate used
     as a clustering feature instead of a hard cut. 0 everywhere if the ellipse
-    was not fit. Strips map to columns via the guard offset."""
-    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
+    was not fit. Strips map to columns via the column offset."""
+    first = 0 if config.INCLUDE_UNSEGMENTED_STRIPS else 1
     ca, cb = 0 - first, 1 - first
     Xd = X.astype(np.float64)
     if (_GATE_FIT is None
@@ -292,9 +292,9 @@ def _set_prebeam_fits(X):
     strip s (from config.BLIND_PREBEAM_MIN_STRIP up) ONCE on the full reservoir,
     cached for the `prebeam` feature/cut -- so membership scores against the
     whole-reservoir beam blob at those pre-trigger strips, not the per-slice
-    data. Strips map to columns via the guard offset."""
+    data. Strips map to columns via the column offset."""
     global _PREBEAM_FITS
-    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
+    first = 0 if config.INCLUDE_UNSEGMENTED_STRIPS else 1
     Xd = X.astype(np.float64)
     fits = {}
     for s in range(config.BLIND_PREBEAM_MIN_STRIP, 18):
@@ -311,10 +311,11 @@ def _pre_trigger_beam(X, reac):
     pileup/junk
     has already departed the beam by then. Applies to every trigger at or after
     config.BLIND_PREBEAM_MIN_STRIP (floors at 2, where reac-1, reac-2 = strips 1
-    and 0, the guard -- both valid columns); triggers below it or with no valid
-    pre-trigger pair return 1 (pass, "still beam"). The per-pair beam ellipse is
-    the cached _PREBEAM_FITS; strips map to columns via the guard offset."""
-    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
+    and 0, the unsegmented strip -- both valid columns); triggers below it or
+    with no valid pre-trigger pair return 1 (pass, "still beam"). The per-pair
+    beam ellipse is the cached _PREBEAM_FITS; strips map to columns via the
+    column offset."""
+    first = 0 if config.INCLUDE_UNSEGMENTED_STRIPS else 1
     Xd = X.astype(np.float64)
     reac = np.asarray(reac)
     ns = config.BLIND_BEAM_NSIGMA
@@ -357,8 +358,8 @@ def _is_pileup(X):
     """StripSumScatter IsPileup: True for events with at least
     config.BLIND_PILEUP_MIN_STRIPS long strips (1-16) at or above
     config.BLIND_PILEUP_THRESH (overlapping-beam pileup). Strips map to
-    columns via the guard offset."""
-    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
+    columns via the column offset."""
+    first = 0 if config.INCLUDE_UNSEGMENTED_STRIPS else 1
     cols = [s - first for s in range(1, 17) if 0 <= s - first < X.shape[1]]
     over = (X.astype(np.float64)[:, cols]
             >= config.BLIND_PILEUP_THRESH).sum(axis=1)
@@ -370,8 +371,8 @@ def _is_noise(X):
     config.BLIND_NOISE_MIN_STRIPS long strips (1-16) below
     config.BLIND_NOISE_THRESH. A real deposit is never uniformly
     sub-threshold; flat-noise drops are. Strips map to columns via the
-    guard offset (matches C++ IsNoise which scans strips 1-16)."""
-    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
+    column offset (matches C++ IsNoise which scans strips 1-16)."""
+    first = 0 if config.INCLUDE_UNSEGMENTED_STRIPS else 1
     cols = [s - first for s in range(1, 17) if 0 <= s - first < X.shape[1]]
     Xd = X.astype(np.float64)[:, cols]
     below = (Xd < config.BLIND_NOISE_THRESH).sum(axis=1)
@@ -384,8 +385,8 @@ def _is_offbeam(X, beam_ref=None):
     config.BLIND_OFFBEAM_DIST (absolute) from beam -- elevated (pileup) OR
     below (dropout). A real (a,n) departs over only a few strips (reaction +
     collapse), so MIN_STRIPS set high leaves it at 0. beam_ref per strip (or
-    1.0). Strips map to columns via the guard offset."""
-    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
+    1.0). Strips map to columns via the column offset."""
+    first = 0 if config.INCLUDE_UNSEGMENTED_STRIPS else 1
     cols = [s - first for s in range(1, 17) if 0 <= s - first < X.shape[1]]
     Xd = X.astype(np.float64)[:, cols]
     thr = 1.0 if beam_ref is None else np.asarray(beam_ref,
@@ -491,9 +492,9 @@ def _peak3(X, reac):
     """3-strip #DeltaE sum centered on the TRIGGER (reaction) strip (matches
     StripSumScatter peak3): #DeltaE(reac-1)+#DeltaE(reac)+#DeltaE(reac+1). 0
     where there is no trigger (reac < 0) -- flat beam scores 0, the
-    discriminator. Strips map to columns via the guard offset."""
+    discriminator. Strips map to columns via the column offset."""
     Xd = np.pad(X.astype(np.float64), ((0, 0), (1, 1)))  # zero-pad both edges
-    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
+    first = 0 if config.INCLUDE_UNSEGMENTED_STRIPS else 1
     ncol = X.shape[1]
     rows = np.arange(X.shape[0])
     has = reac >= 0
@@ -511,10 +512,10 @@ def _trig_tail_dev(X, reac, beam_ref):
     at the end strip s17 (StripSumScatter trigtaildev): an (a,n) rises at the
     trigger AND collapses at s17, so both magnitudes add; flat beam scores ~0.
     The trigger term is 0 where there is no trigger (reac < 0). Strips map to
-    columns via the guard offset."""
+    columns via the column offset."""
     Xd = X.astype(np.float64)
     br = np.asarray(beam_ref, dtype=np.float64)
-    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
+    first = 0 if config.INCLUDE_UNSEGMENTED_STRIPS else 1
     rows = np.arange(Xd.shape[0])
     has = reac >= 0
     trig_col = np.clip(reac - first, 0, Xd.shape[1] - 1)
@@ -529,10 +530,10 @@ def _beam_deviation(X, beam_ref):
     (#DeltaE - beam) over strips 8-17. LOW = beam-like (flat at beam level),
     high for a reaction plateau/collapse or pileup elevation. Amplitude-aware
     (NOT max-normalized) and sawtooth-free (beam subtraction). Strips map to
-    columns via the guard offset."""
+    columns via the column offset."""
     Xd = X.astype(np.float64)
     br = np.asarray(beam_ref, dtype=np.float64)
-    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
+    first = 0 if config.INCLUDE_UNSEGMENTED_STRIPS else 1
     cols = [s - first for s in range(8, 18) if 0 <= s - first < Xd.shape[1]]
     d = Xd[:, cols] - br[cols]
     return np.sqrt((d * d).mean(axis=1))
@@ -826,7 +827,8 @@ def cluster_per_reaction_strip(
     When `X_sg` is provided, feature computation uses the
     SG-filtered trace and its reaction strip. Partitioning by strip still uses
     the raw `reac` (plotting also uses raw `X`)."""
-    last_strip = (0 if config.INCLUDE_GUARD_STRIPS else 1) + X.shape[1] - 1
+    first = 0 if config.INCLUDE_UNSEGMENTED_STRIPS else 1
+    last_strip = first + X.shape[1] - 1
     for strip in strips:
         at = reac == strip
         n_at = int(at.sum())

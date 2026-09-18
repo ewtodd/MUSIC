@@ -39,6 +39,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 /**
@@ -69,10 +70,35 @@ enum TagCut {
   kCutRerise,    ///< Back at the beam, then above it again (TAIL_RERISE_*).
   kCutPostAbove, ///< The excess did not persist (POST_ABOVE_*).
   kCutEndStrip,  ///< The end strip not below END_STRIP_MAX.
+  kCutCliff,     ///< The fall happened in the last step (TAIL_CLIFF_*).
   kNTagCuts
 };
 /// @brief Short labels for TagCut, indexed by it.
 extern const char *const kTagCutName[kNTagCuts];
+
+/**
+ * @brief Every threshold the tag applies, as one value set.
+ *
+ * The nominal set is read off `StripSumScatterConfig`
+ * (StripSumScatter::NominalThresholds); the cut-variation systematic shifts
+ * one field at a time (StripSumScatter::ThresholdVariants) and re-runs the
+ * same tag, so the count's sensitivity to each threshold is measured by the
+ * code that applies it.
+ */
+struct TagThresholds {
+  Bool_t require_upstream = kTRUE;
+  Double_t upstream_nsigma = 0.0;
+  Double_t jump_nsigma = 0.0;
+  Double_t smooth_nsigma = 0.0;
+  Int_t tail_fall_from_strip = 0;
+  Double_t tail_rise_nsigma = 0.0;
+  Double_t tail_return_nsigma = 0.0;
+  Double_t tail_rerise_nsigma = 0.0;
+  Double_t post_above_nsigma = 0.0;
+  Int_t post_above_strips = 0;
+  Double_t end_strip_max = 0.0;
+  Double_t cliff_max = 0.0;
+};
 
 /**
  * @brief The event-level cuts applied before any reaction is asked about, in
@@ -230,6 +256,9 @@ struct SingleRunFillResult {
   std::vector<Long64_t> normed_at;
   /// Events tagged at each reaction strip, indexed the same way.
   std::vector<Long64_t> tagged;
+  /// Events tagged under each threshold variant, `[variant][ReacIndex]`, in
+  /// the order of StripSumScatter::ThresholdVariants().
+  std::vector<std::vector<Long64_t>> tagged_var;
   /// Sequential per-condition counts, `[ReacIndex(reac) * kNTagCuts + cut]`,
   /// for the tag-cut report. `kTagPass` entries equal `tagged`.
   std::vector<Long64_t> cut_counts;
@@ -267,9 +296,37 @@ public:
   /**
    * @brief Build or load the scatters, tag reactions, and draw everything.
    *
-   * The entry point called from `main_strip_sum_scatter.cpp`.
+   * The entry point called from `main_strip_sum_scatter.cpp`: Prepare(),
+   * then the optional simulation overlays and the interactive region-trace
+   * overlay for the candidate strip.
    */
   void Run();
+
+  /**
+   * @brief Measure the beam, then load the scatter cache or build it.
+   *
+   * Everything Run() does before any overlay: the first run's beam mean and
+   * width per strip, the cache fingerprint, a load of a matching cache or a
+   * fill and write of a fresh one, and the batch scatter figures. Leaves the
+   * scatters and the trace reservoir in memory. compute-regions calls this in
+   * the all-tagged mode so strip-sum-scatter itself never has to be run.
+   *
+   * @return `kFALSE` when there are no runs or the beam cannot be measured.
+   */
+  Bool_t Prepare();
+
+  /**
+   * @brief Region-trace overlays of every tagged event, one figure per
+   *        reaction strip, against the beam band.
+   *
+   * The all-tagged mode's counterpart of the interactive overlay: no region
+   * cut, every event tagged at the strip is drawn, in calibrated units and in
+   * raw ADC (and the mean traces when `PLOT_REGION_MEAN_TRACES`). Needs the
+   * reservoir, so call after Prepare().
+   *
+   * @param subdir Plot subdirectory the figures go to.
+   */
+  void DrawAllTaggedTraces(const TString &subdir);
 
   /**
    * @brief Filename of the scatter cache for this configuration.
@@ -311,12 +368,19 @@ public:
    * @{
    */
 
-  /// @brief Sigma of a strip's own deposit.
+  /// @brief Width of the beam's deposit on a strip, from the gated beam
+  ///        sample of the first run (MeasureBeamNoise).
   /// @param strip Strip index.
   static Double_t StripSigma(Int_t strip);
-  /// @brief Install the per-strip sigmas. Call before tagging starts.
+  /// @brief Mean of the beam's deposit on a strip over the same sample; the
+  ///        level every cut measures from. 1.0 when none was installed.
+  /// @param strip Strip index.
+  static Double_t StripMean(Int_t strip);
+  /// @brief Install the per-strip beam means and sigmas. Call before tagging
+  ///        starts.
+  /// @param mean  18 values, one per strip; null means 1.0 everywhere.
   /// @param sigma 18 values, one per strip.
-  static void SetStripSigma(const Double_t *sigma);
+  static void SetStripNoise(const Double_t *mean, const Double_t *sigma);
   /// @brief Minimum jump for a tag: `REAC_JUMP_NSIGMA * StripSigma(reac)`.
   /// @param reac Reaction strip index.
   static Double_t JumpMin(Int_t reac);
@@ -324,6 +388,7 @@ public:
 
 private:
   static Double_t s_stripSigma[18];
+  static Double_t s_stripMean[18];
   std::map<Int_t, TH2F *> m_scatter;
   std::vector<TraceEvt> m_reservoir;
   // Normalization counts, merged over every run and persisted in the cache so
@@ -332,6 +397,11 @@ private:
   Long64_t m_nNormed;
   std::vector<Long64_t> m_normedAt;
   std::vector<Long64_t> m_tagged;
+  /// Tagged counts per threshold variant, `[variant][ReacIndex]`; the
+  /// variant names alongside, persisted with the cache for the cross
+  /// section's cut-variation systematic.
+  std::vector<std::vector<Long64_t>> m_taggedVar;
+  std::vector<TString> m_variantNames;
   // Per-condition tag counts from the last fill, for the cut report; not
   // cached, so a cache load leaves them empty and writes no report.
   std::vector<Long64_t> m_cutCounts;
@@ -365,14 +435,18 @@ private:
   static void EnableEventBranches(TChain *chain);
   static Bool_t AllStripsFired(const EnergyView &ev);
   static Bool_t IsPureBeam(const EnergyView &ev, const BeamEllipses &be);
-  /// Sigma-clipped width of each strip's deposit over a capped sample of
-  /// `chain`, after the cheap pre-tag cuts. Every sigma-unit cut, level or
-  /// step, resolves through this one width. False when too few events
-  /// survive to measure it.
-  static Bool_t MeasureBeamNoise(TChain *chain, Double_t *strip_sigma);
+  /// The beam's mean and width on every strip: over the events of `chain`
+  /// that pass the entrance and exit ellipses `be` (IsPureBeam), up to a cap,
+  /// each strip's sigma-clipped mean and width. Every sigma-unit cut, level
+  /// or step, resolves through these. False when too few events pass the
+  /// gate to measure them.
+  static Bool_t MeasureBeamNoise(TChain *chain, const BeamEllipses &be,
+                                 Double_t *strip_mean, Double_t *strip_sigma);
   // Strips 1..reac-1 within BEAM_UPSTREAM_NSIGMA of the beam, or the
   // requirement is off. Shared by the tag and its per-strip denominator.
   static Bool_t BeamUpstreamOf(const EnergyView &ev, Int_t reac);
+  static Bool_t BeamUpstreamOf(const EnergyView &ev, Int_t reac,
+                               const TagThresholds &T);
   static Bool_t IsPileup(const EnergyView &ev);
   static Bool_t IsNoise(const EnergyView &ev);
   static Double_t SumRange(const Double_t *total, Int_t lo, Int_t hi);
@@ -393,12 +467,15 @@ private:
   /// the cache-measured per-strip beam spread (StripSigma, scaled by the
   /// sample mean so it applies in ADC too) when `beam_sigma_measured`, else
   /// the sample's own RMS (for smoothed traces, whose noise is narrower).
+  /// `an_label` renames the red class in the legend (the all-tagged overlay
+  /// draws every tagged event there); an empty class is left out of it.
   static void DrawRegionTraces(const TString &save_name, const TString &subdir,
                                const std::vector<TGraph *> &beam,
                                const std::vector<TGraph *> &aa,
                                const std::vector<TGraph *> &an, Double_t y_min,
                                Double_t y_max, const char *y_title,
-                               Bool_t beam_sigma_measured = kTRUE);
+                               Bool_t beam_sigma_measured = kTRUE,
+                               const char *an_label = nullptr);
 
   static void DrawRegionMeanTraces(const TString &save_name,
                                    const TString &subdir,
@@ -485,17 +562,29 @@ public:
    *         is exactly `RejectReason(ev, reac) == kTagPass`.
    */
   static TagCut RejectReason(const EnergyView &ev, Int_t reac);
+  /// @brief RejectReason under an explicit threshold set.
+  static TagCut RejectReason(const EnergyView &ev, Int_t reac,
+                             const TagThresholds &T);
   /// @brief The tail-shape part of RejectReason: `kTagPass` or the first
   ///        failing tail condition.
   static TagCut TailReason(const EnergyView &ev, Int_t reac);
+  static TagCut TailReason(const EnergyView &ev, Int_t reac,
+                           const TagThresholds &T);
+  /// @brief The thresholds the configuration sets.
+  static TagThresholds NominalThresholds();
+  /// @brief The cut-variation set: each active threshold shifted up and down
+  ///        by its configured step (`CUT_VARIATION_*`), one at a time, named
+  ///        `<threshold>+` and `<threshold>-`. Empty when `CUT_VARIATION` is
+  ///        off.
+  static std::vector<std::pair<TString, TagThresholds>> ThresholdVariants();
 
 private:
   static Bool_t SimBeamGains(Double_t *gain);
   // Run n indexed tasks on a pool of workers, pulling from a shared queue.
   static void RunIndexedParallel(Int_t n, Int_t workers,
                                  const std::function<void(Int_t)> &task);
-  static void SimTotal(const Float_t *left, const Float_t *right,
-                       const Double_t *gain, Double_t *total);
+  static void SimTotal(const RemixSim::Event &e, const Double_t *gain,
+                       Double_t *total);
   static TGraph *SimPopScatter(const TString &file, Int_t reac,
                                const Double_t *gain, Long64_t max_points);
   static std::vector<TGraph *>

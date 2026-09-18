@@ -27,6 +27,30 @@ void CrossSectionConfig::SetDefaults() {
   BEAM_ELEMENT = "";
 
   TALYS_MODELS.clear();
+  // The shared TALYS settings, from the group's 14O(a,p) input. Not here:
+  // the energies (talys-xs writes its own grid), alphaomp (per model),
+  // outdiscrete (output only, talys-xs reads the rp*.tot files) and
+  // astro/astrogs (reaction rates, off by default).
+  TALYS_COMMON_KEYWORDS = {
+      "# level density",
+      "ldmodel 1",
+      "maxlevelstar 30",
+      "# enhanced accuracy",
+      "transpower 20",
+      "xseps 1.e-30",
+      "transeps 1.e-30",
+      "popeps 1.e-30",
+      "elow 1.e-06",
+      "# width fluctuation correction",
+      "widthfluc 20",
+      "widthmode 1",
+      "# pre-equilibrium off",
+      "preequilibrium n",
+      "# equidistant excitation-energy binning, enhanced segments",
+      "bins 80",
+      "equidistant y",
+      "segment 4",
+  };
 
   BEAM_SIM_FILE = "";
 
@@ -55,6 +79,11 @@ void StripSumScatterConfig::SetDefaults() {
   TAIL_RERISE_NSIGMA = 0.0;
   POST_ABOVE_NSIGMA = 0.0;
   POST_ABOVE_STRIPS = 0;
+  TAIL_CLIFF_MAX_FRACTION = 0.0;
+  CUT_VARIATION = kTRUE;
+  CUT_VARIATION_NSIGMA_STEP = 0.5;
+  CUT_VARIATION_END_STEP = 0.05;
+  CUT_VARIATION_CLIFF_STEP = 0.1;
   Y_RATIO_TO_UPSTREAM = kTRUE;
 
   REAC_JUMP_NSIGMA = 1.0;
@@ -151,6 +180,9 @@ DatasetConfig::DatasetConfig() {
   PULSE_HISTORY_OWN_HI = 1.6;
   PULSE_HISTORY_APPLY_MAX_US = 316.0;
   PULSE_HISTORY_AMP_BINS = 1;
+  PULSE_HISTORY_TRAP_RISE_US = 2.0;
+  PULSE_HISTORY_TRAP_FLAT_US = 3.0;
+  PULSE_HISTORY_PEAKING_US = 1.5;
 
   IGNORE_SHORT_STRIPS = kFALSE;
   IGNORE_STRIP_0 = kFALSE;
@@ -163,8 +195,6 @@ DatasetConfig::DatasetConfig() {
 
   SKIP_EXISTING = kTRUE;
   SAVE_PLOTS = kTRUE;
-
-  SKIP_ERES_TOML = kFALSE;
 
   SAVE_SAMPLE_TRACES = 0;
 
@@ -244,6 +274,28 @@ RunEpoch MakeEpoch(const TString &name, const std::vector<Int_t> &runs) {
   ep.n_channels = cfg.N_CHANNELS;
   ep.channel_map =
       !cfg.channelMap64.empty() ? cfg.channelMap64 : cfg.channelMap;
+  // The snapshot is only as good as the flat block at this moment. An epoch
+  // declared before the channel map, board or channel count was set would
+  // carry the tooling defaults and fail far downstream ("reference channel
+  // not found"), so refuse it here.
+  if (ep.channel_map.empty()) {
+    std::cerr << "FATAL: MakeEpoch(\"" << name
+              << "\") called before the channel map was set; declare epochs "
+                 "at the end of InitDatasetConfig."
+              << std::endl;
+    std::abort();
+  }
+  for (std::map<std::pair<Int_t, Int_t>, TString>::const_iterator it =
+           ep.channel_map.begin();
+       it != ep.channel_map.end(); ++it)
+    if (it->first.first >= ep.n_boards || it->first.second >= ep.n_channels) {
+      std::cerr << "FATAL: MakeEpoch(\"" << name << "\"): channel map entry ("
+                << it->first.first << ", " << it->first.second
+                << ") lies outside N_BOARDS x N_CHANNELS = " << ep.n_boards
+                << " x " << ep.n_channels
+                << "; set those before declaring the epoch." << std::endl;
+      std::abort();
+    }
   ep.timing_ref_board = cfg.TIMING_REF_BOARD;
   ep.timing_ref_board_channels = cfg.TIMING_REF_BOARD_CHANNELS;
   ep.do_board_sync = cfg.TIMING_DO_BOARD_SYNC;

@@ -66,7 +66,6 @@ void InitDatasetConfig() {
   gInstance.MAX_GPU_CONCURRENT_SORTS = 20;
   gInstance.SKIP_EXISTING = kTRUE;
   gInstance.SAVE_PLOTS = kFALSE;
-  gInstance.SKIP_ERES_TOML = kTRUE;
 
   // Beam calibration.
   gInstance.SIM_BEAM_FILE = "traces_87Rb_beam.root";

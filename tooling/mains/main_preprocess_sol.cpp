@@ -193,6 +193,16 @@ int main(int argc, char *argv[]) {
     nWorkers = std::stoi(argv[2]);
   }
 
+  // Non-positive: no splitting. The pipeline then reads the whole files from
+  // SOL_BASE_DIR (FileSet::DiscoverSolRunSuffixes ignores the split
+  // directory in that case), so there is nothing to do here.
+  if (chunkSeconds <= 0) {
+    std::cout << "SOLARIS preprocessing: SOL_SPLIT_CHUNK_SECONDS is "
+              << chunkSeconds
+              << "; no splitting, the pipeline reads the whole files from "
+              << Constants::cfg.SOL_BASE_DIR.Data() << std::endl;
+    return 0;
+  }
   std::cout << "SOLARIS preprocessing: splitting Minimum files into "
             << chunkSeconds << "s chunks (" << nWorkers << " workers)"
             << std::endl;

@@ -39,14 +39,26 @@ struct EnergyView {
   /// @{
   Float_t gain_left[16];  ///< Left-end gain of strips 1-16, index `strip - 1`.
   Float_t gain_right[16]; ///< Right-end gain of strips 1-16.
-  Float_t gain_strip0;    ///< Strip 0 gain.
-  Float_t gain_strip17;   ///< Strip 17 gain.
-  Float_t gain_cathode;   ///< Cathode gain.
-  /// Per-strip multiplicative alignment, `pol3_reference / centroid`, indexed
-  /// by strip 0-17 and applied to every end of the strip after its gain.
-  /// Identity (1.0) when no alignment is loaded, so an unaligned dataset
-  /// decodes unchanged.
+  /// ADC subtracted from an end before its gain, only when that end fired: a
+  /// short end's energy carries a fixed amount over the charge it collected
+  /// whenever it triggers (see ChannelCal::offset_adc). Zero on the long
+  /// ends and when no calibration is loaded.
+  Float_t offset_left[16];
+  Float_t offset_right[16];
+  Float_t gain_strip0;  ///< Strip 0 gain.
+  Float_t gain_strip17; ///< Strip 17 gain.
+  Float_t gain_cathode; ///< Cathode gain.
+  /// Per-strip multiplicative alignment, indexed by strip 0-17 and applied to
+  /// every end of the strip after its gain. Identity (1.0) when no alignment
+  /// is loaded, so an unaligned dataset decodes unchanged.
   Float_t strip_factor[18];
+  /// Per-strip additive alignment in calibrated units, indexed by strip 0-17.
+  /// Together with #strip_factor it puts the strip total on the scale with
+  /// the beam at 1.0 and the two-particle pile-up at 2.0. It belongs to the
+  /// strip, not an end, and is carried by the long end (L on odd strips, R on
+  /// even) or the unsegmented value, so Total() stays the plain sum of the
+  /// ends. Zero when no alignment is loaded.
+  Float_t strip_offset[18];
   /// Whether a calibration tree was found. When true, the decoded values are in
   /// arbitrary calibrated units; when false they remain raw ADC.
   Bool_t is_normed;
@@ -54,8 +66,9 @@ struct EnergyView {
 
   /// @name Decoded per-event values
   /// In arbitrary units when #is_normed, otherwise raw ADC. Each end already
-  /// carries its strip's alignment factor, so a strip's deposit is the plain
-  /// sum of its ends, which is what Total() returns.
+  /// carries its strip's alignment factor, and the long end its offset, so a
+  /// strip's deposit is the plain sum of its ends, which is what Total()
+  /// returns.
   /// @{
   Double_t left[16];  ///< Left end of strips 1-16, index `strip - 1`.
   Double_t right[16]; ///< Right end of strips 1-16, index `strip - 1`.
@@ -79,11 +92,15 @@ struct EnergyView {
       rightdE_adc[k] = 0;
       gain_left[k] = 0.0f;
       gain_right[k] = 0.0f;
+      offset_left[k] = 0.0f;
+      offset_right[k] = 0.0f;
       left[k] = 0.0;
       right[k] = 0.0;
     }
-    for (Int_t s = 0; s < 18; s++)
+    for (Int_t s = 0; s < 18; s++) {
       strip_factor[s] = 1.0f;
+      strip_offset[s] = 0.0f;
+    }
   }
 
   /**
@@ -96,9 +113,9 @@ struct EnergyView {
   /**
    * @brief Decode the currently loaded entry into the value members.
    *
-   * Applies the per-channel gains, drops the short end when
-   * `IGNORE_SHORT_STRIPS` is set, then multiplies every end by its strip's
-   * #strip_factor.
+   * Applies the per-channel offsets (to ends that fired) and gains, drops the
+   * short end when `IGNORE_SHORT_STRIPS` is set, then multiplies every end by
+   * its strip's #strip_factor and adds #strip_offset to the long end.
    *
    * @note Reads whichever entry the bound tree has loaded, so call
    *       `GetEntry()` first.

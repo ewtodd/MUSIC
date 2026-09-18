@@ -184,7 +184,7 @@ def _frame_and_canvas(R, name, y_title):
     -0.5..17.5, y fixed STRIP_DE_MIN/MAX_NORMED = 0.8..1.3) drawn on a fresh
     configured canvas. Returns (canvas, frame, strip_x)."""
     long_w = config.block_widths()[0]
-    first = 0 if config.INCLUDE_GUARD_STRIPS else 1
+    first = 0 if config.INCLUDE_UNSEGMENTED_STRIPS else 1
     strip_x = np.arange(first, first + long_w, dtype=np.float64)
     frame = R.TH2F(f"frame_{name}", f";Strip;{y_title}", 18, -0.5, 17.5,
                    100, 0.8, 1.3)
