@@ -49,8 +49,13 @@ void Paths::PrintBanner(const TString &dataset_dir) {
   std::cout << std::endl;
   std::cout << " event mode  : " << Constants::ActiveReferenceChannel() << " ("
             << Constants::ActiveEventTimeWindowUs() << " us window)"
-            << " | plots " << (Constants::cfg.SAVE_PLOTS ? "on" : "SKIPPED")
-            << std::endl;
+            << " | plots ";
+  if (Constants::cfg.SAVE_FULL_PLOTS)
+    std::cout << "every subfile";
+  else
+    std::cout << "first " << Constants::cfg.PLOT_SAMPLE_FILES
+              << " subfile(s) per epoch";
+  std::cout << std::endl;
   std::cout << "============================================================"
             << std::endl;
 }

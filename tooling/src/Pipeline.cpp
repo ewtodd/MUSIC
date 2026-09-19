@@ -14,8 +14,11 @@ Double_t FusedSecSince(const std::chrono::steady_clock::time_point &t0) {
 }
 
 // /proc/self/statm reports VmRSS in pages (field 2); 4 KiB/page on Linux.
-// Worker-local label so concurrent log lines stay attributable.
+// Worker-local label so concurrent log lines stay attributable. Detail: only
+// the per-file sample logs it.
 void PrintMemUsage(const char *label) {
+  if (!Constants::FileInSample())
+    return;
   Long64_t rss = 0;
   std::ifstream statm("/proc/self/statm");
   Long64_t dummy;
@@ -96,8 +99,8 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
 
   if (skip_processing) {
     std::lock_guard<std::mutex> lock(fused_log_mutex);
-    std::cout << "[skip-build] " << file_label
-              << " events exist; re-making plots only" << std::endl;
+    Constants::Detail() << "[skip-build] " << file_label
+                        << " events exist; re-making plots only" << std::endl;
   } else {
     TString bin_path;
     if (Constants::ActiveUseSolarisData()) {
@@ -182,7 +185,7 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
       t_apply = FusedSecSince(t0);
 
       PrintMemUsage((TString("after apply+sort ") + file_label).Data());
-    } else {
+    } else if (Constants::FileInSample()) {
       std::lock_guard<std::mutex> lock(fused_log_mutex);
       std::cout << "[skip-timing] " << file_label
                 << " board sync and sort both disabled; skipping to event "
@@ -191,8 +194,10 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
     }
 
     // Pole-zero pulse-history correction on long ends, measured on this
-    // subfile's beam-like events; before build, changing energies it dedups on.
-    if (Constants::cfg.PULSE_HISTORY_CORRECTION) {
+    // subfile's beam-like events; before build, changing energies it dedups
+    // on. The groups are the active epoch's: an era with none on skips it.
+    if (Constants::cfg.PULSE_HISTORY_CORRECTION &&
+        Constants::ActivePulseHistoryGroups().AnyEnabled()) {
       t0 = std::chrono::steady_clock::now();
       std::vector<Int_t> groups = PulseHistory::BuildGroupMap();
       if (PulseHistory::Measure(hits, groups, history, file_label))
@@ -201,7 +206,8 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
       history_done = kTRUE;
       t_history = FusedSecSince(t0);
       std::lock_guard<std::mutex> lock(fused_log_mutex);
-      std::cout << PulseHistory::Report(history, file_label);
+      std::cout << PulseHistory::Report(history, file_label,
+                                        Constants::FileInSample());
     }
 
     t0 = std::chrono::steady_clock::now();
@@ -241,8 +247,10 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
     EventsSummary::BuildNormedSummaryHistograms(FileSet::EventsName(spec),
                                                 file_label);
     Double_t t_normed = FusedSecSince(t0);
-    std::lock_guard<std::mutex> lock(fused_log_mutex);
-    std::cout << "  normed summary: " << t_normed << "s" << std::endl;
+    if (Constants::FileInSample()) {
+      std::lock_guard<std::mutex> lock(fused_log_mutex);
+      std::cout << "  normed summary: " << t_normed << "s" << std::endl;
+    }
   }
 
   Double_t total = FusedSecSince(t_total);
@@ -325,6 +333,8 @@ static void RunActiveSelection() {
         FileSpec spec = specs[k];
         UShort_t header =
             run_headers.count(spec.run) ? run_headers[spec.run] : UShort_t(0);
+        // The first files of the epoch draw their per-subfile figures.
+        Constants::SetPlotsThisFile(Constants::InPlotSample(k));
         Bool_t ok = RunFusedPipelineForFile(spec, header, slot_map, chans);
         if (!ok) {
           std::lock_guard<std::mutex> lk(fused_log_mutex);

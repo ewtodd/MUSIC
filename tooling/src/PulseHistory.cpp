@@ -80,7 +80,7 @@ Bool_t IsLongGroup(Int_t g) { return g == kLongLeft || g == kLongRight; }
 
 namespace {
 const PulseHistoryGroupOption *GroupOption(Int_t g) {
-  const PulseHistoryGroups &m = Constants::cfg.PULSE_HISTORY_GROUPS;
+  const PulseHistoryGroups &m = Constants::ActivePulseHistoryGroups();
   switch (g) {
   case kLongLeft:
     return &m.long_left;
@@ -1151,8 +1151,8 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
         K.from_group = kTRUE;
         K.why_group = why_c;
       } else if (!why_c.IsNull()) {
-        std::cerr << "  " << file_label << ": pulse history " << res.name_ch[c]
-                  << ": " << why_c << std::endl;
+        Constants::DetailErr() << "  " << file_label << ": pulse history "
+                               << res.name_ch[c] << ": " << why_c << std::endl;
       }
       // What the group's kernel would have done on this channel: the gain
       // from a kernel of its own is the difference to K.r2.
@@ -1188,7 +1188,7 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
 
   // Pass C: diagnostics, with the applied (per-channel) kernels. Log-time
   // axes are log10(dt) where dt is the time difference in microseconds.
-  if (Constants::cfg.SAVE_PLOTS) {
+  if (Constants::SavePlots()) {
     const TString tag = file_label;
     const Double_t xlo = kLogLo + 6.0, xhi = kLogHi + 6.0;
     for (Int_t g = 1; g < kNGroups; g++) {
@@ -1371,7 +1371,7 @@ const char *StatusOf(const Kernel &K, Bool_t enabled) {
 
 } // namespace
 
-TString Report(const Result &res, const TString &file_label) {
+TString Report(const Result &res, const TString &file_label, Bool_t detail) {
   TString s;
   s += Form("  pulse history %s: %lld hits%s, %lld reference seeds, %lld "
             "beam-like events; %lld hits corrected, %lld clamped to 0\n",
@@ -1381,13 +1381,20 @@ TString Report(const Result &res, const TString &file_label) {
   for (Int_t g = 1; g < kNGroups; g++) {
     const Kernel &K = res.kernel[g];
     // The group's own fit (the sum of its channels) is the fallback kernel
-    // and the reference the per-channel lines below are read against.
+    // and the reference the per-channel lines below are read against. The
+    // summary form lists the enabled groups only.
+    if (!detail && !res.enabled[g])
+      continue;
     s += Form("    %-22s %s  beam events %lld  n %lld  R^2 %.3f  rms %.1f -> "
               "%.1f ADC  mean shift %.1f ADC  clamped %lld  [group fit]\n",
               GroupName(g), StatusOf(K, res.enabled[g]), K.n_beam, K.n, K.r2,
               K.rms_before, K.rms_after, res.mean_shift[g],
               res.n_clamped_group[g]);
     if (!res.enabled[g])
+      continue;
+    // Outside the per-file sample the group lines above are the report; the
+    // form, the kernel rows, the tau fit and the per-channel lines are detail.
+    if (!detail)
       continue;
     if (K.form_ok)
       s += FormLines(K, "      ");
@@ -1558,7 +1565,7 @@ Int_t ChannelColor(Int_t k) {
 } // namespace
 
 void SavePlots(Result &res, const TString &file_label) {
-  if (!Constants::cfg.SAVE_PLOTS)
+  if (!Constants::SavePlots())
     return;
   std::lock_guard<std::mutex> lock(g_plot_mutex);
   const TString subdir = "pulse_history/" + file_label;

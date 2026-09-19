@@ -101,9 +101,9 @@ Int_t ChainOf(Int_t g);
 /// @brief Whether a group is a long end rather than a short end or an
 ///        unsegmented strip.
 Bool_t IsLongGroup(Int_t g);
-/// @brief Whether the configuration (`PULSE_HISTORY_GROUPS`) has this group
-///        corrected. A disabled group gets no kernel and no correction but
-///        still takes part in the beam-like selection.
+/// @brief Whether the groups in force (Constants::ActivePulseHistoryGroups())
+///        have this group corrected. A disabled group gets no kernel and no
+///        correction but still takes part in the beam-like selection.
 Bool_t GroupEnabled(Int_t g);
 /// @brief Whether the configuration asks for the pole-zero form on this
 ///        group rather than the binned kernel.
@@ -242,7 +242,8 @@ struct Result {
   /// not a long end, which is what AmpBinOf() keys off.
   std::vector<Double_t> mode;
   /// @name Diagnostics
-  /// Filled when `SAVE_PLOTS` is on, drawn and freed by SavePlots(). Null
+  /// Filled when the file draws (Constants::SavePlots()), drawn and freed by
+  /// SavePlots(). Null
   /// otherwise.
   /// @{
   TH2D *dev_vs_pred[kNGroups]; ///< Channel deviation against predicted shift.
@@ -320,7 +321,12 @@ void Apply(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
 /// @brief Format the pass as a human-readable report.
 /// @param res        Result to summarise.
 /// @param file_label Subfile label.
-TString Report(const Result &res, const TString &file_label);
+/// @param detail     Full report (form lines, kernel rows, tau fit, one line
+///                   per channel) or, when false, the header and one line per
+///                   group with its R^2 and rms before and after; the pipeline
+///                   passes Constants::FileInSample().
+TString Report(const Result &res, const TString &file_label,
+               Bool_t detail = kTRUE);
 /// @brief Draw and save the diagnostics, then free them.
 /// @param[in,out] res Result whose histograms are drawn and then deleted.
 /// @param file_label  Subfile label, used in the plot names.

@@ -2,6 +2,7 @@
 #define CONSTANTS_HPP
 
 #include "DedupStrategy.hpp"
+#include "PulseHistoryGroups.hpp"
 #include "RunEpoch.hpp"
 #include "SlotLayout.hpp"
 #include <Rtypes.h>
@@ -221,12 +222,6 @@ struct StripSumScatterConfig {
   Bool_t REQUIRE_GATE_S5_S6;
   Bool_t SKIP_SAVGOL_PLOTS;
 
-  /// Skip the per-run beam-gate figures, the only output under
-  /// `plots/strip_sum_scatter/<group>` (a run on SOLARIS, a subfile on
-  /// CoMPASS), so no such folders are created. The gates themselves are still
-  /// fitted and applied.
-  Bool_t SKIP_RUN_PLOTS;
-
   /// Also draw the per-region mean traces with RMS bands (the
   /// region_mean_traces_* figures) next to the trace overlays. Off by
   /// default: the overlay already carries the beam mean and its measured
@@ -377,61 +372,6 @@ struct CrossSectionConfig {
   void SetDefaults();
 };
 
-/**
- * @brief Shape of the pulse-history kernel applied to a channel group.
- *
- * Both are fitted whenever any group asks for the form, so the report can
- * compare them; this chooses which one corrects the group's energies.
- */
-enum PulseHistoryKernel {
-  /// One free coefficient per logarithmic dt bin: tracks whatever the
-  /// electronics did, at the price of bin-to-bin noise on sparse groups.
-  kPulseHistoryBinned,
-  /// The pole-zero form (PoleZeroMUSIC, doc/polezero.tex Eq. kernel): the
-  /// direct tail of the previous pulse under the read point plus that pulse's
-  /// share of the trapezoid baseline,
-  ///   k(dt) = -c exp(-(dt + t_m)/tau) + c_B (exp(-t_f/tau) - exp(-dt/tau)),
-  /// the second term only once the baseline unfreezes (dt > t_f). tau is the
-  /// preamp decay: given per group (`PulseHistoryGroupOption::tau_us`) or,
-  /// when not, profiled on a grid; the profile runs either way so a given
-  /// value can be checked against what the data prefer. c and c_B are fitted
-  /// per amplitude band, c_B free because the restorer's effective window is
-  /// not known from the settings. t_m and t_f come from the trapezoid
-  /// settings below.
-  /// Gaps shorter than the trapezoid, where the previous pulse's own top and
-  /// fall sit under the read point, keep one free coefficient per bin.
-  kPulseHistoryForm
-};
-
-/// @brief Per-group pulse-history setting: whether the group is corrected and
-/// with which kernel shape.
-struct PulseHistoryGroupOption {
-  Bool_t enabled = kFALSE;
-  PulseHistoryKernel kernel = kPulseHistoryBinned;
-  /// Known preamp decay time in microseconds, for the form. Positive: the
-  /// applied form uses this tau and the report says where the free profile
-  /// lands relative to it. Zero: the profiled tau is applied.
-  Double_t tau_us = 0.0;
-};
-
-/**
- * @brief Which channel groups the pulse-history correction fits and applies
- * to, one setting per kernel group of PulseHistory (see PulseHistory::Group).
- *
- * Every group defaults to off. A group that is off keeps its channels in the
- * beam-like selection the kernels are fitted on (that selection needs every
- * long end and is not changed by this mask) but gets no kernel and no
- * correction, so its energies are left as read out.
- */
-struct PulseHistoryGroups {
-  PulseHistoryGroupOption long_left;   ///< Long end of the odd strips (L).
-  PulseHistoryGroupOption long_right;  ///< Long end of the even strips (R).
-  PulseHistoryGroupOption short_left;  ///< Short end of the even strips (L).
-  PulseHistoryGroupOption short_right; ///< Short end of the odd strips (R).
-  PulseHistoryGroupOption strip0;      ///< Strip 0, unsegmented.
-  PulseHistoryGroupOption strip17;     ///< Strip 17, unsegmented.
-};
-
 class DatasetConfig {
 public:
   /// Data source
@@ -442,7 +382,9 @@ public:
   /// the preprocess step, in seconds; each chunk becomes one subfile.
   /// Non-positive (e.g. -1) turns splitting off: the preprocess step does
   /// nothing and the pipeline reads each whole file from #SOL_BASE_DIR as one
-  /// subfile, ignoring anything in #SOL_SPLIT_DIR.
+  /// subfile, ignoring anything in #SOL_SPLIT_DIR. With epochs declared,
+  /// MakeEpoch() copies this into `RunEpoch::split_chunk_seconds`, which an
+  /// epoch may override; the tools read Constants::ActiveSplitChunkSeconds().
   Double_t SOL_SPLIT_CHUNK_SECONDS;
   Int_t SOL_N_SPLIT_WORKERS;
 
@@ -485,7 +427,8 @@ public:
   /// its own beam-like events; MIN_EVENTS is the smallest sample that is
   /// trusted, BEAM_LO/HI the window (x the channel's beam peak) every long
   /// end must sit in for an event to count as beam, and APPLY_MAX_US how far
-  /// back the correction looks.
+  /// back the correction looks. CORRECTION is the global switch; the groups
+  /// are per epoch (see PULSE_HISTORY_GROUPS).
   Bool_t PULSE_HISTORY_CORRECTION;
   Long64_t PULSE_HISTORY_MIN_EVENTS;
   Double_t PULSE_HISTORY_BEAM_LO;
@@ -513,6 +456,10 @@ public:
   /// also pick its groups, e.g.
   /// `gInstance.PULSE_HISTORY_GROUPS.long_left.enabled = kTRUE;` and
   /// `gInstance.PULSE_HISTORY_GROUPS.long_left.kernel = kPulseHistoryForm;`.
+  /// With epochs declared, MakeEpoch() copies this set into
+  /// `RunEpoch::pulse_history`, which an epoch may override group by group
+  /// (a known tau for one era, a group off for another); the correction
+  /// reads Constants::ActivePulseHistoryGroups().
   PulseHistoryGroups PULSE_HISTORY_GROUPS;
 
   /// Trapezoid filter settings of the DPP-PHA, in microseconds, which fix the
@@ -535,7 +482,18 @@ public:
   Bool_t HAS_STRIP17;
 
   Bool_t SKIP_EXISTING;
-  Bool_t SAVE_PLOTS;
+
+  /// Per-subfile output: the events summaries, timing, beam calibration and
+  /// pulse-history figure folders of the pipeline, the per-group beam-gate
+  /// folders of strip-sum-scatter, and the full per-file report in the log.
+  /// Every subfile when SAVE_FULL_PLOTS; otherwise only the first
+  /// PLOT_SAMPLE_FILES subfiles (chunks, or gate groups) of each epoch, in
+  /// file order, enough to check every stage without a plots directory the
+  /// size of the data; the other files write one summary line per stage.
+  /// Off by default. Dataset-level figures are always drawn. Read through
+  /// Constants::FileInSample() and Constants::SavePlots().
+  Bool_t SAVE_FULL_PLOTS;
+  Int_t PLOT_SAMPLE_FILES;
 
   /// Number of sample traces to save during event build and normed summary
   /// passes (0 = disabled). Saved as overlays in events_summary and
@@ -700,6 +658,36 @@ const std::vector<Int_t> &ActiveRunNumbers();
 /// @return The cap, or `-1` for all — which is also the answer with no epoch
 /// set.
 Int_t ActiveMaxFiles();
+
+/// @brief Chunk length the active epoch's `.sol` files are split into, in
+///        seconds; non-positive means whole files. The flat
+///        `SOL_SPLIT_CHUNK_SECONDS` when no epoch is set.
+Double_t ActiveSplitChunkSeconds();
+/// @brief The pulse-history groups in force: the active epoch's set, or the
+///        flat `PULSE_HISTORY_GROUPS` when no epoch is set.
+const PulseHistoryGroups &ActivePulseHistoryGroups();
+
+/// @brief Whether the file this thread is processing is in the per-file
+///        sample: every file with `SAVE_FULL_PLOTS`, otherwise the ones the
+///        tool marked with SetPlotsThisFile(), the first `PLOT_SAMPLE_FILES`
+///        of each epoch. A sample file draws its figures and writes its full
+///        report to the log; the rest write one summary line per stage.
+Bool_t FileInSample();
+/// @brief FileInSample(), by the name the plot call sites use.
+Bool_t SavePlots();
+/// @brief `std::cout` for a file in the sample, a stream that discards
+///        otherwise: the per-file detail lines (per strip, per channel) go
+///        through this, so a file outside the sample keeps only its summary
+///        lines. DetailErr() is the same for `std::cerr`.
+std::ostream &Detail();
+std::ostream &DetailErr();
+/// @brief Whether the k-th file (0-based, in file order) of an epoch's list
+///        is in the plot sample.
+Bool_t InPlotSample(Int_t k);
+/// @brief Mark the file this thread is about to process as in (or out of)
+///        the plot sample. Per thread: a tool's worker calls it before each
+///        file; the main thread starts out of the sample.
+void SetPlotsThisFile(Bool_t on);
 
 /**
  * @brief The channel map in force.

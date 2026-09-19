@@ -61,7 +61,6 @@
  */
 enum TagCut {
   kTagPass = 0,
-  kCutAllStrips, ///< A strip did not fire.
   kCutUpstream,  ///< A strip before the reaction was not beam-like.
   kCutJump,      ///< Jump at the reaction strip below the gate.
   kCutReacLevel, ///< Reaction-strip deposit below 1 + the gate.
@@ -106,14 +105,36 @@ struct TagThresholds {
  */
 enum PreCut {
   kPrePass = 0,
-  kPreGate,     ///< Failed a beam gate.
-  kPrePileup,   ///< Pileup.
-  kPreNoise,    ///< Noise.
-  kPreBothMult, ///< Both-ends multiplicity (BOTH_MULT_MAX).
+  kPreAllStrips, ///< A strip did not fire.
+  kPreGate,      ///< Failed a beam gate.
+  kPrePileup,    ///< Pileup.
+  kPreNoise,     ///< Noise.
+  kPreBothMult,  ///< Both-ends multiplicity (BOTH_MULT_MAX).
   kNPreCuts
 };
 /// @brief Short labels for PreCut, indexed by it.
 extern const char *const kPreCutName[kNPreCuts];
+
+/**
+ * @brief One step of the event selection, as
+ * StripSumScatter::DescribeSelection lists them: in the order the code
+ * applies them, with the configured values written out.
+ *
+ * The cut report and the selection diagram (SelectionDiagram) both read this
+ * list, so which steps are on and in which order comes from one place, kept
+ * next to RejectReason.
+ */
+struct SelectionStep {
+  /// Where in the selection the step sits.
+  enum Stage { kInput, kEventLevel, kPerStrip, kOutcome };
+  Stage stage;
+  TString id;     ///< Node identifier, `[a-z0-9_]`.
+  TString name;   ///< Short name, as in the cut report.
+  TString detail; ///< One line: the condition to pass, with the numbers in.
+  Bool_t on;      ///< False when the configuration switches the step off.
+  Int_t pre_cut;  ///< The PreCut it counts under, or -1.
+  Int_t tag_cut;  ///< The TagCut it counts under, or -1.
+};
 
 /// @brief A pair of strips whose sums form one classification plane.
 struct GateSpec {
@@ -310,6 +331,8 @@ public:
    * fill and write of a fresh one, and the batch scatter figures. Leaves the
    * scatters and the trace reservoir in memory. compute-regions calls this in
    * the all-tagged mode so strip-sum-scatter itself never has to be run.
+   * Writes the selection diagram (SelectionDiagram::Write) first, before any
+   * data are read.
    *
    * @return `kFALSE` when there are no runs or the beam cannot be measured.
    */
@@ -533,6 +556,10 @@ public:
   /**
    * @brief Whether an event is tagged as a reaction at a given strip.
    *
+   * The per-strip conditions only: the event-level cuts (PreCut, every strip
+   * fired among them) are applied once per event by the fill, before any
+   * strip is asked about, and are assumed here.
+   *
    * @param ev   Decoded event.
    * @param reac Reaction strip index.
    * @return `kTRUE` if the event is tagged there.
@@ -580,6 +607,19 @@ public:
   ///        `<threshold>+` and `<threshold>-`. Empty when `CUT_VARIATION` is
   ///        off.
   static std::vector<std::pair<TString, TagThresholds>> ThresholdVariants();
+
+  /**
+   * @brief The whole selection as the configuration sets it, in order.
+   *
+   * Input and beam reference, the event-level cuts, the tag conditions per
+   * reaction strip and what becomes of a tag, each with its configured
+   * numbers and whether it is on. Read by WriteCutReport() for the on/off
+   * columns and by SelectionDiagram for the block diagram, so it is kept
+   * beside RejectReason and must follow its order.
+   *
+   * @return The steps, SelectionStep::kInput first.
+   */
+  static std::vector<SelectionStep> DescribeSelection();
 
 private:
   static Bool_t SimBeamGains(Double_t *gain);

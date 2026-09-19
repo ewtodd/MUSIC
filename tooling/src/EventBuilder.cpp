@@ -1,9 +1,6 @@
 #include "EventBuilder.hpp"
 #include "EventsSummary.hpp"
 
-// Compile-time toggle for the streaming pass's every-10M-entry progress line.
-static const Bool_t kLogStreamProgress = kTRUE;
-
 void EventBuilder::ResetEventState(EventState &e) {
   for (Int_t k = 0; k < 16; k++) {
     e.leftdE[k] = 0;
@@ -477,11 +474,12 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   DedupStrategy dedup_strat = Constants::ActiveDedupStrategy();
   PerChannelData *pc_cur = &cur_per_channel;
 
-  std::cout << "[" << file_label << "] Streaming pass over " << n_entries
-            << " sorted hits (reference: "
-            << Constants::ActiveReferenceChannel()
-            << ", window: " << Constants::ActiveEventTimeWindowUs() << " us)"
-            << std::endl;
+  if (Constants::FileInSample())
+    std::cout << "[" << file_label << "] Streaming pass over " << n_entries
+              << " sorted hits (reference: "
+              << Constants::ActiveReferenceChannel()
+              << ", window: " << Constants::ActiveEventTimeWindowUs() << " us)"
+              << std::endl;
 
   for (Long64_t i = 0; i < n_entries; i++) {
     const RawHit &h = hits[i];
@@ -587,8 +585,10 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       }
     }
 
-    if (kLogStreamProgress && i % 10000000 == 0)
+#if MUSIC_HOT_PATH_LOGGING
+    if (i % 10000000 == 0)
       std::cout << "  Stream progress: " << i << "/" << n_entries << std::endl;
+#endif
   }
 
   // Finalize the last event.
@@ -611,8 +611,9 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     event_idx++;
   }
 
-  std::cout << "Found " << n_ref << " " << Constants::ActiveReferenceChannel()
-            << " hits." << std::endl;
+  if (Constants::FileInSample())
+    std::cout << "Found " << n_ref << " " << Constants::ActiveReferenceChannel()
+              << " hits." << std::endl;
 
   if (ref_mode && n_ref == 0) {
     std::cerr << "No " << Constants::ActiveReferenceChannel()
@@ -657,6 +658,20 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   output_file->Close();
   delete output_file;
 
+  // Outside the per-file sample one line says what the build did; the full
+  // block below is for the sample files.
+  if (!Constants::FileInSample()) {
+    std::cout << "[events] " << file_label << ": " << total_events
+              << " events, " << complete_events << " complete ("
+              << Form("%.1f", total_events > 0
+                                  ? 100.0 * complete_events / total_events
+                                  : 0.0)
+              << "%), " << n_ref << " " << Constants::ActiveReferenceChannel()
+              << " hits at " << Form("%.0f", ref_rate_hz) << " Hz, "
+              << dropped_outside_window << " outside window, dedup dropped "
+              << dropped_anode_hits_total << " anode" << std::endl;
+    return kTRUE;
+  }
   if (emptyChannelMapEvents != 0)
     std::cout << "Observed " << emptyChannelMapEvents
               << " hits with empty entry in channel map." << std::endl;

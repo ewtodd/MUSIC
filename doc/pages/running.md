@@ -32,7 +32,11 @@ These operate on the pipeline's output ROOT files, and are all in
 - **`calibrate-beam`** — per-channel beam-peak calibration, left/right gain
   matching, strip alignment, energy-resolution aggregation.
 - **`strip-sum-scatter`** — reaction-strip scatter and dE plots, trace region
-  overlays, comparisons against simulation.
+  overlays, comparisons against simulation. Also writes the event selection as
+  configured, cut by cut in the order applied, to
+  `plots/strip_sum_scatter/selection.{dot,mmd}` (and `.png`/`.pdf` when
+  Graphviz's `dot` is on the PATH, as it is in the dev shells); `compute-regions`
+  writes the same in the all-tagged mode.
 - **`split-sol`**, **`preprocess-sol`** — the SOL-processing tools.
 
 ## Where output goes

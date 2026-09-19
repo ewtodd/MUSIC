@@ -1,0 +1,89 @@
+digraph selection {
+  graph [rankdir=TB, newrank=true, splines=ortho, nodesep=0.25, ranksep=0.3, fontname="Helvetica", fontsize=13, labelloc=t, label=<<B>87Rb event selection</B>>];
+  node [shape=box, style="rounded,filled", fillcolor="#f4f4f4", color="#555555", fontname="Helvetica", fontsize=10, margin="0.16,0.08"];
+  edge [color="#555555", fontname="Helvetica", fontsize=9, arrowsize=0.7];
+  subgraph cluster_0 {
+    label="input"; labeljust="l"; fontname="Helvetica-Bold"; fontsize=11; color="#aaaaaa"; style="rounded";
+    events [fillcolor="#e8eef7", label=<<B>calibrated events</B><BR/>E(s) = strip total in beam units (beam = 1);<BR/>beam gates fitted per subfile>];
+    beam_ref [fillcolor="#e8eef7", label=<<B>beam reference</B><BR/>beam mean and σ per strip from the first<BR/>subfile's pure-beam sample: every strip<BR/>fired, inside the entrance (strips 0 vs 1)<BR/>and exit (strips 16 vs 17) ellipses,<BR/>3σ-clipped>];
+  }
+  subgraph cluster_1 {
+    label="event-level cuts"; labeljust="l"; fontname="Helvetica-Bold"; fontsize=11; color="#aaaaaa"; style="rounded";
+    all_strips [fillcolor="#f4f4f4", label=<<B>all strips</B><BR/>every strip 0-17 read above zero>];
+    rej_all_strips [shape=plaintext, style="", fontsize=9, fontcolor="#b00020", label="drop event"];
+    rej_all_strips -> all_strips [dir=back, color="#b00020", arrowsize=0.6];
+    {rank=same; rej_all_strips; all_strips;}
+    gate [fillcolor="#f4f4f4", label=<<B>beam gate</B><BR/>strip 0 vs strip 1 inside the fitted beam<BR/>ellipse at 5.0 × 5.0 σ>];
+    rej_gate [shape=plaintext, style="", fontsize=9, fontcolor="#b00020", label="drop event"];
+    rej_gate -> gate [dir=back, color="#b00020", arrowsize=0.6];
+    {rank=same; rej_gate; gate;}
+    pileup [fillcolor="#f4f4f4", label=<<B>pileup</B><BR/>none of strips 1-16 at or above beam + 8.0<BR/>σ>];
+    rej_pileup [shape=plaintext, style="", fontsize=9, fontcolor="#b00020", label="drop event"];
+    rej_pileup -> pileup [dir=back, color="#b00020", arrowsize=0.6];
+    {rank=same; rej_pileup; pileup;}
+    noise [fillcolor="#f4f4f4", label=<<B>noise</B><BR/>none of strips 1-16 at or below beam −<BR/>12.0 σ>];
+    rej_noise [shape=plaintext, style="", fontsize=9, fontcolor="#b00020", label="drop event"];
+    rej_noise -> noise [dir=back, color="#b00020", arrowsize=0.6];
+    {rank=same; rej_noise; noise;}
+  }
+  subgraph cluster_2 {
+    label="per reaction strip"; labeljust="l"; fontname="Helvetica-Bold"; fontsize=11; color="#aaaaaa"; style="rounded";
+    reac_loop [fillcolor="#e8eef7", label=<<B>for each reaction strip reac = 2..11</B><BR/>every strip is tested on its own; the first<BR/>failing condition ends its test>];
+    upstream [fillcolor="#f4f4f4", label=<<B>upstream beam</B><BR/>every strip 1..reac−1 within 2.0 σ of the<BR/>beam>];
+    rej_upstream [shape=plaintext, style="", fontsize=9, fontcolor="#b00020", label="no tag at reac"];
+    rej_upstream -> upstream [dir=back, color="#b00020", arrowsize=0.6];
+    {rank=same; rej_upstream; upstream;}
+    jump [fillcolor="#f4f4f4", label=<<B>jump</B><BR/>E(reac) − E(reac−1) &gt; 1.0 σ(reac)>];
+    rej_jump [shape=plaintext, style="", fontsize=9, fontcolor="#b00020", label="no tag at reac"];
+    rej_jump -> jump [dir=back, color="#b00020", arrowsize=0.6];
+    {rank=same; rej_jump; jump;}
+    reac_level [fillcolor="#f4f4f4", label=<<B>reac level</B><BR/>E(reac) &gt; beam + 1.0 σ(reac)>];
+    rej_reac_level [shape=plaintext, style="", fontsize=9, fontcolor="#b00020", label="no tag at reac"];
+    rej_reac_level -> reac_level [dir=back, color="#b00020", arrowsize=0.6];
+    {rank=same; rej_reac_level; reac_level;}
+    smooth [fillcolor="#f4f4f4", label=<<B>smoothness</B><BR/>every step from reac+1 to strip 17 within<BR/>8.0 σ>];
+    rej_smooth [shape=plaintext, style="", fontsize=9, fontcolor="#b00020", label="no tag at reac"];
+    rej_smooth -> smooth [dir=back, color="#b00020", arrowsize=0.6];
+    {rank=same; rej_smooth; smooth;}
+    rerise [fillcolor="#f4f4f4", label=<<B>re-rise</B><BR/>once back within 1.0 σ of the beam after<BR/>the peak, never above beam + 4.0 σ again>];
+    rej_rerise [shape=plaintext, style="", fontsize=9, fontcolor="#b00020", label="no tag at reac"];
+    rej_rerise -> rerise [dir=back, color="#b00020", arrowsize=0.6];
+    {rank=same; rej_rerise; rerise;}
+    post_above [fillcolor="#f4f4f4", label=<<B>post above</B><BR/>strips reac+1 to reac+3 all above beam + 1.5<BR/>σ>];
+    rej_post_above [shape=plaintext, style="", fontsize=9, fontcolor="#b00020", label="no tag at reac"];
+    rej_post_above -> post_above [dir=back, color="#b00020", arrowsize=0.6];
+    {rank=same; rej_post_above; post_above;}
+    last_strip [fillcolor="#f4f4f4", label=<<B>end strip</B><BR/>strip 17 below beam − 3.0 σ>];
+    rej_last_strip [shape=plaintext, style="", fontsize=9, fontcolor="#b00020", label="no tag at reac"];
+    rej_last_strip -> last_strip [dir=back, color="#b00020", arrowsize=0.6];
+    {rank=same; rej_last_strip; last_strip;}
+    cliff [fillcolor="#f4f4f4", label=<<B>cliff</B><BR/>the last step, strip 16 to 17, at most 50%<BR/>of the fall from the peak>];
+    rej_cliff [shape=plaintext, style="", fontsize=9, fontcolor="#b00020", label="no tag at reac"];
+    rej_cliff -> cliff [dir=back, color="#b00020", arrowsize=0.6];
+    {rank=same; rej_cliff; cliff;}
+  }
+  subgraph cluster_3 {
+    label="outcome"; labeljust="l"; fontname="Helvetica-Bold"; fontsize=11; color="#aaaaaa"; style="rounded";
+    tagged [fillcolor="#e3f2e1", label=<<B>tagged</B><BR/>a reaction at reac; an event may tag at more<BR/>than one strip>];
+    n_beam [fillcolor="#e8eef7", label=<<B>beam count</B><BR/>events past the event-level cuts with beam<BR/>upstream of reac: the denominator>];
+    xs [fillcolor="#e8eef7", label=<<B>cross section, all tagged</B><BR/>σ(reac) = tagged / (beam count × target<BR/>atoms per strip); systematic: each threshold<BR/>shifted ±0.1 σ (cliff ±0.10), one at a<BR/>time, largest change per threshold in<BR/>quadrature>];
+  }
+  {rank=same; events -> reac_loop -> tagged [style=invis];}
+  events -> beam_ref;
+  beam_ref -> all_strips;
+  all_strips -> gate;
+  gate -> pileup;
+  pileup -> noise;
+  noise -> reac_loop [constraint=false];
+  reac_loop -> upstream;
+  upstream -> jump;
+  jump -> reac_level;
+  reac_level -> smooth;
+  smooth -> rerise;
+  rerise -> post_above;
+  post_above -> last_strip;
+  last_strip -> cliff;
+  cliff -> tagged [constraint=false];
+  tagged -> xs;
+  n_beam -> xs;
+}

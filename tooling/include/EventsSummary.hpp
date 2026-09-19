@@ -117,7 +117,7 @@ public:
    * @brief Draw a set of traces overlaid on one frame and save it.
    *
    * All traces are drawn in a single colour on a `TH2F` frame. The canvas is
-   * saved to the plots directory when `SAVE_PLOTS` is set.
+   * saved to the plots directory when the file draws (Constants::SavePlots()).
    *
    * @param traces    Traces to overlay. **Not deleted** — the caller keeps
    *                  ownership.

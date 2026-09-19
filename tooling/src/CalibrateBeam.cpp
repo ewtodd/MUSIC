@@ -137,9 +137,10 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
   delete sf;
 
   if (h->GetEntries() < 100) {
-    std::cerr << "  " << run_label << ": too few events for the strip " << sy
-              << " beam gate (strips " << sx << " vs " << sy << ")"
-              << std::endl;
+    Constants::DetailErr() << "  " << run_label
+                           << ": too few events for the strip " << sy
+                           << " beam gate (strips " << sx << " vs " << sy << ")"
+                           << std::endl;
     delete h;
     return out;
   }
@@ -163,8 +164,9 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
   Moments2D m = BeamFitUtils::ComputeMoments(h, lo_bx, hi_bx, lo_by, hi_by,
                                              kSeedFrac * peak_val, bw_x, bw_y);
   if (m.weight <= 0) {
-    std::cerr << "  " << run_label << ": no bins above beam seed threshold"
-              << std::endl;
+    Constants::DetailErr() << "  " << run_label
+                           << ": no bins above beam seed threshold"
+                           << std::endl;
     delete h;
     return out;
   }
@@ -194,10 +196,10 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
   out.sigma_y = m.sigma_y;
   out.rho = m.rho;
   out.ok = kTRUE;
-  std::cout << "  beam gate strip " << sy << " (strips " << sx << " vs " << sy
-            << "): mu=(" << out.mu_x << "," << out.mu_y << ") sigma=("
-            << out.sigma_x << "," << out.sigma_y << ") rho=" << out.rho
-            << std::endl;
+  Constants::Detail() << "  beam gate strip " << sy << " (strips " << sx
+                      << " vs " << sy << "): mu=(" << out.mu_x << ","
+                      << out.mu_y << ") sigma=(" << out.sigma_x << ","
+                      << out.sigma_y << ") rho=" << out.rho << std::endl;
 
   if (save_plot) {
     TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
@@ -221,7 +223,7 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
     e->SetLineColor(kViolet + 2);
     e->SetLineWidth(2);
     e->Draw();
-    if (Constants::cfg.SAVE_PLOTS)
+    if (Constants::SavePlots())
       PlottingUtils::SaveFigure(cv, Form("beam_gate_s%02d", sy),
                                 plot_subdir + "/beam_gate",
                                 PlotSaveOptions::kLINEAR);
@@ -804,7 +806,7 @@ void SaveRidgeFitPlots(const StripPairSamples pairs[18], const RidgeFit dbg[18],
         lw[k]->Draw();
       }
     }
-    if (Constants::cfg.SAVE_PLOTS)
+    if (Constants::SavePlots())
       PlottingUtils::SaveFigure(cv, Form("ridge_s%02d", s), subdir,
                                 PlotSaveOptions::kLINEAR);
     delete cv;
@@ -883,9 +885,9 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
     ChannelCal &c_long = chans[l_is_long ? idx_l[s] : idx_r[s]];
     ChannelCal &c_short = chans[l_is_long ? idx_r[s] : idx_l[s]];
     if (!IsCalibrated(c_long)) {
-      std::cerr << "  strip " << s
-                << ": long side uncalibrated; skipping L/R gain match"
-                << std::endl;
+      Constants::DetailErr()
+          << "  strip " << s
+          << ": long side uncalibrated; skipping L/R gain match" << std::endl;
       continue;
     }
     Double_t peak_short = 0.0, peak_long = 0.0, offset = 0.0;
@@ -906,25 +908,24 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
         peak_long = c_long.fit_adc;
         peak_short = peak_long / k;
         offset = (inter - peak_long) / k;
-        std::cout << "  strip " << s << " ridge slope=" << Form("%.3f", slope)
-                  << " intercept=" << Form("%.1f", inter)
-                  << " ADC; long anchor=" << Form("%.1f", peak_long)
-                  << " (modal)  short anchor=" << Form("%.1f", peak_short)
-                  << " ADC  short offset=" << Form("%.1f", offset) << " ADC ("
-                  << Form("%.3f", offset / peak_long) << " x C_long)"
-                  << std::endl;
+        Constants::Detail()
+            << "  strip " << s << " ridge slope=" << Form("%.3f", slope)
+            << " intercept=" << Form("%.1f", inter)
+            << " ADC; long anchor=" << Form("%.1f", peak_long)
+            << " (modal)  short anchor=" << Form("%.1f", peak_short)
+            << " ADC  short offset=" << Form("%.1f", offset) << " ADC ("
+            << Form("%.3f", offset / peak_long) << " x C_long)" << std::endl;
       } else
-        std::cerr << "  strip " << s << ": ridge not measurable "
-                  << "(slope=" << Form("%.3f", slope)
-                  << ", intercept=" << Form("%.1f", inter) << ")"
-                  << (ridge_dbg[s].fail[0] ? Form(" [%s]", ridge_dbg[s].fail)
-                                           : "")
-                  << " gated=" << Form("%lld", ridge_dbg[s].n_gated)
-                  << " short_win=" << Form("%lld", ridge_dbg[s].n_short_window)
-                  << " long_band=" << Form("%lld", ridge_dbg[s].n_long_band)
-                  << " slices=" << ridge_dbg[s].n_slices
-                  << " min_per_slice=" << ridge_dbg[s].min_per_slice
-                  << std::endl;
+        Constants::DetailErr()
+            << "  strip " << s << ": ridge not measurable "
+            << "(slope=" << Form("%.3f", slope)
+            << ", intercept=" << Form("%.1f", inter) << ")"
+            << (ridge_dbg[s].fail[0] ? Form(" [%s]", ridge_dbg[s].fail) : "")
+            << " gated=" << Form("%lld", ridge_dbg[s].n_gated)
+            << " short_win=" << Form("%lld", ridge_dbg[s].n_short_window)
+            << " long_band=" << Form("%lld", ridge_dbg[s].n_long_band)
+            << " slices=" << ridge_dbg[s].n_slices
+            << " min_per_slice=" << ridge_dbg[s].min_per_slice << std::endl;
     }
 
     if (peak_short <= 0 || peak_long <= 0)
@@ -933,10 +934,11 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
     // Catches ridges too flat for the intercept test: ratio absurd.
     Double_t ratio = peak_short / peak_long;
     if (ratio < kRidgeRatioLo || ratio > kRidgeRatioHi) {
-      std::cerr << "  strip " << s << ": ridge ratio " << Form("%.2f", ratio)
-                << " outside [" << kRidgeRatioLo << ", " << kRidgeRatioHi
-                << "]; rejecting anchor " << Form("%.1f", peak_short) << " ADC"
-                << std::endl;
+      Constants::DetailErr()
+          << "  strip " << s << ": ridge ratio " << Form("%.2f", ratio)
+          << " outside [" << kRidgeRatioLo << ", " << kRidgeRatioHi
+          << "]; rejecting anchor " << Form("%.1f", peak_short) << " ADC"
+          << std::endl;
       continue;
     }
     long_anchor_adc[s] = peak_long;
@@ -973,9 +975,10 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
                        ? all_ratios[m / 2]
                        : 0.5 * (all_ratios[m / 2 - 1] + all_ratios[m / 2]);
   }
-  std::cout << "  ridge ratio medians: odd=" << Form("%.3f", median_ratio[1])
-            << " even=" << Form("%.3f", median_ratio[0])
-            << " all=" << Form("%.3f", global_ratio) << std::endl;
+  Constants::Detail() << "  ridge ratio medians: odd="
+                      << Form("%.3f", median_ratio[1])
+                      << " even=" << Form("%.3f", median_ratio[0])
+                      << " all=" << Form("%.3f", global_ratio) << std::endl;
   // The offset fallback, likewise per parity (it is a chain property), in
   // units of C_long; 0 where the parity measured none.
   Double_t median_offset[2] = {0.0, 0.0};
@@ -988,9 +991,10 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
     median_offset[par] =
         (m % 2 == 1) ? v[m / 2] : 0.5 * (v[m / 2 - 1] + v[m / 2]);
   }
-  std::cout << "  ridge offset medians (x C_long): odd="
-            << Form("%.3f", median_offset[1])
-            << " even=" << Form("%.3f", median_offset[0]) << std::endl;
+  Constants::Detail() << "  ridge offset medians (x C_long): odd="
+                      << Form("%.3f", median_offset[1])
+                      << " even=" << Form("%.3f", median_offset[0])
+                      << std::endl;
 
   for (Int_t s = 1; s <= 16; s++) {
     if (idx_l[s] < 0 || idx_r[s] < 0)
@@ -1005,32 +1009,37 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
       long_anchor_adc[s] = c_long.fit_adc;
       Double_t r = median_ratio[s % 2] > 0 ? median_ratio[s % 2] : global_ratio;
       if (r <= 0) {
-        std::cerr << "  strip " << s
-                  << ": no ridge and no ratio fallback; keeping "
-                     "independent gains"
-                  << std::endl;
+        Constants::DetailErr() << "  strip " << s
+                               << ": no ridge and no ratio fallback; keeping "
+                                  "independent gains"
+                               << std::endl;
         continue;
       }
       short_anchor_adc[s] = r * long_anchor_adc[s];
       short_offset_adc[s] = median_offset[s % 2] * long_anchor_adc[s];
-      std::cout << "  strip " << s << " short_anchor=ratio fallback "
-                << Form("%.3f", r)
-                << " x C_long = " << Form("%.1f", short_anchor_adc[s]) << " ADC"
-                << (median_ratio[s % 2] > 0 ? "" : " (global, parity had none)")
-                << "  short offset=parity median "
-                << Form("%.3f", median_offset[s % 2])
-                << " x C_long = " << Form("%.1f", short_offset_adc[s]) << " ADC"
-                << std::endl;
+      Constants::Detail() << "  strip " << s << " short_anchor=ratio fallback "
+                          << Form("%.3f", r)
+                          << " x C_long = " << Form("%.1f", short_anchor_adc[s])
+                          << " ADC"
+                          << (median_ratio[s % 2] > 0
+                                  ? ""
+                                  : " (global, parity had none)")
+                          << "  short offset=parity median "
+                          << Form("%.3f", median_offset[s % 2])
+                          << " x C_long = " << Form("%.1f", short_offset_adc[s])
+                          << " ADC" << std::endl;
     }
     c_long.gain = 1.0 / long_anchor_adc[s];
     c_short.gain = 1.0 / short_anchor_adc[s];
     c_short.offset_adc = short_offset_adc[s];
     matched[s] = kTRUE;
-    std::cout << "  strip " << s
-              << " L/R match: long anchor=" << Form("%.1f", long_anchor_adc[s])
-              << " ADC  short anchor=" << Form("%.1f", short_anchor_adc[s])
-              << " ADC  short offset=" << Form("%.1f", short_offset_adc[s])
-              << " ADC" << (ridge_ok[s] ? "" : " (fallback)") << std::endl;
+    Constants::Detail() << "  strip " << s << " L/R match: long anchor="
+                        << Form("%.1f", long_anchor_adc[s])
+                        << " ADC  short anchor="
+                        << Form("%.1f", short_anchor_adc[s])
+                        << " ADC  short offset="
+                        << Form("%.1f", short_offset_adc[s]) << " ADC"
+                        << (ridge_ok[s] ? "" : " (fallback)") << std::endl;
   }
 
   // Pass 2: check, do not correct. On the pairs inside the ridge fit window
@@ -1064,16 +1073,18 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
     if (!matched[s])
       continue;
     if (esum_peak[s] <= 0) {
-      std::cerr << "  strip " << s << ": no summed beam peak in (" << kGmEsumLo
-                << ", " << kGmEsumHi << ") a.u." << std::endl;
+      Constants::DetailErr()
+          << "  strip " << s << ": no summed beam peak in (" << kGmEsumLo
+          << ", " << kGmEsumHi << ") a.u." << std::endl;
       continue;
     }
     Double_t dev = esum_peak[s] - 1.0;
-    std::cout << "  strip " << s
-              << " summed beam peak=" << Form("%.4f", esum_peak[s]) << " a.u. ("
-              << Form("%+.1f%%", 100.0 * dev) << ")"
-              << (TMath::Abs(dev) > 0.05 ? "  <-- check ridge fit" : "")
-              << std::endl;
+    Constants::Detail() << "  strip " << s
+                        << " summed beam peak=" << Form("%.4f", esum_peak[s])
+                        << " a.u. (" << Form("%+.1f%%", 100.0 * dev) << ")"
+                        << (TMath::Abs(dev) > 0.05 ? "  <-- check ridge fit"
+                                                   : "")
+                        << std::endl;
   }
 }
 
@@ -1105,8 +1116,8 @@ void ReduceToAnchors(std::vector<ChannelCal> &chans,
       RobustPeakSeed(v, mode, rsigma);
       c.fit_adc = mode;
     }
-    std::cout << "  " << c.name << " anchor[ADC]=" << c.fit_adc
-              << " (n=" << c.n_samples << ")" << std::endl;
+    Constants::Detail() << "  " << c.name << " anchor[ADC]=" << c.fit_adc
+                        << " (n=" << c.n_samples << ")" << std::endl;
   }
 
   // L/R match (strips 1-16): both anchors from the charge-sharing ridge, the
@@ -1227,7 +1238,8 @@ void WriteCalibrationToEvents(const FileSpec &spec,
     return;
   }
   WriteCalibrationTree(f, chans, align);
-  std::cout << "  wrote calibration into " << events_subpath << std::endl;
+  Constants::Detail() << "  wrote calibration into " << events_subpath
+                      << std::endl;
   f->Close();
   delete f;
 }
@@ -1310,7 +1322,7 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
   for (Int_t s = 0; s < kNStrips; s++)
     leg->AddEntry(h[s], Form("S%d", s), "l");
   leg->Draw();
-  if (Constants::cfg.SAVE_PLOTS)
+  if (Constants::SavePlots())
     PlottingUtils::SaveFigure(cv, "dynamic_range_check", plot_subdir,
                               PlotSaveOptions::kLOG);
   delete cv;
@@ -1450,8 +1462,8 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
   sf->Close();
   delete sf;
 
-  std::cout << "  strip alignment: " << n_used << " events decoded"
-            << std::endl;
+  Constants::Detail() << "  strip alignment: " << n_used << " events decoded"
+                      << std::endl;
 
   Bool_t beam_ok[kNStrips] = {kFALSE};
   Bool_t pile_ok[kNStrips] = {kFALSE};
@@ -1464,8 +1476,9 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
     proj->SetDirectory(nullptr);
     Long64_t n_entries = Long64_t(proj->GetEntries());
     if (n_entries < kMinSamples) {
-      std::cerr << "  strip " << s << ": too few entries for alignment ("
-                << n_entries << ")" << std::endl;
+      Constants::DetailErr()
+          << "  strip " << s << ": too few entries for alignment (" << n_entries
+          << ")" << std::endl;
       delete proj;
       continue;
     }
@@ -1473,8 +1486,9 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
 
     Double_t beam = SmoothedPeakIn(proj, kBeamLo, kBeamHi);
     if (beam <= 0) {
-      std::cerr << "  strip " << s << ": no beam peak in [" << kBeamLo << ", "
-                << kBeamHi << "] a.u.; left unaligned" << std::endl;
+      Constants::DetailErr()
+          << "  strip " << s << ": no beam peak in [" << kBeamLo << ", "
+          << kBeamHi << "] a.u.; left unaligned" << std::endl;
       delete proj;
       continue;
     }
@@ -1496,11 +1510,13 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
       result.offsets[s] = 0.0;
     }
     valid_strips++;
-    std::cout << "  strip " << s << " beam=" << Form("%.4f", beam) << " pileup="
-              << (pile > 0 ? Form("%.4f", pile) : "none (factor only)")
-              << " a.u.  factor=" << Form("%.4f", result.factors[s])
-              << " offset=" << Form("%+.4f", result.offsets[s])
-              << " (n=" << n_entries << ")" << std::endl;
+    Constants::Detail() << "  strip " << s << " beam=" << Form("%.4f", beam)
+                        << " pileup="
+                        << (pile > 0 ? Form("%.4f", pile)
+                                     : "none (factor only)")
+                        << " a.u.  factor=" << Form("%.4f", result.factors[s])
+                        << " offset=" << Form("%+.4f", result.offsets[s])
+                        << " (n=" << n_entries << ")" << std::endl;
   }
   result.ok = (valid_strips >= 4) ? kTRUE : kFALSE;
 
@@ -1530,7 +1546,7 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
       g_pile_plot->SetMarkerColor(kViolet + 2);
       g_pile_plot->Draw("P SAME");
     }
-    if (Constants::cfg.SAVE_PLOTS)
+    if (Constants::SavePlots())
       PlottingUtils::SaveFigure(cv, "strip_alignment_check", plot_subdir,
                                 PlotSaveOptions::kLINEAR);
     delete cv;
@@ -1547,7 +1563,7 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
     const FileSpec &spec, const std::vector<ChannelCal> &chans_template) {
   TString file_label = FileSet::FileLabel(spec);
   TString plot_subdir = "beam_calibration/" + file_label;
-  std::cout << "Beam calibration: " << file_label << std::endl;
+  Constants::Detail() << "Beam calibration: " << file_label << std::endl;
 
   // One gate per strip: strip total vs its neighbour's. A strip whose gate
   // cannot be fitted is excluded from calibration, not the whole subfile.
@@ -1561,9 +1577,10 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
       if (gate[s].ok)
         n_gates++;
       else
-        std::cerr << "  " << file_label << ": strip " << s
-                  << " beam gate failed; that strip is not calibrated here"
-                  << std::endl;
+        Constants::DetailErr()
+            << "  " << file_label << ": strip " << s
+            << " beam gate failed; that strip is not calibrated here"
+            << std::endl;
     }
     // Strip 0 shares strip 1's gate: there is no strip before it, so the
     // (0, 1) pair is the only one available to either.
@@ -1603,14 +1620,15 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
           Form("too few beam samples (%lld < %lld)", c.n_samples, kMinSamples);
     else
       why = Form("bad exp anchor (fit_adc=%.1f)", c.fit_adc);
-    std::cerr << "  [uncalibrated " << kind << "] " << c.name << " -> gain 0; "
-              << why << " (beam n=" << c.n_samples << ")" << std::endl;
+    Constants::DetailErr() << "  [uncalibrated " << kind << "] " << c.name
+                           << " -> gain 0; " << why
+                           << " (beam n=" << c.n_samples << ")" << std::endl;
   }
 
   for (Int_t i = 0; i < Int_t(chans.size()); i++)
     if (IsCalibrated(chans[i]))
-      std::cout << "  " << chans[i].name << " gain=" << Gain(chans[i])
-                << " a.u./ADC" << std::endl;
+      Constants::Detail() << "  " << chans[i].name << " gain=" << Gain(chans[i])
+                          << " a.u./ADC" << std::endl;
 
   StripAlignmentResult align;
 
@@ -1634,7 +1652,24 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
     SaveDynamicRangeOverlay(spec, chans, plot_subdir, file_label);
   }
 
-  std::cout << "  " << file_label << " calibration complete." << std::endl;
+  // One line per subfile whatever the sample: what was measured and what fell
+  // back. The per-strip and per-channel lines above are detail.
+  Int_t n_cal = 0, n_uncal = 0, n_ridge = 0, n_aligned = 0;
+  for (Int_t i = 0; i < Int_t(chans.size()); i++) {
+    if (IsCalibrated(chans[i]))
+      n_cal++;
+    else
+      n_uncal++;
+    if (chans[i].ridge_ratio > 0.0)
+      n_ridge++;
+  }
+  for (Int_t s = 1; s <= 16; s++)
+    if (align.ok && align.factors[s] != 1.0)
+      n_aligned++;
+  std::cout << "[calibration] " << file_label << ": gates " << n_gates
+            << "/17, channels " << n_cal << " calibrated (" << n_uncal
+            << " not), ridge measured on " << n_ridge
+            << "/16 strips, alignment on " << n_aligned << "/16" << std::endl;
 }
 
 /// Replace each subfile's short-side gain with one built from the run-level
@@ -1831,6 +1866,8 @@ void CalibrateBeam::Run(const TString &file_label) {
           k = work.front();
           work.pop();
         }
+        // The first files of the epoch draw (a single named file always).
+        Constants::SetPlotsThisFile(Constants::InPlotSample(k));
         CalibrateBeamOneSubfile(specs[k], chans);
       }
     });

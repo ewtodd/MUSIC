@@ -139,7 +139,6 @@ void StripSumScatterConfig::SetDefaults() {
   REQUIRE_GATE_S3_S4 = kFALSE;
   REQUIRE_GATE_S5_S6 = kFALSE;
   SKIP_SAVGOL_PLOTS = kFALSE;
-  SKIP_RUN_PLOTS = kFALSE;
   PLOT_REGION_MEAN_TRACES = kFALSE;
   PLOT_ADC_TRACES = kFALSE;
   REQUIRE_STRIP_16_BELOW_BEAM = kFALSE;
@@ -195,7 +194,8 @@ DatasetConfig::DatasetConfig() {
   HAS_STRIP17 = kTRUE;
 
   SKIP_EXISTING = kTRUE;
-  SAVE_PLOTS = kTRUE;
+  SAVE_FULL_PLOTS = kFALSE;
+  PLOT_SAMPLE_FILES = 2;
 
   SAVE_SAMPLE_TRACES = 0;
 
@@ -307,6 +307,8 @@ RunEpoch MakeEpoch(const TString &name, const std::vector<Int_t> &runs) {
   ep.reference_channel_max_adc = cfg.REFERENCE_CHANNEL_MAX_ADC;
   ep.dedup_strategy = cfg.DEDUP_STRATEGY;
   ep.has_cathode = cfg.HAS_CATHODE;
+  ep.split_chunk_seconds = cfg.SOL_SPLIT_CHUNK_SECONDS;
+  ep.pulse_history = cfg.PULSE_HISTORY_GROUPS;
   ep.strip_e_min_adc = cfg.STRIP_E_MIN_ADC;
   ep.strip_e_max_adc = cfg.STRIP_E_MAX_ADC;
   ep.cathode_max_adc = cfg.CATHODE_MAX_ADC;
@@ -446,6 +448,36 @@ const TString &ActiveFileTag() {
   return gActiveEpoch ? gActiveEpoch->file_tag : kNone;
 }
 Int_t ActiveMaxFiles() { return gActiveEpoch ? gActiveEpoch->max_files : -1; }
+Double_t ActiveSplitChunkSeconds() {
+  return gActiveEpoch ? gActiveEpoch->split_chunk_seconds
+                      : cfg.SOL_SPLIT_CHUNK_SECONDS;
+}
+const PulseHistoryGroups &ActivePulseHistoryGroups() {
+  return gActiveEpoch ? gActiveEpoch->pulse_history : cfg.PULSE_HISTORY_GROUPS;
+}
+
+// The plot sample is a per-thread mark: every tool that walks the files on
+// worker threads sets it before each file, so the stages a file runs through
+// need no plumbing to know whether they draw.
+namespace {
+thread_local Bool_t t_plot_sample = kFALSE;
+}
+Bool_t FileInSample() { return cfg.SAVE_FULL_PLOTS || t_plot_sample; }
+Bool_t SavePlots() { return FileInSample(); }
+namespace {
+// A stream with no buffer discards everything written to it; one per thread
+// so the failed-write state it keeps is never shared.
+std::ostream &NullStream() {
+  static thread_local std::ostream null(nullptr);
+  return null;
+}
+} // namespace
+std::ostream &Detail() { return FileInSample() ? std::cout : NullStream(); }
+std::ostream &DetailErr() { return FileInSample() ? std::cerr : NullStream(); }
+Bool_t InPlotSample(Int_t k) {
+  return cfg.SAVE_FULL_PLOTS || k < cfg.PLOT_SAMPLE_FILES;
+}
+void SetPlotsThisFile(Bool_t on) { t_plot_sample = on; }
 
 const std::map<std::pair<Int_t, Int_t>, TString> &ActiveChannelMap() {
   if (gActiveEpoch && !gActiveEpoch->channel_map.empty())

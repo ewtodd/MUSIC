@@ -84,7 +84,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
   PlottingUtils::ConfigureAndDraw2DHistogram(h.h_music, c_music);
   h.h_music->GetYaxis()->SetTitleOffset(1.4);
   c_music->SetLeftMargin(0.18);
-  if (Constants::cfg.SAVE_PLOTS)
+  if (Constants::SavePlots())
     PlottingUtils::SaveFigure(c_music, musicName, subdir,
                               PlotSaveOptions::kLINEAR);
   out_file->cd();
@@ -94,7 +94,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
   TCanvas *c_mult = PlottingUtils::GetConfiguredCanvas(kFALSE);
   c_mult->cd();
   PlottingUtils::ConfigureAndDrawHistogram(h.h_mult, kBlue + 1);
-  if (Constants::cfg.SAVE_PLOTS)
+  if (Constants::SavePlots())
     PlottingUtils::SaveFigure(c_mult, multName, subdir, PlotSaveOptions::kLOG);
   delete c_mult;
 
@@ -113,7 +113,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
       ridge->SetLineWidth(2);
       ridge->Draw("SAME");
     }
-    if (Constants::cfg.SAVE_PLOTS)
+    if (Constants::SavePlots())
       PlottingUtils::SaveFigure(c, TString("long_vs_short_s") + s + plot_suffix,
                                 subdir, PlotSaveOptions::kLINEAR);
     out_file->cd();
@@ -130,7 +130,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
     TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
     c->cd();
     PlottingUtils::ConfigureAndDrawHistogram(h.h1_cathode, kBlue + 1);
-    if (Constants::cfg.SAVE_PLOTS)
+    if (Constants::SavePlots())
       PlottingUtils::SaveFigure(c, cathName, subdir, PlotSaveOptions::kLOG);
     out_file->cd();
     h.h1_cathode->Write(h.h1_cathode->GetName(), TObject::kOverwrite);
@@ -141,7 +141,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
     TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
     c->cd();
     PlottingUtils::ConfigureAndDrawHistogram(h.h1_strip17, kBlue + 1);
-    if (Constants::cfg.SAVE_PLOTS)
+    if (Constants::SavePlots())
       PlottingUtils::SaveFigure(c, strip17Name, subdir, PlotSaveOptions::kLOG);
     out_file->cd();
     h.h1_strip17->Write(h.h1_strip17->GetName(), TObject::kOverwrite);
@@ -153,7 +153,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
     c->cd();
     PlottingUtils::ConfigureAndDraw2DHistogram(h.h2_strip0_vs_grid, c);
     h.h2_strip0_vs_grid->GetYaxis()->SetTitleOffset(1.3);
-    if (Constants::cfg.SAVE_PLOTS)
+    if (Constants::SavePlots())
       PlottingUtils::SaveFigure(c, s0gName, subdir, PlotSaveOptions::kLINEAR);
     out_file->cd();
     c->Write(h.h2_strip0_vs_grid->GetName(), TObject::kOverwrite);
@@ -163,7 +163,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
     TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
     c->cd();
     PlottingUtils::ConfigureAndDrawHistogram(h.h1_strip0, kBlue + 1);
-    if (Constants::cfg.SAVE_PLOTS)
+    if (Constants::SavePlots())
       PlottingUtils::SaveFigure(c, s0Name, subdir, PlotSaveOptions::kLOG);
     out_file->cd();
     h.h1_strip0->Write(h.h1_strip0->GetName(), TObject::kOverwrite);
@@ -173,7 +173,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
     TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
     c->cd();
     PlottingUtils::ConfigureAndDrawHistogram(h.h1_grid, kBlue + 1);
-    if (Constants::cfg.SAVE_PLOTS)
+    if (Constants::SavePlots())
       PlottingUtils::SaveFigure(c, gName, subdir, PlotSaveOptions::kLOG);
     out_file->cd();
     h.h1_grid->Write(h.h1_grid->GetName(), TObject::kOverwrite);
@@ -221,7 +221,7 @@ void EventsSummary::SaveSampleTraces(const std::vector<TGraph *> &traces,
     traces[i]->Draw("L SAME");
   }
 
-  if (Constants::cfg.SAVE_PLOTS)
+  if (Constants::SavePlots())
     PlottingUtils::SaveFigure(c, save_name, subdir, PlotSaveOptions::kLINEAR);
   delete c;
   delete frame;
@@ -282,8 +282,8 @@ void EventsSummary::BuildNormedSummaryHistograms(const TString &input_filename,
   CreateSummaryHistograms(h, cfg);
 
   Long64_t n_entries = input_tree->GetEntries();
-  std::cout << "[" << file_label << "] building normed summary over "
-            << n_entries << " events..." << std::endl;
+  Constants::Detail() << "[" << file_label << "] building normed summary over "
+                      << n_entries << " events..." << std::endl;
 
   // Sample traces for overlay plot
   std::vector<TGraph *> sample_traces;

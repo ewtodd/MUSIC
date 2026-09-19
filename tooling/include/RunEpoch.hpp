@@ -2,6 +2,7 @@
 #define RUNEPOCH_HPP
 
 #include "DedupStrategy.hpp"
+#include "PulseHistoryGroups.hpp"
 #include <Rtypes.h>
 #include <RtypesCore.h>
 #include <TString.h>
@@ -75,6 +76,23 @@ struct RunEpoch {
 
   Bool_t has_cathode; ///< Whether this era instrumented the cathode.
 
+  /// @name Preprocessing
+  /// MakeEpoch() copies the flat `SOL_SPLIT_CHUNK_SECONDS` and
+  /// `PULSE_HISTORY_GROUPS`; override per epoch where the electronics
+  /// differed, e.g. `late.pulse_history.long_left.tau_us = 25` for an era
+  /// whose preamp decay is known, or every group off for one whose chains
+  /// carry no undershoot.
+  /// @{
+  /// Length of the time chunks this epoch's `.sol` files are split into, in
+  /// seconds; non-positive = whole files, no splitting. SOLARIS only.
+  Double_t split_chunk_seconds;
+  /// The pulse-history groups in force for this epoch's hits: which chains
+  /// are corrected, with which kernel and which given tau. With
+  /// `PULSE_HISTORY_CORRECTION` on, an epoch with no group enabled skips the
+  /// stage.
+  PulseHistoryGroups pulse_history;
+  /// @}
+
   /// @name ADC scale
   /// The CoMPASS era digitised to a different full scale than SOLARIS, so the
   /// per-end ceilings and the strip range differ between epochs.
@@ -98,7 +116,8 @@ struct RunEpoch {
         do_sort(kFALSE), event_time_window_us(8.0), reference_channel("Grid"),
         reference_channel_min_adc(0.0), reference_channel_max_adc(16384.0),
         dedup_strategy(kLARGEST_ENERGY), has_cathode(kFALSE),
-        strip_e_min_adc(0.0), strip_e_max_adc(4096.0), cathode_max_adc(16384.0),
+        split_chunk_seconds(30.0), pulse_history(), strip_e_min_adc(0.0),
+        strip_e_max_adc(4096.0), cathode_max_adc(16384.0),
         grid_max_adc(16384.0), strip0_max_adc(16384.0),
         strip17_max_adc(16384.0), left_even_max_adc(16384.0),
         left_odd_max_adc(16384.0), right_even_max_adc(16384.0),

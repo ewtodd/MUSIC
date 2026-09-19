@@ -55,19 +55,15 @@ void InitDatasetConfig() {
   gInstance.PULSE_HISTORY_CORRECTION = kTRUE;
   gInstance.PULSE_HISTORY_GROUPS.long_left.enabled = kTRUE;
   gInstance.PULSE_HISTORY_GROUPS.long_left.kernel = kPulseHistoryBinned;
-  gInstance.PULSE_HISTORY_GROUPS.long_left.tau_us = 25;
   gInstance.PULSE_HISTORY_GROUPS.long_right.enabled = kTRUE;
   gInstance.PULSE_HISTORY_GROUPS.long_right.kernel = kPulseHistoryBinned;
-  gInstance.PULSE_HISTORY_GROUPS.long_right.tau_us = 10;
   gInstance.PULSE_HISTORY_GROUPS.short_left.enabled = kTRUE;
   gInstance.PULSE_HISTORY_GROUPS.short_left.kernel = kPulseHistoryForm;
-  gInstance.PULSE_HISTORY_GROUPS.short_left.tau_us = 25;
   gInstance.PULSE_HISTORY_APPLY_MAX_US = 316.0;
-  gInstance.PULSE_HISTORY_AMP_BINS = 2;
+  gInstance.PULSE_HISTORY_AMP_BINS = 4;
 
   gInstance.MAX_FUSED_WORKERS = 16;
-  gInstance.SKIP_EXISTING = kFALSE;
-  gInstance.SAVE_PLOTS = kFALSE;
+  gInstance.SKIP_EXISTING = kTRUE;
   gInstance.SAVE_SAMPLE_TRACES = 10;
 
   gInstance.IGNORE_STRIP_0 = kFALSE;
@@ -95,7 +91,7 @@ void InitDatasetConfig() {
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_ABOVE_NSIGMA = 1.5;
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_ABOVE_STRIPS = 3;
 
-  gInstance.STRIP_SUM_SCATTER_CONFIG.SMOOTHNESS_NSIGMA = 8.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.SMOOTHNESS_NSIGMA = 6.0;
 
   gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_RISE_NSIGMA = 0.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.TAIL_RETURN_NSIGMA = 2.0;
@@ -121,11 +117,10 @@ void InitDatasetConfig() {
   gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 3;
 
   gInstance.STRIP_SUM_SCATTER_CONFIG.MAX_STRIP_SUM_WORKERS = 8;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_RUN_PLOTS = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.RERUN_SIM = kFALSE;
 
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CUT_VARIATION_NSIGMA_STEP = 0.1;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CUT_VARIATION_NSIGMA_STEP = 0.2;
 
   gInstance.CROSS_SECTION_CONFIG.TARGET_GAS = kHELIUM;
   gInstance.CROSS_SECTION_CONFIG.GAS_PRESSURE_TORR = 400.0;
@@ -135,7 +130,7 @@ void InitDatasetConfig() {
   gInstance.CROSS_SECTION_CONFIG.BEAM_SIM_FILE = "traces_37Cl_beam.root";
   gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MIN = 2;
   gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MAX = 8;
-  gInstance.CROSS_SECTION_CONFIG.EFFECTIVE_ENERGY = kFALSE;
+  gInstance.CROSS_SECTION_CONFIG.EFFECTIVE_ENERGY = kTRUE;
   gInstance.CROSS_SECTION_CONFIG.PRELIMINARY = kTRUE;
   gInstance.CROSS_SECTION_CONFIG.EPOCHS = {"late"};
   gInstance.CROSS_SECTION_CONFIG.CHANNELS = {
@@ -143,7 +138,14 @@ void InitDatasetConfig() {
   gInstance.CROSS_SECTION_CONFIG.TALYS_MODELS = {
       {"TALYS HF, McFadden-Satchler", {"alphaomp 2"}}};
 
-  gInstance.EPOCHS.push_back(MakeEpoch("late", RunRange(97, 137)));
+  RunEpoch early = MakeEpoch("early", RunRange(30, 40));
+  early.split_chunk_seconds = 15;
+  gInstance.EPOCHS.push_back(early);
+  RunEpoch late = MakeEpoch("late", RunRange(97, 137));
+  late.pulse_history.long_left.tau_us = 25;
+  late.pulse_history.long_right.tau_us = 10;
+  late.pulse_history.short_left.tau_us = 25;
+  gInstance.EPOCHS.push_back(late);
 }
 
 struct InitGuard {

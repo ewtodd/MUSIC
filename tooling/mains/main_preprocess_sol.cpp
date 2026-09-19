@@ -81,6 +81,7 @@ std::vector<TString> DiscoverSolRunSuffixesFromBase(Int_t run) {
 struct WorkItem {
   Int_t run;
   TString suffix;
+  Double_t chunk_seconds; // the run's epoch's chunk length
 };
 
 struct SplitResult {
@@ -91,7 +92,7 @@ struct SplitResult {
 };
 
 SplitResult SplitWorker(std::queue<WorkItem> &work, std::mutex &work_mutex,
-                        const char *outputDir, Double_t chunkSeconds) {
+                        const char *outputDir) {
   SplitResult result;
   result.nSplit = 0;
   result.nSkipped = 0;
@@ -133,10 +134,8 @@ SplitResult SplitWorker(std::queue<WorkItem> &work, std::mutex &work_mutex,
     // Check if already split
     TString chunk0Path = TString(outputDir) + "/" + baseName + "_chunk000.sol";
     if (!gSystem->AccessPathName(chunk0Path)) {
-      {
-        std::lock_guard<std::mutex> lk(log_mutex);
-        std::cout << "  [exists] " << baseName << std::endl;
-      }
+      // Counted in the closing summary; one line per file is noise on a
+      // re-run over hundreds of subfiles.
       result.nAlreadySplit++;
       continue;
     }
@@ -151,15 +150,11 @@ SplitResult SplitWorker(std::queue<WorkItem> &work, std::mutex &work_mutex,
       continue;
     }
 
-    {
-      std::lock_guard<std::mutex> lk(log_mutex);
-      std::cout << "  [split] " << baseName << std::endl;
-    }
-
     Int_t totalBlocks = 0;
     Int_t totalChunks = 0;
     std::vector<TString> outputFiles = SOLReader::SplitSolFileByTime(
-        solPath.Data(), outputDir, chunkSeconds, totalBlocks, totalChunks);
+        solPath.Data(), outputDir, item.chunk_seconds, totalBlocks,
+        totalChunks);
 
     if (outputFiles.empty()) {
       {
@@ -173,8 +168,8 @@ SplitResult SplitWorker(std::queue<WorkItem> &work, std::mutex &work_mutex,
 
     {
       std::lock_guard<std::mutex> lk(log_mutex);
-      std::cout << "    " << totalBlocks << " blocks -> " << totalChunks
-                << " chunks" << std::endl;
+      std::cout << "  [split] " << baseName << ": " << totalBlocks
+                << " blocks -> " << totalChunks << " chunks" << std::endl;
     }
     result.nSplit++;
   }
@@ -183,29 +178,74 @@ SplitResult SplitWorker(std::queue<WorkItem> &work, std::mutex &work_mutex,
 }
 
 int main(int argc, char *argv[]) {
-  Double_t chunkSeconds = Constants::cfg.SOL_SPLIT_CHUNK_SECONDS;
+  // A chunk length on the command line overrides every epoch's own.
+  Double_t forcedSeconds = 0.0;
+  Bool_t forced = kFALSE;
   Int_t nWorkers = Constants::cfg.SOL_N_SPLIT_WORKERS;
 
   if (argc >= 2) {
-    chunkSeconds = std::stod(argv[1]);
+    forcedSeconds = std::stod(argv[1]);
+    forced = kTRUE;
   }
   if (argc >= 3) {
     nWorkers = std::stoi(argv[2]);
   }
 
-  // Non-positive: no splitting. The pipeline then reads the whole files from
-  // SOL_BASE_DIR (FileSet::DiscoverSolRunSuffixes ignores the split
-  // directory in that case), so there is nothing to do here.
-  if (chunkSeconds <= 0) {
-    std::cout << "SOLARIS preprocessing: SOL_SPLIT_CHUNK_SECONDS is "
-              << chunkSeconds
-              << "; no splitting, the pipeline reads the whole files from "
+  // The runs to split, each with its chunk length: every enabled SOLARIS
+  // epoch's runs at the epoch's `split_chunk_seconds`, or the flat list at
+  // SOL_SPLIT_CHUNK_SECONDS. CoMPASS has no .sol and is skipped. A
+  // non-positive length means no splitting for those runs: the pipeline then
+  // reads their whole files from SOL_BASE_DIR (FileSet::DiscoverSolRunSuffixes
+  // ignores the split directory for that epoch).
+  std::vector<std::pair<Int_t, Double_t>> runs; // run, chunk seconds
+  if (Constants::cfg.EPOCHS.empty()) {
+    const Double_t sec =
+        forced ? forcedSeconds : Constants::cfg.SOL_SPLIT_CHUNK_SECONDS;
+    for (Int_t r = 0; r < Int_t(Constants::cfg.RUN_NUMBERS.size()); r++)
+      runs.push_back(std::make_pair(Constants::cfg.RUN_NUMBERS[r], sec));
+  } else {
+    for (Int_t e = 0; e < Int_t(Constants::cfg.EPOCHS.size()); e++) {
+      const RunEpoch &ep = Constants::cfg.EPOCHS[e];
+      if (!ep.enabled || ep.source != kSolaris)
+        continue;
+      const Double_t sec = forced ? forcedSeconds : ep.split_chunk_seconds;
+      std::cout << "epoch " << ep.name << ": " << ep.runs.size() << " run(s), ";
+      if (sec > 0)
+        std::cout << sec << "s chunks" << std::endl;
+      else
+        std::cout << "no splitting (whole files)" << std::endl;
+      for (Int_t r = 0; r < Int_t(ep.runs.size()); r++)
+        runs.push_back(std::make_pair(ep.runs[r], sec));
+    }
+  }
+  std::queue<WorkItem> work;
+  for (Int_t r = 0; r < Int_t(runs.size()); r++) {
+    if (!(runs[r].second > 0))
+      continue;
+    // A run declared twice takes its first epoch's length.
+    Bool_t seen = kFALSE;
+    for (Int_t q = 0; q < r && !seen; q++)
+      seen = runs[q].first == runs[r].first;
+    if (seen)
+      continue;
+    std::vector<TString> suffixes =
+        DiscoverSolRunSuffixesFromBase(runs[r].first);
+    for (Int_t k = 0; k < Int_t(suffixes.size()); k++) {
+      WorkItem item;
+      item.run = runs[r].first;
+      item.suffix = suffixes[k];
+      item.chunk_seconds = runs[r].second;
+      work.push(item);
+    }
+  }
+  if (work.empty()) {
+    std::cout << "SOLARIS preprocessing: nothing to split; the pipeline reads "
+                 "the whole files from "
               << Constants::cfg.SOL_BASE_DIR.Data() << std::endl;
     return 0;
   }
-  std::cout << "SOLARIS preprocessing: splitting Minimum files into "
-            << chunkSeconds << "s chunks (" << nWorkers << " workers)"
-            << std::endl;
+  std::cout << "SOLARIS preprocessing: splitting Minimum files (" << nWorkers
+            << " workers)" << std::endl;
   std::cout << "Input dir:  " << Constants::cfg.SOL_BASE_DIR.Data()
             << std::endl;
   std::cout << "Output dir: " << Constants::cfg.SOL_SPLIT_DIR.Data()
@@ -213,36 +253,6 @@ int main(int argc, char *argv[]) {
   std::cout << std::endl;
 
   gSystem->mkdir(Constants::cfg.SOL_SPLIT_DIR, kTRUE);
-
-  // Split every SOLARIS run the dataset declares (epochs: union of SOLARIS
-  // epochs' run lists, else the flat list); CoMPASS has no .sol and is skipped.
-  std::vector<Int_t> runs;
-  if (Constants::cfg.EPOCHS.empty()) {
-    runs = Constants::cfg.RUN_NUMBERS;
-  } else {
-    for (Int_t e = 0; e < Int_t(Constants::cfg.EPOCHS.size()); e++) {
-      const RunEpoch &ep = Constants::cfg.EPOCHS[e];
-      if (!ep.enabled || ep.source != kSolaris)
-        continue;
-      for (Int_t r = 0; r < Int_t(ep.runs.size()); r++)
-        runs.push_back(ep.runs[r]);
-    }
-    std::sort(runs.begin(), runs.end());
-    runs.erase(std::unique(runs.begin(), runs.end()), runs.end());
-  }
-
-  std::queue<WorkItem> work;
-  Int_t nRuns = runs.size();
-  for (Int_t r = 0; r < nRuns; r++) {
-    Int_t run = runs[r];
-    std::vector<TString> suffixes = DiscoverSolRunSuffixesFromBase(run);
-    for (Int_t k = 0; k < Int_t(suffixes.size()); k++) {
-      WorkItem item;
-      item.run = run;
-      item.suffix = suffixes[k];
-      work.push(item);
-    }
-  }
 
   std::cout << "Total files to process: " << work.size() << std::endl;
 
@@ -252,9 +262,9 @@ int main(int argc, char *argv[]) {
   std::vector<SplitResult> results(nWorkers);
 
   for (Int_t w = 0; w < nWorkers; w++) {
-    workers.emplace_back([&work, &work_mutex, &results, w, chunkSeconds]() {
-      results[w] = SplitWorker(
-          work, work_mutex, Constants::cfg.SOL_SPLIT_DIR.Data(), chunkSeconds);
+    workers.emplace_back([&work, &work_mutex, &results, w]() {
+      results[w] =
+          SplitWorker(work, work_mutex, Constants::cfg.SOL_SPLIT_DIR.Data());
     });
   }
 
