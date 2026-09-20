@@ -134,9 +134,12 @@ public:
                         Int_t slot, UShort_t energy, ULong64_t timestamp,
                         UInt_t flags, DedupStrategy strategy);
   /**
-   * @brief Whether an event has everything required to be written out.
+   * @brief Whether an event has everything required to be written out: the
+   *        long end of every split strip, plus strip 0 and strip 17 unless
+   *        `IGNORE_STRIP_0` / `IGNORE_STRIP_17` say the dataset does without
+   *        them. The same condition as the analysis' first event-level cut.
    * @param e Event to test.
-   * @return `kTRUE` if it is complete by the dataset's criteria.
+   * @return `kTRUE` if it is complete.
    */
   static Bool_t CheckEventComplete(const EventState &e);
   /**

@@ -91,6 +91,12 @@ struct RunEpoch {
   /// `PULSE_HISTORY_CORRECTION` on, an epoch with no group enabled skips the
   /// stage.
   PulseHistoryGroups pulse_history;
+  /// Decode the long end only (L on odd strips, R on even), dropping the
+  /// short end from every strip total. For an era whose short ends sit
+  /// below the DAQ trigger (CoMPASS 37Cl: 0.1-5 percent of events, rising
+  /// with strip number), where the little that registers would only add a
+  /// strip-dependent bias.
+  Bool_t ignore_short_strips;
   /// @}
 
   /// @name ADC scale
@@ -116,8 +122,8 @@ struct RunEpoch {
         do_sort(kFALSE), event_time_window_us(8.0), reference_channel("Grid"),
         reference_channel_min_adc(0.0), reference_channel_max_adc(16384.0),
         dedup_strategy(kLARGEST_ENERGY), has_cathode(kFALSE),
-        split_chunk_seconds(30.0), pulse_history(), strip_e_min_adc(0.0),
-        strip_e_max_adc(4096.0), cathode_max_adc(16384.0),
+        split_chunk_seconds(30.0), pulse_history(), ignore_short_strips(kFALSE),
+        strip_e_min_adc(0.0), strip_e_max_adc(4096.0), cathode_max_adc(16384.0),
         grid_max_adc(16384.0), strip0_max_adc(16384.0),
         strip17_max_adc(16384.0), left_even_max_adc(16384.0),
         left_odd_max_adc(16384.0), right_even_max_adc(16384.0),

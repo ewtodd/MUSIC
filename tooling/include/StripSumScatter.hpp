@@ -64,10 +64,10 @@ enum TagCut {
   kCutUpstream,  ///< A strip before the reaction was not beam-like.
   kCutJump,      ///< Jump at the reaction strip below the gate.
   kCutReacLevel, ///< Reaction-strip deposit below 1 + the gate.
-  kCutSmooth,    ///< A post-reaction step above SMOOTHNESS_NSIGMA.
   kCutTailRise,  ///< A rise in the tail (TAIL_RISE_NSIGMA).
   kCutRerise,    ///< Back at the beam, then above it again (TAIL_RERISE_*).
   kCutPostAbove, ///< The excess did not persist (POST_ABOVE_*).
+  kCutCross,     ///< Read below the beam before POST_CROSS_MIN_STRIP.
   kCutEndStrip,  ///< The end strip not END_STRIP_NSIGMA below the beam.
   kCutCliff,     ///< The fall happened in the last step (TAIL_CLIFF_*).
   kNTagCuts
@@ -82,13 +82,15 @@ extern const char *const kTagCutName[kNTagCuts];
  * (StripSumScatter::NominalThresholds); the cut-variation systematic shifts
  * one field at a time (StripSumScatter::ThresholdVariants) and re-runs the
  * same tag, so the count's sensitivity to each threshold is measured by the
- * code that applies it.
+ * code that applies it. #smooth_nsigma is the one event-level threshold in
+ * the set: the fill applies it once per event (StripSumScatter::IsSmooth)
+ * and re-applies a variant's value the same way.
  */
 struct TagThresholds {
   Bool_t require_upstream = kTRUE;
   Double_t upstream_nsigma = 0.0;
   Double_t jump_nsigma = 0.0;
-  Double_t smooth_nsigma = 0.0;
+  Double_t smooth_nsigma = 0.0; ///< Event level; 0 = off.
   Int_t tail_fall_from_strip = 0;
   Double_t tail_rise_nsigma = 0.0;
   Double_t tail_return_nsigma = 0.0;
@@ -96,6 +98,10 @@ struct TagThresholds {
   Double_t post_above_nsigma = 0.0;
   Int_t post_above_strips = 0;
   Double_t end_strip_nsigma = 0.0;
+  /// The strip the trace must reach without reading below the beam; an
+  /// absolute strip index held as a double so the variation can shift it
+  /// like the rest.
+  Double_t cross_min_strip = 0.0;
   Double_t cliff_max = 0.0;
 };
 
@@ -109,6 +115,7 @@ enum PreCut {
   kPreGate,      ///< Failed a beam gate.
   kPrePileup,    ///< Pileup.
   kPreNoise,     ///< Noise.
+  kPreSmooth,    ///< A strip-to-strip step above SMOOTHNESS_NSIGMA.
   kPreBothMult,  ///< Both-ends multiplicity (BOTH_MULT_MAX).
   kNPreCuts
 };
@@ -470,8 +477,6 @@ private:
   static Bool_t BeamUpstreamOf(const EnergyView &ev, Int_t reac);
   static Bool_t BeamUpstreamOf(const EnergyView &ev, Int_t reac,
                                const TagThresholds &T);
-  static Bool_t IsPileup(const EnergyView &ev);
-  static Bool_t IsNoise(const EnergyView &ev);
   static Double_t SumRange(const Double_t *total, Int_t lo, Int_t hi);
   static std::vector<GateSpec> ActiveGates();
 
@@ -563,21 +568,17 @@ public:
    * @param ev   Decoded event.
    * @param reac Reaction strip index.
    * @return `kTRUE` if the event is tagged there.
-   *
-   * @note Public because TagEfficiency pushes bootstrapped traces through this
-   *       same tag. An efficiency measured against a different selection than
-   *       the one that produced the count would not apply to it.
    */
   static Bool_t PassesReaction(const EnergyView &ev, Int_t reac);
   /**
    * @brief The tail-shape part of the tag, applied inside PassesReaction.
    *
    * The conditions the published 87Rb per-strip macros put on the strips
-   * downstream of the reaction: smoothness continued to the last strip, a
-   * monotonically falling tail, no return to the beam and persistence of the
-   * excess. Each is
-   * off unless its `StripSumScatterConfig` value is set, so a dataset that
-   * sets none of them tags exactly as before.
+   * downstream of the reaction: a monotonically falling tail, no return to
+   * the beam and persistence of the excess (their smoothness condition is
+   * event level here, IsSmooth()). Each is off unless its
+   * `StripSumScatterConfig` value is set, so a dataset that sets none of
+   * them tags exactly as before.
    *
    * @param ev    Decoded event.
    * @param reac  Reaction strip index.
@@ -600,6 +601,18 @@ public:
   static TagCut TailReason(const EnergyView &ev, Int_t reac);
   static TagCut TailReason(const EnergyView &ev, Int_t reac,
                            const TagThresholds &T);
+  /// @brief The event-level pileup and noise cuts (PILEUP_* / NOISE_*), in
+  ///        sigma of the measured beam spread.
+  static Bool_t IsPileup(const EnergyView &ev);
+  static Bool_t IsNoise(const EnergyView &ev);
+  /// @brief The largest strip-to-strip step of the trace, |E(s) - E(s-1)|
+  ///        over strips 2 to the last in sigma of strip s's measured spread,
+  ///        with the single largest rise left out (the reaction jump); strips
+  ///        without a measured spread are skipped.
+  static Double_t MaxStepNSigma(const EnergyView &ev);
+  /// @brief The event-level smoothness cut: MaxStepNSigma() at or under
+  ///        `nsigma`, or the cut is off (`nsigma` <= 0).
+  static Bool_t IsSmooth(const EnergyView &ev, Double_t nsigma);
   /// @brief The thresholds the configuration sets.
   static TagThresholds NominalThresholds();
   /// @brief The cut-variation set: each active threshold shifted up and down

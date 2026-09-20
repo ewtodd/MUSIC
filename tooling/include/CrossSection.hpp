@@ -13,17 +13,12 @@
  * `N_beam` the number of beam particles that reached it **under every cut a
  * reaction there also had to pass**.
  *
- * `N_reac` comes from one of two places:
- *
- * - When the tag-efficiency store holds a record for the channel and strip, it
- *   is that record's count, unfolded by its efficiency and by the migration
- *   from the strip before. See TagEfficiency.hpp for the contract.
- * - Otherwise it is the count the mixture fit attributed to the reaction
- *   component, uncorrected, with the fit-versus-core disagreement taken as the
- *   region systematic; or, in the all-tagged region mode, every tagged event,
- *   with the cut-variation counts the fill stored (each threshold shifted up
- *   and down) folded into the systematic: per threshold the larger change of
- *   the count, added in quadrature.
+ * `N_reac` depends on the region mode: the count the mixture fit attributed
+ * to the reaction component, uncorrected, with the fit-versus-core
+ * disagreement taken as the region systematic; or, in the all-tagged region
+ * mode, every tagged event, with the cut-variation counts the fill stored
+ * (each threshold shifted up and down) folded into the systematic: per
+ * threshold the larger change of the count, added in quadrature.
  *
  * Beam energies come from the simulated unreacted beam, whose stopping model
  * is chosen to put the beam's Bragg peak in the strip the data shows it in,
@@ -49,7 +44,7 @@ struct CrossSectionChannel;
  * @brief Computes and reports the absolute cross sections.
  *
  * Read-only with respect to the analysis products it consumes: it evaluates the
- * current cache, cuts and efficiency store, and changes none of them.
+ * current cache and cuts, and changes none of them.
  */
 class CrossSection {
 public:
@@ -130,6 +125,9 @@ private:
   static TCutG *ScaledCut(TCutG *cut, Double_t scale);
   static Double_t CountInCut(TH2F *scatter, TCutG *cut, Double_t scale);
   static Double_t Enclosed(Double_t nsigma);
+  // The cut-variation systematic on a strip's tagged count, in counts, from
+  // the per-variant counts the cache carries; `detail` lists them.
+  Double_t CutVariationCounts(Int_t reac, TString &detail) const;
 
   TFile *cache_ = nullptr;
   Long64_t n_seen_ = 0, n_beam_ = 0;
@@ -137,10 +135,6 @@ private:
   Double_t dE_[18], e_strip0_ = 0.0, cm_frac_ = 0.0, e_mid_[17];
   std::vector<TString> talys_labels_;
   std::vector<std::map<std::pair<Int_t, Int_t>, TGraph *>> talys_raw_;
-
-  // Unfolding state carried from one strip to the next within a channel.
-  Int_t prev_reac_ = -1;
-  Double_t prev_true_ = 0.0, prev_migrate_ = 0.0;
 };
 
 #endif

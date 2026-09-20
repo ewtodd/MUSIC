@@ -66,9 +66,18 @@ struct StripSumScatterConfig {
   Int_t REACTION_STRIP_MIN;
   Int_t REACTION_STRIP_MAX;
 
-  /// Every strip-to-strip step from reac+1 to
-  /// the last strip must be under SMOOTHNESS_NSIGMA times that strip's
-  /// measured beam spread (StripSumScatter::StripSigma). 0 or less = off.
+  /// Event-level smoothness: every strip-to-strip step of the trace, from
+  /// strips 1-2 to the last pair, must be under SMOOTHNESS_NSIGMA times the
+  /// later strip's measured beam spread (StripSumScatter::StripSigma), the
+  /// single largest rise excepted. A reaction is one rise (the jump at the
+  /// reaction strip) followed by gradual change; a spike, a partial second
+  /// particle or a glitch shows more than one abrupt step. So the biggest
+  /// rise is left to the jump condition and every other step, falls
+  /// included, is held to this limit, which keeps it independent of
+  /// REAC_JUMP_NSIGMA. Applied once per event before any strip is asked
+  /// about, so it enters the beam denominator too. A step is the difference
+  /// of two strips, so its noise is about 1.4 spreads. 0 or less = off. Part
+  /// of the cut variation.
   Double_t SMOOTHNESS_NSIGMA;
 
   /// From TAIL_FALL_FROM_STRIP to the last strip, allow no
@@ -90,6 +99,20 @@ struct StripSumScatterConfig {
   /// x StripSigma(s).
   Double_t POST_ABOVE_NSIGMA;
   Int_t POST_ABOVE_STRIPS;
+
+  /// The trace may not read below the beam mean before this strip: strips
+  /// reac+1 .. S all read at or above the beam. An absolute strip, not a
+  /// count from the reaction: a residue born at reac inherits the beam's
+  /// remaining range from there, so it stops, and the trace crosses the
+  /// beam, at nearly the same strip whatever reac was (about
+  /// c x R_beam + (1 - c) x reac with c ~ 0.85; on 87Rb around strip 14).
+  /// One value therefore serves every reaction strip, and the window it
+  /// checks grows toward the early strips by itself. A light product or a
+  /// fluctuation that leaves the beam envelope again within a strip or two
+  /// fails it. Vacuous for reac >= S; a trace that never reads below the
+  /// beam passes (the end-strip condition decides it). 0 = off. Part of the
+  /// cut variation, shifted by one strip.
+  Int_t POST_CROSS_MIN_STRIP;
 
   /// A residue stops gradually; the beam nucleus after a large-angle elastic
   /// scatter keeps its excess to the second-to-last strip and falls in one
@@ -246,7 +269,7 @@ struct StripSumScatterConfig {
  * being counted.
  */
 struct CrossSectionChannel {
-  /// Names the region cut (`region_<name>`), the tag-efficiency records and the
+  /// Names the region cut (`region_<name>`) and the
   /// output figure. "an", "ap".
   TString name;
   /// The reaction as it appears in the plot title after the dataset name,
@@ -365,7 +388,7 @@ struct CrossSectionConfig {
   /// The reaction channels measured on this dataset. Everything up to the
   /// tag is shared -- a jump is a jump whatever the residue -- and everything
   /// after it is per channel: the region cut (`region_<name>`), the count in
-  /// it, the tag-efficiency record, the TALYS curve, the label, the published
+  /// it, the TALYS curve, the label, the published
   /// table, the figure (`cross_section_<name>`).
   std::vector<CrossSectionChannel> CHANNELS;
 
@@ -472,6 +495,10 @@ public:
   Double_t PULSE_HISTORY_TRAP_FLAT_US;
   Double_t PULSE_HISTORY_PEAKING_US;
 
+  /// Decode the long end only, dropping every short end. With epochs
+  /// declared, MakeEpoch() copies this into `RunEpoch::ignore_short_strips`,
+  /// which an epoch may override; the decode reads
+  /// Constants::ActiveIgnoreShortStrips().
   Bool_t IGNORE_SHORT_STRIPS;
   Bool_t IGNORE_STRIP_0;
   Bool_t IGNORE_STRIP_17;
@@ -666,6 +693,23 @@ Double_t ActiveSplitChunkSeconds();
 /// @brief The pulse-history groups in force: the active epoch's set, or the
 ///        flat `PULSE_HISTORY_GROUPS` when no epoch is set.
 const PulseHistoryGroups &ActivePulseHistoryGroups();
+/// @brief Whether the decode keeps the long end only: the active epoch's
+///        setting; with none active, the setting of the one epoch the
+///        cross-section chain works on (AnalysisEpoch()), else the flat
+///        `IGNORE_SHORT_STRIPS`.
+Bool_t ActiveIgnoreShortStrips();
+/// @brief The epoch a binary that runs with no active epoch is working on:
+///        the single epoch named in `CROSS_SECTION_CONFIG.EPOCHS`, or the
+///        only enabled one when that list is empty. Null when the chain
+///        spans several epochs, or none are declared.
+const RunEpoch *AnalysisEpoch();
+/// @brief Make AnalysisEpoch() the active epoch, so a binary of the
+///        cross-section chain resolves the file tag, the channel map, the
+///        ADC scales and the decode flags of the one epoch it works on. A
+///        no-op when the chain spans several epochs or none are declared,
+///        in which case the flat block serves as before. Called at the top
+///        of strip-sum-scatter, compute-regions and cross-section.
+void ActivateAnalysisEpoch();
 
 /// @brief Whether the file this thread is processing is in the per-file
 ///        sample: every file with `SAVE_FULL_PLOTS`, otherwise the ones the

@@ -134,7 +134,7 @@ void EnergyView::Decode() {
   }
   // Long end only: L on odd strips, R on even. Zeroing the short end keeps
   // Total() the plain sum of the ends.
-  if (Constants::cfg.IGNORE_SHORT_STRIPS) {
+  if (Constants::ActiveIgnoreShortStrips()) {
     for (Int_t s = 1; s <= 16; s++) {
       if ((s % 2) != 0)
         right[s - 1] = 0.0;
@@ -144,18 +144,24 @@ void EnergyView::Decode() {
   }
   // Per-strip two-point alignment (beam at 1.0, pile-up at 2.0 on the strip
   // total): the factor on every end, so the sum carries it, and the offset on
-  // the long end (L on odd strips, R on even) or the unsegmented value.
+  // the long end (L on odd strips, R on even) or the unsegmented value. A
+  // long end that did not fire stays 0: the offset belongs to a reading, and
+  // adding it to nothing put every missing-channel event on a line at the
+  // offset (0.05 a.u.), where on the CoMPASS runs, with half the events
+  // missing a channel, it outnumbered the beam peak and caught the gate fit.
   if (is_normed) {
     for (Int_t s = 1; s <= 16; s++) {
       left[s - 1] *= Double_t(strip_factor[s]);
       right[s - 1] *= Double_t(strip_factor[s]);
-      if ((s % 2) != 0)
-        left[s - 1] += Double_t(strip_offset[s]);
-      else
-        right[s - 1] += Double_t(strip_offset[s]);
+      Double_t &long_end = ((s % 2) != 0) ? left[s - 1] : right[s - 1];
+      if (long_end > 0.0)
+        long_end += Double_t(strip_offset[s]);
     }
-    strip0 = strip0 * Double_t(strip_factor[0]) + Double_t(strip_offset[0]);
-    strip17 = strip17 * Double_t(strip_factor[17]) + Double_t(strip_offset[17]);
+    if (strip0 > 0.0)
+      strip0 = strip0 * Double_t(strip_factor[0]) + Double_t(strip_offset[0]);
+    if (strip17 > 0.0)
+      strip17 =
+          strip17 * Double_t(strip_factor[17]) + Double_t(strip_offset[17]);
   }
 }
 

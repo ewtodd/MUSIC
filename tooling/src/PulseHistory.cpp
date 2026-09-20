@@ -4,7 +4,7 @@
 #include "IOUtils.hpp"
 #include "PlottingUtils.hpp"
 #include <TCanvas.h>
-#include <TDecompSVD.h>
+#include <TDecompChol.h>
 #include <TF1.h>
 #include <TFile.h>
 #include <TFitResultPtr.h>
@@ -466,12 +466,19 @@ Double_t Predict(const Kernel &K, const FeatLayout &lay,
 }
 
 // Least squares on a subset of the features from the full normal matrix:
-// scaled SVD (far-dt bins of rare bands are near-collinear with the
-// intercept, and the tau grid's neighbours with each other). Returns the
-// coefficients in the order of `keep` and the drop in the residual sum of
-// squares, sum p b, so ss_res = syy - drop.
+// the matrix scaled to unit diagonal, a ridge of kRidge on it and a
+// Cholesky solve. The ridge is what keeps the near-collinear directions in
+// hand (far-dt bins of rare bands against the intercept, the tau grid's
+// neighbours against each other) and what makes a feature nobody populated
+// solve to zero rather than leave the matrix singular; at 1e-8 on a unit
+// diagonal it does not move a determined coefficient. Cholesky rather than
+// SVD because it cannot fail to converge: the SVD's iteration stalled on
+// the sparse CoMPASS channels and printed a stack of errors for each. Returns
+// the coefficients in the order of `keep` and the drop in the residual sum
+// of squares, sum p b, so ss_res = syy - drop.
 Bool_t SolveSubset(const Normal &N, const std::vector<Int_t> &keep, TVectorD &p,
                    Double_t &drop) {
+  const Double_t kRidge = 1.0e-8;
   const Int_t nk = Int_t(keep.size());
   if (nk < 1)
     return kFALSE;
@@ -491,11 +498,13 @@ Bool_t SolveSubset(const Normal &N, const std::vector<Int_t> &keep, TVectorD &p,
     bs[a] = bk[a] * scale[a];
     for (Int_t b = 0; b < nk; b++)
       As(a, b) = Ak(a, b) * scale[a] * scale[b];
+    As(a, a) += kRidge;
   }
-  TDecompSVD svd(As);
-  svd.SetTol(1.0e-10);
-  Bool_t solved = kFALSE;
-  TVectorD ps = svd.Solve(bs, solved);
+  TDecompChol chol(As);
+  Bool_t solved = chol.Decompose();
+  if (!solved)
+    return kFALSE;
+  TVectorD ps = chol.Solve(bs, solved);
   if (!solved)
     return kFALSE;
   p.ResizeTo(nk);

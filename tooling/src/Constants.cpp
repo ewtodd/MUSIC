@@ -81,6 +81,7 @@ void StripSumScatterConfig::SetDefaults() {
   POST_ABOVE_NSIGMA = 0.0;
   POST_ABOVE_STRIPS = 0;
   TAIL_CLIFF_MAX_FRACTION = 0.0;
+  POST_CROSS_MIN_STRIP = 0;
   CUT_VARIATION = kTRUE;
   CUT_VARIATION_NSIGMA_STEP = 0.5;
   CUT_VARIATION_CLIFF_STEP = 0.1;
@@ -309,6 +310,7 @@ RunEpoch MakeEpoch(const TString &name, const std::vector<Int_t> &runs) {
   ep.has_cathode = cfg.HAS_CATHODE;
   ep.split_chunk_seconds = cfg.SOL_SPLIT_CHUNK_SECONDS;
   ep.pulse_history = cfg.PULSE_HISTORY_GROUPS;
+  ep.ignore_short_strips = cfg.IGNORE_SHORT_STRIPS;
   ep.strip_e_min_adc = cfg.STRIP_E_MIN_ADC;
   ep.strip_e_max_adc = cfg.STRIP_E_MAX_ADC;
   ep.cathode_max_adc = cfg.CATHODE_MAX_ADC;
@@ -454,6 +456,46 @@ Double_t ActiveSplitChunkSeconds() {
 }
 const PulseHistoryGroups &ActivePulseHistoryGroups() {
   return gActiveEpoch ? gActiveEpoch->pulse_history : cfg.PULSE_HISTORY_GROUPS;
+}
+
+const RunEpoch *AnalysisEpoch() {
+  const std::vector<TString> &want = cfg.CROSS_SECTION_CONFIG.EPOCHS;
+  const RunEpoch *found = nullptr;
+  Int_t n = 0;
+  for (Int_t e = 0; e < Int_t(cfg.EPOCHS.size()); e++) {
+    const RunEpoch &ep = cfg.EPOCHS[e];
+    Bool_t take = kFALSE;
+    if (want.empty())
+      take = ep.enabled;
+    else
+      for (Int_t w = 0; w < Int_t(want.size()) && !take; w++)
+        take = ep.name == want[w];
+    if (take) {
+      found = &ep;
+      n++;
+    }
+  }
+  return n == 1 ? found : nullptr;
+}
+
+void ActivateAnalysisEpoch() {
+  const RunEpoch *ep = AnalysisEpoch();
+  if (!ep)
+    return;
+  SetActiveEpoch(ep);
+  std::cout << "epoch " << ep->name << " ("
+            << (ep->source == kSolaris ? "SOLARIS" : "CoMPASS") << ", "
+            << ep->runs.size() << " run(s)"
+            << (ep->file_tag.Length() ? ", files tagged " + ep->file_tag : "")
+            << ")" << std::endl;
+}
+
+Bool_t ActiveIgnoreShortStrips() {
+  if (gActiveEpoch)
+    return gActiveEpoch->ignore_short_strips;
+  if (const RunEpoch *ep = AnalysisEpoch())
+    return ep->ignore_short_strips;
+  return cfg.IGNORE_SHORT_STRIPS;
 }
 
 // The plot sample is a per-thread mark: every tool that walks the files on

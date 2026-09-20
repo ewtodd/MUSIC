@@ -115,7 +115,8 @@ struct EnergyView {
    *
    * Applies the per-channel offsets (to ends that fired) and gains, drops the
    * short end when `IGNORE_SHORT_STRIPS` is set, then multiplies every end by
-   * its strip's #strip_factor and adds #strip_offset to the long end.
+   * its strip's #strip_factor and adds #strip_offset to the long end when it
+   * fired (a reading of 0 stays 0, as for the per-channel offsets).
    *
    * @note Reads whichever entry the bound tree has loaded, so call
    *       `GetEntry()` first.

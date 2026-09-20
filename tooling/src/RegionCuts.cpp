@@ -1,4 +1,5 @@
 #include "RegionCuts.hpp"
+#include "Constants.hpp"
 #include "Paths.hpp"
 #include "PlottingUtils.hpp"
 #include <TAxis.h>
@@ -21,7 +22,12 @@ static TString Key(const char *name, Int_t reac) {
   return Form("%s_reac%d", name, reac);
 }
 
-TString Dir() { return Paths::ResultsDir() + "/root_files/region_cuts"; }
+// A tagged epoch keeps its own cuts beside the untagged eras'.
+TString Dir() {
+  const TString &tag = Constants::ActiveFileTag();
+  return Paths::ResultsDir() + "/root_files/region_cuts" +
+         (tag.Length() > 0 ? "_" + tag : TString(""));
+}
 
 TString Path(const char *name, Int_t reac) {
   return Dir() + "/" + Key(name, reac) + ".root";

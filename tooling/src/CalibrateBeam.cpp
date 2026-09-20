@@ -1666,10 +1666,12 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
   for (Int_t s = 1; s <= 16; s++)
     if (align.ok && align.factors[s] != 1.0)
       n_aligned++;
-  std::cout << "[calibration] " << file_label << ": gates " << n_gates
-            << "/17, channels " << n_cal << " calibrated (" << n_uncal
-            << " not), ridge measured on " << n_ridge
-            << "/16 strips, alignment on " << n_aligned << "/16" << std::endl;
+  // One string, one write, so concurrent workers' lines do not interleave.
+  const TString line =
+      Form("[calibration] %s: gates %d/17, channels %d calibrated (%d not), "
+           "ridge measured on %d/16 strips, alignment on %d/16\n",
+           file_label.Data(), n_gates, n_cal, n_uncal, n_ridge, n_aligned);
+  std::cout << line << std::flush;
 }
 
 /// Replace each subfile's short-side gain with one built from the run-level

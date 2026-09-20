@@ -6,10 +6,11 @@
 #include <fstream>
 
 const char *const kTagCutName[kNTagCuts] = {
-    "tagged",    "upstream beam", "jump",       "reac level", "smoothness",
-    "tail rise", "re-rise",       "post above", "end strip",  "cliff"};
+    "tagged",  "upstream beam", "jump",          "reac level", "tail rise",
+    "re-rise", "post above",    "beam crossing", "end strip",  "cliff"};
 const char *const kPreCutName[kNPreCuts] = {
-    "reached tag", "all strips", "beam gate", "pileup", "noise", "both mult"};
+    "reached tag", "all strips", "beam gate", "pileup",
+    "noise",       "smoothness", "both mult"};
 
 StripSumScatter::StripSumScatter() {
   for (Int_t i = 0; i < 64; i++) {
@@ -87,6 +88,7 @@ TagThresholds StripSumScatter::NominalThresholds() {
   T.post_above_nsigma = C.POST_ABOVE_NSIGMA;
   T.post_above_strips = C.POST_ABOVE_STRIPS;
   T.end_strip_nsigma = C.END_STRIP_NSIGMA;
+  T.cross_min_strip = C.POST_CROSS_MIN_STRIP;
   T.cliff_max = C.TAIL_CLIFF_MAX_FRACTION;
   return T;
 }
@@ -125,6 +127,9 @@ StripSumScatter::ThresholdVariants() {
       // The end strip is always tested; its threshold, mean - n sigma, is
       // meaningful for any n, so the shift is never skipped.
       {"end", &TagThresholds::end_strip_nsigma, kTRUE, ds, kTRUE},
+      // A count: the variation is one strip either way (never down to off).
+      {"cross", &TagThresholds::cross_min_strip, nom.cross_min_strip > 0.0, 1.0,
+       kFALSE},
       {"cliff", &TagThresholds::cliff_max, nom.cliff_max > 0.0,
        C.CUT_VARIATION_CLIFF_STEP, kFALSE},
   };
@@ -232,14 +237,19 @@ TagCut StripSumScatter::RejectReason(const EnergyView &ev, Int_t reac,
     return kCutJump;
   if (!(ev.Total(reac) > StripMean(reac) + kReacJumpMin))
     return kCutReacLevel;
-  if (T.smooth_nsigma > 0.0)
-    for (Int_t s = reac + 1; s <= kLast; s++)
-      if (StripSigma(s) > 0.0 && TMath::Abs(ev.Total(s) - ev.Total(s - 1)) >
-                                     T.smooth_nsigma * StripSigma(s))
-        return kCutSmooth;
   const TagCut tail = TailReason(ev, reac, T);
   if (tail != kTagPass)
     return tail;
+  // The residue's range: the trace may not read below the beam before strip
+  // cross_min_strip, an absolute strip (see POST_CROSS_MIN_STRIP), so the
+  // window checked is reac+1 .. S and vacuous once reac reaches S. Never
+  // reading below it is for the end strip to judge.
+  if (T.cross_min_strip > 0.0) {
+    const Int_t upto = TMath::Min(Int_t(T.cross_min_strip + 0.5), kLast);
+    for (Int_t s = reac + 1; s <= upto; s++)
+      if (StripSigma(s) > 0.0 && ev.Total(s) < StripMean(s))
+        return kCutCross;
+  }
   Int_t end_strip = 17;
   if (Constants::cfg.IGNORE_STRIP_17 ||
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_STRIP_16_BELOW_BEAM)
@@ -297,14 +307,14 @@ std::vector<SelectionStep> StripSumScatter::DescribeSelection() {
   add(SelectionStep::kInput, "events", "calibrated events",
       Form("E(s) = strip total in beam units (beam = 1)%s; beam gates fitted "
            "per %s",
-           Constants::cfg.IGNORE_SHORT_STRIPS ? ", long ends only" : "",
-           Constants::cfg.USE_SOLARIS_DATA ? "run" : "subfile"),
+           Constants::ActiveIgnoreShortStrips() ? ", long ends only" : "",
+           Constants::ActiveUseSolarisData() ? "run" : "subfile"),
       kTRUE, -1, -1);
   add(SelectionStep::kInput, "beam_ref", "beam reference",
       Form("beam mean and σ per strip from the first %s's pure-beam sample: "
            "every strip fired, inside the entrance (%s) and exit (%s) "
            "ellipses, 3σ-clipped",
-           Constants::cfg.USE_SOLARIS_DATA ? "run" : "subfile",
+           Constants::ActiveUseSolarisData() ? "run" : "subfile",
            C.PURE_BEAM_GATE == StripSumScatterConfig::PURE_BEAM_GATE_S1_S2
                ? "strips 1 vs 2"
                : "strips 0 vs 1",
@@ -337,6 +347,11 @@ std::vector<SelectionStep> StripSumScatter::DescribeSelection() {
       Form("%s of strips 1-16 at or below beam − %.1f σ",
            fewer(C.NOISE_MIN_STRIPS).Data(), C.NOISE_NSIGMA),
       C.NOISE_NSIGMA > 0.0, kPreNoise, -1);
+  add(SelectionStep::kEventLevel, "smooth", kPreCutName[kPreSmooth],
+      Form("every step between strips 1-%d within %.1f σ of the later "
+           "strip's spread, the single largest rise excepted",
+           last, C.SMOOTHNESS_NSIGMA),
+      C.SMOOTHNESS_NSIGMA > 0.0, kPreSmooth, -1);
   add(SelectionStep::kEventLevel, "both_mult", kPreCutName[kPreBothMult],
       Form("at most %d of strips 1-%d with both ends fired (raw ADC)",
            C.BOTH_MULT_MAX, TMath::Min(16, C.BOTH_MULT_COUNT_TO)),
@@ -360,10 +375,6 @@ std::vector<SelectionStep> StripSumScatter::DescribeSelection() {
   add(SelectionStep::kPerStrip, "reac_level", kTagCutName[kCutReacLevel],
       Form("E(reac) > beam + %.1f σ(reac)", C.REAC_JUMP_NSIGMA), kTRUE, -1,
       kCutReacLevel);
-  add(SelectionStep::kPerStrip, "smooth", kTagCutName[kCutSmooth],
-      Form("every step from reac+1 to strip %d within %.1f σ", last,
-           C.SMOOTHNESS_NSIGMA),
-      C.SMOOTHNESS_NSIGMA > 0.0, -1, kCutSmooth);
   add(SelectionStep::kPerStrip, "tail_rise", kTagCutName[kCutTailRise],
       Form("no step up above %.1f σ from strip max(reac, %d)+1 to %d",
            C.TAIL_RISE_NSIGMA, C.TAIL_FALL_FROM_STRIP, last),
@@ -377,6 +388,11 @@ std::vector<SelectionStep> StripSumScatter::DescribeSelection() {
       Form("strips reac+1 to reac+%d all above beam + %.1f σ",
            C.POST_ABOVE_STRIPS, C.POST_ABOVE_NSIGMA),
       C.POST_ABOVE_NSIGMA > 0.0 && C.POST_ABOVE_STRIPS > 0, -1, kCutPostAbove);
+  add(SelectionStep::kPerStrip, "cross", kTagCutName[kCutCross],
+      Form("strips reac+1 through %d all at or above the beam mean: the "
+           "residue reaches strip %d before crossing the beam",
+           C.POST_CROSS_MIN_STRIP, C.POST_CROSS_MIN_STRIP),
+      C.POST_CROSS_MIN_STRIP > 0, -1, kCutCross);
   add(SelectionStep::kPerStrip, "last_strip", kTagCutName[kCutEndStrip],
       Form("strip %d below beam − %.1f σ", end_strip, C.END_STRIP_NSIGMA),
       kTRUE, -1, kCutEndStrip);
@@ -593,6 +609,38 @@ Bool_t StripSumScatter::IsNoise(const EnergyView &ev) {
       return kTRUE;
   return kFALSE;
 }
+// The trace's largest step with its single largest upward step exempted,
+// whatever strip is asked about: a reaction is one rise, the jump at the
+// reaction strip, followed by gradual change, while a spike, a partial
+// second particle or a glitch shows more than one abrupt step (up and back
+// down, or two rises). So the biggest rise is the reaction's and is left
+// alone, and everything else, every fall and every other rise, is held to
+// the limit. Strip 0 stays out (its own scale and spread).
+Double_t StripSumScatter::MaxStepNSigma(const EnergyView &ev) {
+  const Int_t kLast = Constants::cfg.IGNORE_STRIP_17 ? 16 : 17;
+  Double_t worst = 0.0, best_rise = 0.0, second_rise = 0.0;
+  for (Int_t s = 2; s <= kLast; s++) {
+    if (!(StripSigma(s) > 0.0))
+      continue;
+    const Double_t d = (ev.Total(s) - ev.Total(s - 1)) / StripSigma(s);
+    if (d > 0.0) {
+      // Rises are ranked: the largest is exempt, the runner-up counts.
+      if (d > best_rise) {
+        second_rise = best_rise;
+        best_rise = d;
+      } else if (d > second_rise) {
+        second_rise = d;
+      }
+    } else if (-d > worst) {
+      worst = -d;
+    }
+  }
+  return TMath::Max(worst, second_rise);
+}
+
+Bool_t StripSumScatter::IsSmooth(const EnergyView &ev, Double_t nsigma) {
+  return !(nsigma > 0.0) || MaxStepNSigma(ev) <= nsigma;
+}
 
 Double_t StripSumScatter::SumRange(const Double_t *total, Int_t lo, Int_t hi) {
   Double_t sum = 0.0;
@@ -635,7 +683,11 @@ std::vector<GateSpec> StripSumScatter::ActiveGates() {
 }
 
 TString StripSumScatter::CacheName() {
+  // A tagged epoch keeps its own cache: its scatters and reservoir are of
+  // different events files than the untagged eras'.
   TString name = "StripSumScatter_cache";
+  if (Constants::ActiveFileTag().Length() > 0)
+    name += "_" + Constants::ActiveFileTag();
   if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_GATE_S3_S4)
     name += "_g34";
   if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REQUIRE_GATE_S5_S6)
@@ -1436,10 +1488,12 @@ TString StripSumScatter::BuildFingerprint(const FileSet::GateGroups &groups) {
   // Two parts split by the bar. Before: what decides tagging and keeping; a
   // change there refills. After: plane-only, re-projected from the reservoir.
   TString s = Form(
-      "v34 reac[%d,%d] bmult[%d,%d] pileup=%.2fsig,%d noise=%.2fsig,%d "
+      "v37 reac[%d,%d] short=%d bmult[%d,%d] pileup=%.2fsig,%d "
+      "noise=%.2fsig,%d "
       "jump=%.2fsig smooth=%.2fsig "
       "end=%.2fsig gate[s%d,s%d,%.2f,%.2f,%d,%.3f,%.3f]",
-      kReacMin, kReacMax, Constants::cfg.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_MAX,
+      kReacMin, kReacMax, Int_t(Constants::ActiveIgnoreShortStrips()),
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_MAX,
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_COUNT_TO,
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PILEUP_NSIGMA,
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PILEUP_MIN_STRIPS,
@@ -1452,10 +1506,10 @@ TString StripSumScatter::BuildFingerprint(const FileSet::GateGroups &groups) {
   {
     const StripSumScatterConfig &C = Constants::cfg.STRIP_SUM_SCATTER_CONFIG;
     s += Form(" tail[fall=%d,%.2fsig above=%d,%.2fsig rerise=%.2fsig,%.2fsig "
-              "cliff=%.2f]",
+              "cross=%d cliff=%.2f]",
               C.TAIL_FALL_FROM_STRIP, C.TAIL_RISE_NSIGMA, C.POST_ABOVE_STRIPS,
               C.POST_ABOVE_NSIGMA, C.TAIL_RETURN_NSIGMA, C.TAIL_RERISE_NSIGMA,
-              C.TAIL_CLIFF_MAX_FRACTION);
+              C.POST_CROSS_MIN_STRIP, C.TAIL_CLIFF_MAX_FRACTION);
     // The variation steps: the variant counts in the cache depend on them.
     if (C.CUT_VARIATION)
       s += Form(" var[%.2fsig,%.2f]", C.CUT_VARIATION_NSIGMA_STEP,
@@ -1652,7 +1706,7 @@ void StripSumScatter::SimTotal(const RemixSim::Event &e, const Double_t *gain,
                                Double_t *total) {
   for (Int_t s = 0; s < 18; s++)
     total[s] = gain[s] * e.Total(s);
-  if (Constants::cfg.IGNORE_SHORT_STRIPS)
+  if (Constants::ActiveIgnoreShortStrips())
     for (Int_t s = 1; s <= 16; s++)
       total[s] = gain[s] * ((s % 2) != 0 ? e.Left(s) : e.Right(s));
 }
@@ -2430,6 +2484,7 @@ StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
   // cuts is tagged once per variant as well.
   const std::vector<std::pair<TString, TagThresholds>> variants =
       ThresholdVariants();
+  const TagThresholds nominal = NominalThresholds();
   res.tagged_var.assign(variants.size(), std::vector<Long64_t>(nReacStrips, 0));
   Int_t nBeamKept = 0;
   EnergyView ev;
@@ -2477,6 +2532,15 @@ StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
       res.pre_counts[kPreNoise]++;
       continue;
     }
+    // Smoothness: the trace's largest step against the nominal limit for the
+    // count, and against each variant's for the cut variation. An event the
+    // nominal limit drops is still tagged for the variants that would keep
+    // it, so a shifted smoothness threshold is measured like any other.
+    const Double_t step_z = MaxStepNSigma(ev);
+    const Bool_t smooth_ok =
+        !(nominal.smooth_nsigma > 0.0) || step_z <= nominal.smooth_nsigma;
+    if (!smooth_ok)
+      res.pre_counts[kPreSmooth]++;
     // Both-ends multiplicity: counted on raw ADC so it sees the short end
     // even when IGNORE_SHORT_STRIPS zeroes it in the decode.
     if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_MAX >= 0) {
@@ -2487,29 +2551,39 @@ StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
         if (ev.leftdE_adc[s - 1] > 0 && ev.rightdE_adc[s - 1] > 0)
           nboth++;
       if (nboth > Constants::cfg.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_MAX) {
-        res.pre_counts[kPreBothMult]++;
+        // Sequential: counted here only if smoothness let it through.
+        if (smooth_ok)
+          res.pre_counts[kPreBothMult]++;
         continue;
       }
     }
-    res.pre_counts[kPrePass]++;
-    // The last pre-reaction count: here, not at `seen`, is what makes the
-    // tag-count ratio a cross section: same gate + quality efficiencies.
-    totalNormed++;
-    // Per-strip denominator: beam counts toward `reac` only if it met the
-    // conditions a reaction there must meet: efficiencies cancel in the ratio.
-    for (Int_t reac = kReacMin; reac <= kReacMax; reac++)
-      if (BeamUpstreamOf(ev, reac))
-        res.normed_at[ReacIndex(reac)]++;
+    if (smooth_ok) {
+      res.pre_counts[kPrePass]++;
+      // The last pre-reaction count: here, not at `seen`, is what makes the
+      // tag-count ratio a cross section: same gate + quality efficiencies.
+      totalNormed++;
+      // Per-strip denominator: beam counts toward `reac` only if it met the
+      // conditions a reaction there must meet: efficiencies cancel in the
+      // ratio.
+      for (Int_t reac = kReacMin; reac <= kReacMax; reac++)
+        if (BeamUpstreamOf(ev, reac))
+          res.normed_at[ReacIndex(reac)]++;
+    }
 
     UInt_t mask = 0;
     Double_t totals[18];
     ev.Totals(totals);
     for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
+      for (size_t v = 0; v < variants.size(); v++) {
+        const TagThresholds &T = variants[v].second;
+        if ((!(T.smooth_nsigma > 0.0) || step_z <= T.smooth_nsigma) &&
+            RejectReason(ev, reac, T) == kTagPass)
+          res.tagged_var[v][ReacIndex(reac)]++;
+      }
+      if (!smooth_ok)
+        continue;
       const TagCut why = RejectReason(ev, reac);
       res.cut_counts[ReacIndex(reac) * kNTagCuts + why]++;
-      for (size_t v = 0; v < variants.size(); v++)
-        if (RejectReason(ev, reac, variants[v].second) == kTagPass)
-          res.tagged_var[v][ReacIndex(reac)]++;
       if (why != kTagPass)
         continue;
       mask |= (1u << ReacIndex(reac));
@@ -2540,7 +2614,7 @@ StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
     e.strip17_adc = Float_t(ev.strip17_adc);
     // Mirror IGNORE_SHORT_STRIPS on the raw record too: the decode zeroes the
     // short end, so the raw ADC trace drops the same side for comparability.
-    if (Constants::cfg.IGNORE_SHORT_STRIPS)
+    if (Constants::ActiveIgnoreShortStrips())
       for (Int_t s = 1; s <= 16; s++) {
         if ((s % 2) != 0)
           e.rightdE_adc[s - 1] = 0.0f;
@@ -3122,9 +3196,12 @@ Bool_t StripSumScatter::Prepare() {
 
   // The selection as configured, as a block diagram: needs no data, so it
   // is on disk whatever happens below.
-  SelectionDiagram::Write(DescribeSelection(),
-                          Paths::ResultsDir() + "/plots/strip_sum_scatter",
-                          Paths::DatasetName() + " event selection");
+  SelectionDiagram::Write(
+      DescribeSelection(), Paths::ResultsDir() + "/plots/strip_sum_scatter",
+      Paths::DatasetName() +
+          (Constants::GetActiveEpoch() ? " " + Constants::GetActiveEpoch()->name
+                                       : TString("")) +
+          " event selection");
 
   // The gate groups: a run's chunks on SOLARIS, one subfile on CoMPASS. Every
   // per-group step below runs one task per group.

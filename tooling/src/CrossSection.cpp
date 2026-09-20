@@ -6,7 +6,6 @@
 #include "PlottingUtils.hpp"
 #include "RegionCuts.hpp"
 #include "StripSumScatter.hpp"
-#include "TagEfficiency.hpp"
 #include <TAxis.h>
 #include <TCanvas.h>
 #include <TCutG.h>
@@ -38,9 +37,19 @@ const Double_t kGasTemperatureK = 293.0;
 // A barn is 1e-24 cm^2, so a millibarn is 1e-27 cm^2.
 const Double_t kCm2PerMb = 1.0e-27;
 
+// A tagged epoch's figures carry its tag, beside the untagged eras'.
+TString TagSuffix() {
+  const TString &tag = Constants::ActiveFileTag();
+  return tag.Length() > 0 ? "_" + tag : TString("");
+}
+
 // Marker styles and colours for the channels on a combined figure.
 const Int_t kChannelMarker[4] = {20, 21, 22, 23};
 const Int_t kChannelColor[4] = {kBlack, kGreen + 2, kMagenta + 2, kOrange + 7};
+// Colours for the model curves on a single-channel figure, one per TALYS
+// model in TALYS_MODELS order.
+const Int_t kModelColor[8] = {kAzure + 1,   kRed + 1,  kGreen + 2, kOrange + 7,
+                              kMagenta + 1, kCyan + 2, kGray + 2,  kViolet - 3};
 
 } // namespace
 
@@ -221,6 +230,43 @@ Double_t CrossSection::Enclosed(Double_t nsigma) {
   return 1.0 - std::exp(-0.5 * nsigma * nsigma);
 }
 
+// The cut-variation systematic on a strip's tagged count, in counts: per
+// threshold the larger change of the count under its up and down shift
+// (the cache holds one count per variant, named "+" / "-" per threshold),
+// added in quadrature. `detail` receives one "name change" pair per
+// threshold; 0 and an empty detail when the cache carries no variants.
+Double_t CrossSection::CutVariationCounts(Int_t reac, TString &detail) const {
+  detail = "";
+  Bool_t at_ok = kTRUE;
+  const Long64_t n_nom = ReadCount(*cache_, Form("n_tagged_r%d", reac), at_ok);
+  TNamed *vn = static_cast<TNamed *>(cache_->Get("cut_variants"));
+  if (!at_ok || !vn)
+    return 0.0;
+  std::map<TString, Double_t> worst;
+  TString names = vn->GetTitle(), tok;
+  Int_t from = 0;
+  while (names.Tokenize(tok, from, ",")) {
+    if (tok.IsNull())
+      continue;
+    Bool_t ok = kTRUE;
+    const Long64_t n_v =
+        ReadCount(*cache_, Form("n_tagged_r%d_%s", reac, tok.Data()), ok);
+    if (!ok)
+      continue;
+    const TString base = tok(0, tok.Length() - 1);
+    const Double_t d = std::fabs(Double_t(n_v - n_nom));
+    if (d > worst[base])
+      worst[base] = d;
+  }
+  Double_t var2 = 0.0;
+  for (std::map<TString, Double_t>::const_iterator it = worst.begin();
+       it != worst.end(); ++it) {
+    var2 += it->second * it->second;
+    detail += Form(" %s %.0f", it->first.Data(), it->second);
+  }
+  return std::sqrt(var2);
+}
+
 Bool_t CrossSection::LoadCache() {
   const CrossSectionConfig &X = Constants::cfg.CROSS_SECTION_CONFIG;
   TString path = IO::GetRootFilesBaseDir() + "/" + StripSumScatter::CacheName();
@@ -391,35 +437,12 @@ Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
               << std::endl;
 
   const Double_t norm = pt.n_denom * areal_ * kCm2PerMb;
-  TagEfficiencyRecord eff;
-  if (TagEfficiencyStore::Load(ch.name, reac, eff) && eff.eff > 0.0) {
-    // Unfolded efficiency-side count: previous strip's migration feed removed,
-    // then loss undone; feed known only if that strip was itself unfolded.
-    const Double_t feed =
-        prev_reac_ == reac - 1 ? prev_migrate_ * prev_true_ : 0.0;
-    pt.n_reac = (eff.n_counted - feed) / eff.eff;
-    pt.sigma = pt.n_reac / norm;
-    pt.stat = eff.n_counted > 0.0 ? pt.sigma / std::sqrt(eff.n_counted) : 0.0;
-    pt.sys = pt.sigma * eff.eff_err / eff.eff;
-    prev_reac_ = reac;
-    prev_true_ = pt.n_reac;
-    prev_migrate_ = eff.migrate;
-    std::cout << Form("   %2d    [%5.2f, %5.2f]      %6.2f   %6.0f  %9.0f   "
-                      "%7.1f +- %.1f (%.1f stat, %.1f eff; counted %.0f, "
-                      "eff %.3f, fed %.0f from strip %d)",
-                      reac, pt.e_in, pt.e_out, pt.e_eff, pt.n_reac, pt.n_denom,
-                      pt.sigma, pt.Err(), pt.stat, pt.sys, eff.n_counted,
-                      eff.eff, feed, reac - 1)
-              << std::endl;
-    delete cut;
-    return kTRUE;
-  }
-  prev_reac_ = -1;
-
+  const Bool_t all_tagged =
+      C.AN_REGION_MODE == StripSumScatterConfig::AN_REGION_ALL_TAGGED;
   // Geometric = in-region / enclosed fraction; attributed = 3-sigma fit share.
   // Disagreement = region systematic; geometric runs away over beam tail.
   const Double_t n_raw = CountInCut(h, cut, 1.0);
-  if (C.AN_REGION_MODE == StripSumScatterConfig::AN_REGION_ALL_TAGGED) {
+  if (all_tagged) {
     // Every tagged event is the reaction: the count is what the tag left,
     // with no enclosed-fraction correction and no region systematic. The
     // systematic is the cut variation: per threshold the larger change of
@@ -427,36 +450,8 @@ Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
     pt.n_reac = n_raw;
     pt.sigma = pt.n_reac / norm;
     pt.stat = pt.n_reac > 0.0 ? pt.sigma / std::sqrt(pt.n_reac) : 0.0;
-    Double_t var2 = 0.0;
     TString detail;
-    Bool_t at_ok = kTRUE;
-    const Long64_t n_nom =
-        ReadCount(*cache_, Form("n_tagged_r%d", reac), at_ok);
-    if (TNamed *vn = static_cast<TNamed *>(cache_->Get("cut_variants"))) {
-      // Names come in "+" / "-" pairs per threshold.
-      std::map<TString, Double_t> worst;
-      TString names = vn->GetTitle(), tok;
-      Int_t from = 0;
-      while (names.Tokenize(tok, from, ",")) {
-        if (tok.IsNull())
-          continue;
-        Bool_t ok = kTRUE;
-        const Long64_t n_v =
-            ReadCount(*cache_, Form("n_tagged_r%d_%s", reac, tok.Data()), ok);
-        if (!ok)
-          continue;
-        const TString base = tok(0, tok.Length() - 1);
-        const Double_t d = std::fabs(Double_t(n_v - n_nom));
-        if (d > worst[base])
-          worst[base] = d;
-      }
-      for (std::map<TString, Double_t>::const_iterator it = worst.begin();
-           it != worst.end(); ++it) {
-        var2 += it->second * it->second;
-        detail += Form(" %s %.0f", it->first.Data(), it->second);
-      }
-    }
-    pt.sys = std::sqrt(var2) / norm;
+    pt.sys = CutVariationCounts(reac, detail) / norm;
     std::cout << Form("   %2d    [%5.2f, %5.2f]      %6.2f   %6.0f  %9.0f   "
                       "%7.1f +- %.1f (%.1f stat, %.1f cut variation; all "
                       "tagged events counted%s%s)",
@@ -624,8 +619,8 @@ void CrossSection::Draw(const std::vector<const ChannelResult *> &rs,
                               : r.ch->reference_label;
       published.push_back(p);
     }
-    // Hauser-Feshbach prediction, if talys-xs wrote one: first model solid,
-    // rest dashed; combined figure: first per channel only, in its colour.
+    // Hauser-Feshbach prediction, if talys-xs wrote one, one colour per
+    // model; combined figure: first per channel only, in its colour.
     for (Int_t m = 0; m < Int_t(r.talys.size()); m++) {
       if (rs.size() > 1 && m > 0)
         break;
@@ -651,10 +646,12 @@ void CrossSection::Draw(const std::vector<const ChannelResult *> &rs,
     TGraph *g = Clipped(curves[k].first, fx_lo - 0.4, fx_hi + 0.4);
     if (!g)
       continue;
+    // Combined figure: the channel's colour. One channel: a colour per
+    // model. All dashed: the colour is the distinction, the dash says model.
     const Int_t ch = rs.size() > 1 ? k : 0;
-    g->SetLineColor(rs.size() > 1 ? kChannelColor[ch % 4] : kAzure + 1);
-    g->SetLineWidth(k == 0 || rs.size() > 1 ? 2 : 1);
-    g->SetLineStyle(k == 0 || rs.size() > 1 ? 1 : 2);
+    g->SetLineColor(rs.size() > 1 ? kChannelColor[ch % 4] : kModelColor[k % 8]);
+    g->SetLineWidth(2);
+    g->SetLineStyle(2);
     g->Draw("L SAME");
     drawn.push_back(std::make_pair(g, curves[k].second));
   }
@@ -663,11 +660,12 @@ void CrossSection::Draw(const std::vector<const ChannelResult *> &rs,
   for (Int_t k = 0; k < Int_t(measured.size()); k++)
     measured[k].g->Draw("P SAME");
   // Bottom right is the one empty corner: the excitation function climbs to
-  // the upper right and the reference table starts at the lower left.
+  // the upper right and the reference table starts at the lower left. One
+  // row per entry at the standard text size.
   const Int_t n_entries =
       Int_t(measured.size() + published.size() + drawn.size());
   TLegend *leg =
-      PlottingUtils::AddLegend(0.42, 0.89, 0.16, 0.16 + 0.07 * n_entries);
+      PlottingUtils::AddLegend(0.42, 0.89, 0.16, 0.18 + 0.048 * n_entries);
   for (Int_t k = 0; k < Int_t(measured.size()); k++)
     leg->AddEntry(measured[k].g, measured[k].label, "pe");
   for (Int_t k = 0; k < Int_t(published.size()); k++)
@@ -720,7 +718,6 @@ Bool_t CrossSection::RunChannel(const CrossSectionChannel &ch,
   std::cout << "  strip   E_cm range [MeV]    "
             << (X.EFFECTIVE_ENERGY ? "E_cm,eff" : "E_cm,mid")
             << "   N_reac    N_beam    sigma [mb]" << std::endl;
-  prev_reac_ = -1;
   for (Int_t reac = X.XS_STRIP_MIN; reac <= X.XS_STRIP_MAX; reac++) {
     Point pt;
     if (Strip(ch, out.talys, reac, pt))
@@ -733,7 +730,7 @@ Bool_t CrossSection::RunChannel(const CrossSectionChannel &ch,
   }
   CompareReference(out);
   std::vector<const ChannelResult *> one(1, &out);
-  Draw(one, "cross_section_" + ch.name);
+  Draw(one, "cross_section_" + ch.name + TagSuffix());
   return kTRUE;
 }
 
@@ -763,14 +760,13 @@ Bool_t CrossSection::Run() {
                     X.GAS_PRESSURE_TORR, kGasTemperatureK, n_gas_,
                     kStripLengthCm, areal_)
             << std::endl;
-  const TString method = TagEfficiencyStore::Method();
-  if (method.Length() > 0)
-    std::cout << "  tag efficiency: " << method
-              << " (strips with a record are unfolded by it)" << std::endl;
+  if (C.AN_REGION_MODE == StripSumScatterConfig::AN_REGION_ALL_TAGGED)
+    std::cout << "  every tagged event counted; the cut variation is the "
+                 "systematic"
+              << std::endl;
   else
-    std::cout << Form("  no tag-efficiency store; regions at %.1f sigma "
-                      "enclose %.1f%% of the fitted component and counts "
-                      "are corrected for that only",
+    std::cout << Form("  regions at %.1f sigma enclose %.1f%% of the fitted "
+                      "component and counts are corrected for that only",
                       C.AN_REGION_NSIGMA, 100.0 * Enclosed(C.AN_REGION_NSIGMA))
               << std::endl;
   LoadTalys();
@@ -787,7 +783,7 @@ Bool_t CrossSection::Run() {
   if (done.empty())
     return kFALSE;
   if (done.size() > 1)
-    Draw(done, "cross_section");
+    Draw(done, "cross_section" + TagSuffix());
   cache_->Close();
   return kTRUE;
 }

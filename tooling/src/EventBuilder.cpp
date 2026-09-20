@@ -119,16 +119,20 @@ void EventBuilder::AssignHit(EventState &e, PerChannelData *pc,
   e.hits[slot]++;
 }
 
+// The same condition the analysis applies as its first event-level cut
+// (StripSumScatter::AllStripsFired): the long end of every split strip, L on
+// odd strips and R on even, plus the unsegmented strips the configuration
+// does not ignore. One definition, so nothing is stored that the analysis
+// would only drop, and no half-read event reaches the beam-gate fits.
 Bool_t EventBuilder::CheckEventComplete(const EventState &e) {
-  if (e.strip0dE == 0)
+  if (!Constants::cfg.IGNORE_STRIP_0 && e.strip0dE == 0)
     return kFALSE;
-  // The long end of strips 1-14: L on odd strips, R on even.
-  for (Int_t strip = 1; strip <= 14; strip += 2) {
-    if (e.leftdE[strip - 1] == 0)
-      return kFALSE;
-  }
-  for (Int_t strip = 2; strip <= 15; strip += 2) {
-    if (e.rightdE[strip - 1] == 0)
+  if (!Constants::cfg.IGNORE_STRIP_17 && e.strip17dE == 0)
+    return kFALSE;
+  for (Int_t strip = 1; strip <= 16; strip++) {
+    const Int_t v =
+        (strip % 2) != 0 ? e.leftdE[strip - 1] : e.rightdE[strip - 1];
+    if (v == 0)
       return kFALSE;
   }
   return kTRUE;
@@ -661,15 +665,17 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   // Outside the per-file sample one line says what the build did; the full
   // block below is for the sample files.
   if (!Constants::FileInSample()) {
-    std::cout << "[events] " << file_label << ": " << total_events
-              << " events, " << complete_events << " complete ("
-              << Form("%.1f", total_events > 0
-                                  ? 100.0 * complete_events / total_events
-                                  : 0.0)
-              << "%), " << n_ref << " " << Constants::ActiveReferenceChannel()
-              << " hits at " << Form("%.0f", ref_rate_hz) << " Hz, "
-              << dropped_outside_window << " outside window, dedup dropped "
-              << dropped_anode_hits_total << " anode" << std::endl;
+    // One string, one write: workers share the stream and a line built
+    // piecewise interleaves with another worker's.
+    const TString line = Form(
+        "[events] %s: %lld events, %lld complete (%.1f%%), %lld %s hits at "
+        "%.0f Hz, %lld outside window, dedup dropped %lld anode\n",
+        file_label.Data(), Long64_t(total_events), Long64_t(complete_events),
+        total_events > 0 ? 100.0 * complete_events / total_events : 0.0,
+        Long64_t(n_ref), Constants::ActiveReferenceChannel().Data(),
+        ref_rate_hz, Long64_t(dropped_outside_window),
+        Long64_t(dropped_anode_hits_total));
+    std::cout << line << std::flush;
     return kTRUE;
   }
   if (emptyChannelMapEvents != 0)

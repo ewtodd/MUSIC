@@ -207,7 +207,12 @@ std::vector<TString> FileSet::DiscoverSolRunSuffixes(Int_t run) {
 std::vector<TString> FileSet::DiscoverProcessedRunSuffixes(Int_t run) {
   std::vector<TString> suffixes;
   TString dir = IO::GetRootFilesBaseDir();
-  TString prefix = Form("Events_Run%d", run);
+  // The same name the pipeline writes (EventsName), tag included, with the
+  // suffix left off: a tagged epoch's files are found only with it active.
+  FileSpec bare;
+  bare.run = run;
+  bare.suffix = "";
+  TString prefix = EventsName(bare);
   void *dirp = gSystem->OpenDirectory(dir);
   if (!dirp)
     return suffixes;
@@ -219,6 +224,10 @@ std::vector<TString> FileSet::DiscoverProcessedRunSuffixes(Int_t run) {
     if (!fname.EndsWith(".root"))
       continue;
     TString rest = fname(prefix.Length(), fname.Length() - prefix.Length() - 5);
+    // The suffix is empty or "_<subfile>...": "Events_Run1" must not
+    // collect run 16's files as suffix "6_...".
+    if (rest.Length() > 0 && rest[0] != '_')
+      continue;
     suffixes.push_back(rest);
   }
   gSystem->FreeDirectory(dirp);
@@ -325,7 +334,7 @@ FileSet::GroupEventsByRun(std::vector<Int_t> &run_order) {
 FileSet::GateGroups FileSet::GroupEventsForGating() {
   GateGroups g;
   std::vector<FileSpec> all_specs = BuildProcessedFileSpecs();
-  const Bool_t per_file = !Constants::cfg.USE_SOLARIS_DATA;
+  const Bool_t per_file = !Constants::ActiveUseSolarisData();
   Int_t next_key = 0;
   for (Int_t i = 0; i < Int_t(all_specs.size()); i++) {
     const FileSpec &s = all_specs[i];

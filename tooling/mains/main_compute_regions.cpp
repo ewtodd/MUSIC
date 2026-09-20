@@ -22,6 +22,7 @@
 #include <iostream>
 
 int main() {
+  Constants::ActivateAnalysisEpoch();
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
                                 Paths::ResultsDir() + "/plots",
                                 Paths::ResultsDir() + "/root_files");
