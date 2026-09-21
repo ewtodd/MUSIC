@@ -157,13 +157,20 @@ TGraph *CrossSection::Clipped(TGraph *g, Double_t e_lo, Double_t e_hi) {
   return x.empty() ? nullptr : new TGraph(Int_t(x.size()), &x[0], &y[0]);
 }
 
-/// The effective energy of a strip spanning e_out..e_in: the energy at which
-/// the model's cross section equals its average over the strip, so a thin
-/// target at e_eff would give what the strip gives (Szegedi et al. 2021).
-/// The beam's dE/dx varies by a few percent within one strip, so the average
-/// is taken uniform in energy. Only the model's shape enters: a constant
-/// factor on sigma cancels. Bisection on a rising curve; the midpoint when
-/// there is no curve or the strip lies outside it.
+/// The effective energy of a strip spanning e_out..e_in: the energy below
+/// which half of the strip's yield is produced, with the model's cross
+/// section taken linear between its values at the strip entrance (sigma_1)
+/// and exit (sigma_2) and the beam's dE/dx uniform across the strip,
+///
+///   E_eff = E_0 - dE + dE [ -s2/(s1 - s2) + sqrt((s1^2 + s2^2) / (2 (s1 -
+///   s2)^2)) ]
+///
+/// a good approximation for sigma_1/sigma_2 up to about 10. Only the model's
+/// shape enters: a constant factor on sigma cancels. Evaluated in the
+/// equivalent form (s1 + s2) / (2 (sqrt((s1^2 + s2^2)/2) + s2)) for the
+/// fraction of dE, which has no 0/0 at sigma_1 = sigma_2 and gives the
+/// midpoint there. The midpoint when there is no curve, the strip lies
+/// outside it, or the model gives no positive cross section at either edge.
 Double_t CrossSection::EffectiveEnergy(TGraph *axn, Double_t e_out,
                                        Double_t e_in) {
   const Double_t mid = 0.5 * (e_out + e_in);
@@ -172,22 +179,12 @@ Double_t CrossSection::EffectiveEnergy(TGraph *axn, Double_t e_out,
   const Double_t lo = TMath::Min(e_out, e_in), hi = TMath::Max(e_out, e_in);
   if (lo < axn->GetX()[0] || hi > axn->GetX()[axn->GetN() - 1])
     return mid;
-  const Int_t kSteps = 200;
-  Double_t mean = 0.0;
-  for (Int_t k = 0; k < kSteps; k++)
-    mean += axn->Eval(lo + (k + 0.5) * (hi - lo) / kSteps);
-  mean /= Double_t(kSteps);
-  Double_t a = lo, b = hi;
-  if ((axn->Eval(a) - mean) * (axn->Eval(b) - mean) > 0.0)
+  const Double_t s1 = axn->Eval(hi), s2 = axn->Eval(lo);
+  if (s1 < 0.0 || s2 < 0.0 || s1 + s2 <= 0.0)
     return mid;
-  for (Int_t k = 0; k < 40; k++) {
-    const Double_t c = 0.5 * (a + b);
-    if ((axn->Eval(a) - mean) * (axn->Eval(c) - mean) <= 0.0)
-      b = c;
-    else
-      a = c;
-  }
-  return 0.5 * (a + b);
+  const Double_t frac =
+      (s1 + s2) / (2.0 * (TMath::Sqrt(0.5 * (s1 * s1 + s2 * s2)) + s2));
+  return lo + frac * (hi - lo);
 }
 
 // The cut scaled about its own centroid; caller owns the copy. Scaling a

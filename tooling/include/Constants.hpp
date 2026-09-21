@@ -364,12 +364,13 @@ struct CrossSectionConfig {
   Int_t XS_STRIP_MIN;
   Int_t XS_STRIP_MAX;
 
-  /// Report each strip at its effective centre-of-mass energy (Szegedi et al.
-  /// 2021: the energy at which the first TALYS model's cross section equals
-  /// its average over the strip, with the spread across models as an energy
-  /// systematic), or, when off, at the strip's midpoint with the strip's
-  /// extent as the only energy error. Off also means the TALYS shape never
-  /// enters the measured points.
+  /// Report each strip at its effective centre-of-mass energy (the energy
+  /// below which half the strip's yield is produced, with the first TALYS
+  /// model's cross section taken linear between the strip's entrance and
+  /// exit values; the spread across models is an energy systematic), or,
+  /// when off, at the strip's midpoint with the strip's extent as the only
+  /// energy error. Off also means the TALYS shape never enters the measured
+  /// points.
   Bool_t EFFECTIVE_ENERGY;
 
   /// Stamp the cross-section figures "PRELIMINARY" (large, faint, across the

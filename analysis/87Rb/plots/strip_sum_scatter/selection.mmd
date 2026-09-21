@@ -21,7 +21,7 @@ flowchart TB
     rej_pileup["drop event"]:::rej
     noise["<b>noise</b><br/>none of strips 1-16 at or below beam −<br/>12.0 σ"]:::cut
     rej_noise["drop event"]:::rej
-    smooth["<b>smoothness</b><br/>every step between strips 1-17 within 8.0 σ<br/>of the later strip's spread, the single<br/>largest rise excepted"]:::cut
+    smooth["<b>smoothness</b><br/>every step between strips 1-17 within 4.0 σ<br/>of the later strip's spread, the single<br/>largest rise excepted"]:::cut
     rej_smooth["drop event"]:::rej
   end
   subgraph stage_2["per reaction strip"]
@@ -35,7 +35,7 @@ flowchart TB
     rej_reac_level["no tag at reac"]:::rej
     rerise["<b>re-rise</b><br/>once back within 1.0 σ of the beam after<br/>the peak, never above beam + 4.0 σ again"]:::cut
     rej_rerise["no tag at reac"]:::rej
-    post_above["<b>post above</b><br/>strips reac+1 to reac+4 all above beam + 1.0<br/>σ"]:::cut
+    post_above["<b>post above</b><br/>strips reac+1 to reac+4 all above beam + 1.5<br/>σ"]:::cut
     rej_post_above["no tag at reac"]:::rej
     cross["<b>beam crossing</b><br/>strips reac+1 through 8 all at or above the<br/>beam mean: the residue reaches strip 8<br/>before crossing the beam"]:::cut
     rej_cross["no tag at reac"]:::rej

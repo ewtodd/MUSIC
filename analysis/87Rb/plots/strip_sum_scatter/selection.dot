@@ -25,7 +25,7 @@ digraph selection {
     rej_noise [shape=plaintext, style="", fontsize=9, fontcolor="#b00020", label="drop event"];
     rej_noise -> noise [dir=back, color="#b00020", arrowsize=0.6];
     {rank=same; rej_noise; noise;}
-    smooth [fillcolor="#f4f4f4", label=<<B>smoothness</B><BR/>every step between strips 1-17 within 8.0 σ<BR/>of the later strip's spread, the single<BR/>largest rise excepted>];
+    smooth [fillcolor="#f4f4f4", label=<<B>smoothness</B><BR/>every step between strips 1-17 within 4.0 σ<BR/>of the later strip's spread, the single<BR/>largest rise excepted>];
     rej_smooth [shape=plaintext, style="", fontsize=9, fontcolor="#b00020", label="drop event"];
     rej_smooth -> smooth [dir=back, color="#b00020", arrowsize=0.6];
     {rank=same; rej_smooth; smooth;}
@@ -49,7 +49,7 @@ digraph selection {
     rej_rerise [shape=plaintext, style="", fontsize=9, fontcolor="#b00020", label="no tag at reac"];
     rej_rerise -> rerise [dir=back, color="#b00020", arrowsize=0.6];
     {rank=same; rej_rerise; rerise;}
-    post_above [fillcolor="#f4f4f4", label=<<B>post above</B><BR/>strips reac+1 to reac+4 all above beam + 1.0<BR/>σ>];
+    post_above [fillcolor="#f4f4f4", label=<<B>post above</B><BR/>strips reac+1 to reac+4 all above beam + 1.5<BR/>σ>];
     rej_post_above [shape=plaintext, style="", fontsize=9, fontcolor="#b00020", label="no tag at reac"];
     rej_post_above -> post_above [dir=back, color="#b00020", arrowsize=0.6];
     {rank=same; rej_post_above; post_above;}

@@ -204,7 +204,7 @@ void InitDatasetConfig() {
 
   // Here because I needed to check if the SOLARIS data with unterminated preamp
   // could be salvaged with the pulse history correction... the answer is
-  // maybe...
+  // not without doing some nonsensical corrections...
   RunEpoch early = MakeEpoch("early", RunRange(30, 40));
   early.split_chunk_seconds = 15;
 
