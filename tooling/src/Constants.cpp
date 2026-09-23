@@ -21,6 +21,7 @@ void CrossSectionConfig::SetDefaults() {
   // state its gas and beam; zero pressure makes a forgotten one fail loudly.
   TARGET_GAS = kHELIUM;
   GAS_PRESSURE_TORR = 0.0;
+  GAS_PRESSURE_TORR_ERR = 0.0;
 
   BEAM_A = 0;
   BEAM_Z = 0;
@@ -37,6 +38,7 @@ void CrossSectionConfig::SetDefaults() {
       "maxlevelstar 30",
       "# enhanced accuracy",
       "transpower 20",
+      "ecisstep 0.02",
       "xseps 1.e-30",
       "transeps 1.e-30",
       "popeps 1.e-30",
@@ -56,6 +58,7 @@ void CrossSectionConfig::SetDefaults() {
 
   XS_STRIP_MIN = 3;
   XS_STRIP_MAX = 15;
+  FELDMAN_COUSINS_MAX_COUNT = 50;
   EFFECTIVE_ENERGY = kTRUE;
   PRELIMINARY = kFALSE;
   EPOCHS.clear();
@@ -65,6 +68,8 @@ void CrossSectionConfig::SetDefaults() {
 
 void StripSumScatterConfig::SetDefaults() {
   PURE_BEAM_GATE = PURE_BEAM_GATE_S0_S1;
+  TAG_RESOLVE = TAG_RESOLVE_FIRST_STRIP;
+  PURE_BEAM_NSIGMA = 3.5;
 
   POST_TRIGGER_SUM_STRIPS = 3;
   POST_WINDOW_LAST_STRIP = 17;
@@ -83,7 +88,7 @@ void StripSumScatterConfig::SetDefaults() {
   TAIL_CLIFF_MAX_FRACTION = 0.0;
   POST_CROSS_MIN_STRIP = 0;
   CUT_VARIATION = kTRUE;
-  CUT_VARIATION_NSIGMA_STEP = 0.5;
+  CUT_VARIATION_NSIGMA_STEP = 3.0; // the resolution, as the 87Rb paper
   CUT_VARIATION_CLIFF_STEP = 0.1;
   Y_RATIO_TO_UPSTREAM = kTRUE;
 
@@ -117,10 +122,9 @@ void StripSumScatterConfig::SetDefaults() {
   X_LO = 1;
   X_HI = 16;
 
-  GATE_STRIP_X = 1;
-  GATE_STRIP_Y = 2;
-  GATE_NSIGMA_X = 3.5;
-  GATE_NSIGMA_Y = 3.5;
+  GATE_STRIP = 1;
+  GATE_NSIGMA = 3.5;
+  GATE_CENTER = 0.0;
   GATE_MIN = 0.0;
   GATE_MAX = 3.0;
   GATE_BINS = 240;
@@ -137,8 +141,6 @@ void StripSumScatterConfig::SetDefaults() {
   RERUN_SIM = kFALSE;
   CANDIDATE_REAC_STRIP = 3;
 
-  REQUIRE_GATE_S3_S4 = kFALSE;
-  REQUIRE_GATE_S5_S6 = kFALSE;
   SKIP_SAVGOL_PLOTS = kFALSE;
   PLOT_REGION_MEAN_TRACES = kFALSE;
   PLOT_ADC_TRACES = kFALSE;
@@ -188,6 +190,7 @@ DatasetConfig::DatasetConfig() {
   IGNORE_SHORT_STRIPS = kFALSE;
   IGNORE_STRIP_0 = kFALSE;
   IGNORE_STRIP_17 = kFALSE;
+  REQUIRE_STRIP_0 = kTRUE;
 
   HAS_CATHODE = kTRUE;
   HAS_GRID = kTRUE;
@@ -204,6 +207,8 @@ DatasetConfig::DatasetConfig() {
 
   REFERENCE_CHANNEL = "Grid";
   EVENT_TIME_WINDOW_US = 8.0;
+  SEED_HOLDOFF_US = 0.0;
+  SEED_HOLDOFF_MAX_RATIO = 0.5;
   DEDUP_STRATEGY = kLARGEST_ENERGY;
 
   USE_GPU_ACCELERATION = kTRUE;
@@ -211,8 +216,7 @@ DatasetConfig::DatasetConfig() {
 
   STRIP_DE_OVERVIEW_MIN_NORMED = 0.8;
   STRIP_DE_OVERVIEW_MAX_NORMED = 5;
-  BEAM_GATE_NSIGMA_X = 3.0;
-  BEAM_GATE_NSIGMA_Y = 3.0;
+  BEAM_GATE_NSIGMA = 3.0;
   STRIP_DE_MIN_NORMED = 0.8;
   STRIP_DE_MAX_NORMED = 1.3;
   CATHODE_E_MAX_NORMED = 300;
@@ -303,6 +307,8 @@ RunEpoch MakeEpoch(const TString &name, const std::vector<Int_t> &runs) {
   ep.do_board_sync = cfg.TIMING_DO_BOARD_SYNC;
   ep.do_sort = cfg.TIMING_DO_SORT;
   ep.event_time_window_us = cfg.EVENT_TIME_WINDOW_US;
+  ep.seed_holdoff_us = cfg.SEED_HOLDOFF_US;
+  ep.seed_holdoff_max_ratio = cfg.SEED_HOLDOFF_MAX_RATIO;
   ep.reference_channel = cfg.REFERENCE_CHANNEL;
   ep.reference_channel_min_adc = cfg.REFERENCE_CHANNEL_MIN_ADC;
   ep.reference_channel_max_adc = cfg.REFERENCE_CHANNEL_MAX_ADC;
@@ -391,6 +397,13 @@ Bool_t ActiveUseSolarisData() {
 Double_t ActiveEventTimeWindowUs() {
   return gActiveEpoch ? gActiveEpoch->event_time_window_us
                       : cfg.EVENT_TIME_WINDOW_US;
+}
+Double_t ActiveSeedHoldoffUs() {
+  return gActiveEpoch ? gActiveEpoch->seed_holdoff_us : cfg.SEED_HOLDOFF_US;
+}
+Double_t ActiveSeedHoldoffMaxRatio() {
+  return gActiveEpoch ? gActiveEpoch->seed_holdoff_max_ratio
+                      : cfg.SEED_HOLDOFF_MAX_RATIO;
 }
 const TString &ActiveReferenceChannel() {
   return gActiveEpoch ? gActiveEpoch->reference_channel : cfg.REFERENCE_CHANNEL;

@@ -42,6 +42,9 @@
 #ifndef MUSIC_TALYS_BIN
 #define MUSIC_TALYS_BIN ""
 #endif
+#ifndef MUSIC_TALYS_ATOMKI_V2_DIR
+#define MUSIC_TALYS_ATOMKI_V2_DIR ""
+#endif
 
 namespace {
 
@@ -73,6 +76,50 @@ TGraph *ReadResidual(const TString &path, Double_t cm_per_lab) {
   return new TGraph(Int_t(e.size()), &e[0], &xs[0]);
 }
 
+Bool_t WantsAtomkiV2(const TalysModel &model) {
+  for (Int_t k = 0; k < Int_t(model.keywords.size()); k++) {
+    std::istringstream ss(model.keywords[k].Data());
+    std::string key;
+    Int_t value = 0;
+    if ((ss >> key >> value) && key == "alphaomp" && value == 9)
+      return kTRUE;
+  }
+  return kFALSE;
+}
+
+void ClearWorkDir(const TString &work) {
+  TSystemDirectory sd("work", work);
+  TList *files = sd.GetListOfFiles();
+  if (!files)
+    return;
+  for (TIter it(files); TObject *o = it();) {
+    const TString name = o->GetName();
+    if (name.EndsWith(".tot") || name == "talys.out" ||
+        name == "alphaomp9real.gnu")
+      gSystem->Unlink(work + "/" + name);
+  }
+  delete files;
+}
+
+Bool_t TalysSucceeded(const TString &out_path) {
+  std::ifstream in(out_path.Data());
+  std::string line;
+  while (std::getline(in, line))
+    if (line.find("congratulates you with this successful calculation") !=
+        std::string::npos)
+      return kTRUE;
+  return kFALSE;
+}
+
+TString TalysErrorLine(const TString &out_path) {
+  std::ifstream in(out_path.Data());
+  std::string line;
+  while (std::getline(in, line))
+    if (line.find("TALYS-error") != std::string::npos)
+      return TString(line.c_str()).Strip(TString::kBoth);
+  return "no TALYS-error line found";
+}
+
 // Run one model in its own work directory and write its graphs into `dir`.
 // Returns the number of residual channels written, -1 on a TALYS failure.
 Int_t RunModel(const TalysModel &model, const TString &work,
@@ -80,6 +127,31 @@ Int_t RunModel(const TalysModel &model, const TString &work,
                Double_t cm_per_lab, TDirectory *dir) {
   const CrossSectionConfig &X = Constants::cfg.CROSS_SECTION_CONFIG;
   gSystem->mkdir(work, kTRUE);
+  ClearWorkDir(work);
+  if (WantsAtomkiV2(model)) {
+    const Char_t *env = gSystem->Getenv("TALYS_ATOMKI_V2_DIR");
+    const TString pot_dir = (env && env[0] != '\0')
+                                ? TString(env)
+                                : TString(MUSIC_TALYS_ATOMKI_V2_DIR);
+    if (pot_dir.IsNull()) {
+      std::cerr << "talys-xs: " << model.label
+                << " needs alphaomp 9 but TALYS_ATOMKI_V2_DIR is not set"
+                << std::endl;
+      return -1;
+    }
+    const TString pot = pot_dir + Form("/z%03da%03da_talys_alphaomp9real.gnu",
+                                       X.BEAM_Z, X.BEAM_A);
+    if (gSystem->AccessPathName(pot, kReadPermission)) {
+      std::cerr << "talys-xs: no Atomki-V2 potential for Z=" << X.BEAM_Z
+                << " A=" << X.BEAM_A << " at " << pot << std::endl;
+      return -1;
+    }
+    if (gSystem->Symlink(pot, work + "/alphaomp9real.gnu") != 0) {
+      std::cerr << "talys-xs: cannot link " << pot << " into " << work
+                << std::endl;
+      return -1;
+    }
+  }
   TString input;
   input += "# Written by talys-xs for " + Paths::DatasetName() + ": " +
            model.label + "\n";
@@ -107,9 +179,10 @@ Int_t RunModel(const TalysModel &model, const TString &work,
     std::cout << "    " << model.keywords[k] << std::endl;
   const TString cmd = Form("cd '%s' && '%s' < talys.inp > talys.out 2>&1",
                            work.Data(), talys.Data());
-  if (std::system(cmd.Data()) != 0) {
-    std::cerr << "talys-xs: TALYS failed; see " << work << "/talys.out"
-              << std::endl;
+  if (std::system(cmd.Data()) != 0 || !TalysSucceeded(work + "/talys.out")) {
+    std::cerr << "talys-xs: TALYS failed for " << model.label << ": "
+              << TalysErrorLine(work + "/talys.out") << "; see " << work
+              << "/talys.out" << std::endl;
     return -1;
   }
 

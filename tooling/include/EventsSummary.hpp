@@ -33,11 +33,13 @@ struct SummaryHistograms {
   /// Long end against short end of the segmented strips 1-16, index
   /// `strip - 1`.
   TH2F *h2_long_vs_short[16];
-  TH1F *h1_cathode;        ///< Cathode energy.
-  TH1F *h1_strip17;        ///< Strip 17 energy.
-  TH2F *h2_strip0_vs_grid; ///< Strip 0 against grid energy.
-  TH1F *h1_strip0;         ///< Strip 0 energy.
-  TH1F *h1_grid;           ///< Grid energy.
+  TH1F *h1_cathode; ///< Cathode energy.
+  TH1F *h1_strip17; ///< Strip 17 energy.
+  /// Strip 0 against grid energy; strip 1 against the grid when strip 0 is
+  /// not required of an event (SummaryGridPartnerIsStrip1()).
+  TH2F *h2_strip0_vs_grid;
+  TH1F *h1_strip0; ///< Strip 0 energy.
+  TH1F *h1_grid;   ///< Grid energy.
 
   /// @brief Construct with every pointer null; call CreateSummaryHistograms().
   SummaryHistograms()
@@ -73,6 +75,14 @@ struct SummaryHistConfig {
   Int_t music_energy_bins; ///< Bins on the energy axis of
                            ///< SummaryHistograms::h_music.
 };
+
+/**
+ * @brief Whether the grid's partner in the summary is strip 1 rather than
+ *        strip 0: when strip 0 is ignored or not required, most events have
+ *        none, so the plot pairs the grid with the first strip every event
+ *        carries.
+ */
+Bool_t SummaryGridPartnerIsStrip1();
 
 /**
  * @brief Allocate every histogram in the set.

@@ -100,11 +100,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1788365816,
-        "narHash": "sha256-svo56jND7kEXyC8p9GFw1uWjKst8z0tQDVj1V0Qzb/Q=",
+        "lastModified": 1790019017,
+        "narHash": "sha256-s71oE55Qw3o+TBp8lEYDalpR+tb0rv/YoUPbozfC6ZQ=",
         "owner": "ewtodd",
         "repo": "talys-nix",
-        "rev": "db7ab07274e0a9edb7096c66550fa05d82316235",
+        "rev": "dd5344c4c614e909893d0ae3b3736daafb9cfab0",
         "type": "github"
       },
       "original": {
@@ -119,11 +119,11 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1788989248,
-        "narHash": "sha256-o9vrvy3raNqmNP2u+hYgLLn1JMKYVl1/MQzEkyONEZw=",
+        "lastModified": 1790097080,
+        "narHash": "sha256-LIKh44WEGXSAWJuCGFu7vv/fuaAUYX8NA0g57v3cEeg=",
         "owner": "ewtodd",
         "repo": "Analysis-Utilities",
-        "rev": "a964c25a686995941db97e109d5760155d25e0c2",
+        "rev": "a030519fea84914ecd5439d629f42aedf3424fa5",
         "type": "github"
       },
       "original": {

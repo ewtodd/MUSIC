@@ -42,6 +42,8 @@ const char *GroupName(Int_t g) {
     return "strip 0 (unsegmented)";
   case kStrip17:
     return "strip 17 (unsegmented)";
+  case kGrid:
+    return "grid (seed channel)";
   }
   return "none";
 }
@@ -60,6 +62,8 @@ const char *GroupTag(Int_t g) {
     return "S0";
   case kStrip17:
     return "S17";
+  case kGrid:
+    return "G";
   }
   return "none";
 }
@@ -94,6 +98,8 @@ const PulseHistoryGroupOption *GroupOption(Int_t g) {
     return &m.strip0;
   case kStrip17:
     return &m.strip17;
+  case kGrid:
+    return &m.grid;
   default:
     return nullptr;
   }
@@ -279,6 +285,10 @@ std::vector<Int_t> BuildGroupMap() {
     }
     if (name == "Strip17") {
       gm[idx] = kStrip17;
+      continue;
+    }
+    if (name == "Grid") {
+      gm[idx] = kGrid;
       continue;
     }
     if (name.Length() < 2 || (name[0] != 'L' && name[0] != 'R'))
@@ -546,6 +556,13 @@ Bool_t Lookahead(const ScanState &st, size_t i0) {
     st.ev_e[st.fit_ch[k]] = 0.0;
   Bool_t strip0_fired = st.strip0 < 0;
   const ULong64_t t0 = st.hits[i0].timestamp;
+  // The seed's own hit is the grid's height for this event, when the grid
+  // is a fitted channel; the window below starts after it.
+  {
+    const Int_t i = HitIndex(st.hits[i0]);
+    if (i >= 0 && i < st.nidx && st.group_of[i] != kNone)
+      st.ev_e[i] = Double_t(st.hits[i0].energy);
+  }
   for (size_t j = i0 + 1;
        j < st.hits.size() && st.hits[j].timestamp - t0 < st.window_ps; j++) {
     const Int_t i = HitIndex(st.hits[j]);

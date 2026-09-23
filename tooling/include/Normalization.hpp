@@ -48,6 +48,10 @@ struct EnergyView {
   Float_t gain_strip0;  ///< Strip 0 gain.
   Float_t gain_strip17; ///< Strip 17 gain.
   Float_t gain_cathode; ///< Cathode gain.
+  /// Grid gain: the reciprocal of its modal beam peak, so the grid reads 1.0
+  /// for a beam event. Zero on files calibrated before it was written, where
+  /// Decode() falls back to the full-scale normalisation.
+  Float_t gain_grid;
   /// Per-strip multiplicative alignment, indexed by strip 0-17 and applied to
   /// every end of the strip after its gain. Identity (1.0) when no alignment
   /// is loaded, so an unaligned dataset decodes unchanged.
@@ -85,8 +89,8 @@ struct EnergyView {
   EnergyView()
       : strip0_adc(0), strip17_adc(0), cathode_adc(0), grid_adc(0),
         gain_strip0(0.0f), gain_strip17(0.0f), gain_cathode(0.0f),
-        is_normed(kFALSE), strip0(0.0), strip17(0.0), cathode(0.0), grid(0.0),
-        tree_(nullptr), loaded_tree_(-1) {
+        gain_grid(0.0f), is_normed(kFALSE), strip0(0.0), strip17(0.0),
+        cathode(0.0), grid(0.0), tree_(nullptr), loaded_tree_(-1) {
     for (Int_t k = 0; k < 16; k++) {
       leftdE_adc[k] = 0;
       rightdE_adc[k] = 0;
@@ -136,6 +140,11 @@ struct EnergyView {
     if (strip >= 17)
       return strip17;
     return left[strip - 1] + right[strip - 1];
+  }
+  /// @brief The value on a beam-gate axis: a strip's deposit, or the grid
+  ///        (GATE_AXIS_GRID) over its anchor.
+  Double_t Axis(Int_t axis) const {
+    return axis == GATE_AXIS_GRID ? grid : Total(axis);
   }
   /// @brief A strip's raw ADC deposit, summed the same way.
   /// @param strip Anode strip, 0 to 17.

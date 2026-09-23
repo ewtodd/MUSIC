@@ -75,6 +75,7 @@
         analysis-utils-py = utils.packages.${system}.pythonPackage;
         root = if isLaptop then pkgs.root else utils.packages.${system}.rootCuda;
         talys = talys-nix.packages.${system}.default;
+        talys-potentials = talys-nix.packages.${system}.talys-atomki-v2-potentials;
         clangdConfigFile = (pkgs.formats.yaml { }).generate "dot-clangd" {
           CompileFlags.Add = [
             "--cuda-gpu-arch=sm_89"
@@ -147,6 +148,7 @@
               export MUSIC_RESULTS_DIR="''${MUSIC_RESULTS_DIR:-$git_root/analysis/${dataset}}"
               echo "MUSIC results: $MUSIC_RESULTS_DIR"
               export TALYS_BIN="${talys}/bin/talys"
+              export TALYS_ATOMKI_V2_DIR="${talys-potentials}/share/talys/atomki-v2"
 
               ${pkgs.lib.optionalString (!isLaptop) ''
                 export NIX_CFLAGS_COMPILE="-DAU_ROOFIT_BACKEND_CUDA=1''${NIX_CFLAGS_COMPILE:+ $NIX_CFLAGS_COMPILE}"
@@ -205,7 +207,7 @@
             buildPhase = ''
               export MUSIC_DATASET="${dataset}"
               export MUSIC_DATASET_DIR="$sourceRoot/analysis/${dataset}"
-              make -C tooling -j GIT_HASH="${gitHash}" DATASET_DIR_OUT="$out/analysis/${dataset}" ASSETS_DIR_OUT="$out/assets" TALYS_BIN="${talys}/bin/talys" ${extraBuild}
+              make -C tooling -j GIT_HASH="${gitHash}" DATASET_DIR_OUT="$out/analysis/${dataset}" ASSETS_DIR_OUT="$out/assets" TALYS_BIN="${talys}/bin/talys" TALYS_ATOMKI_V2_DIR="${talys-potentials}/share/talys/atomki-v2" ${extraBuild}
             '';
 
             installPhase = ''

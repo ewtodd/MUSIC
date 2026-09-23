@@ -1,6 +1,10 @@
 #include "EventsSummary.hpp"
 #include <TLine.h>
 
+Bool_t SummaryGridPartnerIsStrip1() {
+  return Constants::cfg.IGNORE_STRIP_0 || !Constants::cfg.REQUIRE_STRIP_0;
+}
+
 void CreateSummaryHistograms(SummaryHistograms &h,
                              const SummaryHistConfig &cfg) {
   TString musicTitle =
@@ -52,11 +56,13 @@ void CreateSummaryHistograms(SummaryHistograms &h,
                             400, cfg.strip_e_min, cfg.strip_e_max);
 
   if (Constants::cfg.HAS_STRIP0 && Constants::cfg.HAS_GRID) {
-    h.h2_strip0_vs_grid =
-        new TH2F(PlottingUtils::GetRandomName().Data(),
-                 ";Grid #DeltaE [" + cfg.unit_label + "];Strip0 #DeltaE [" +
-                     cfg.unit_label + "]",
-                 200, 0.0, cfg.grid_max, 200, cfg.strip_e_min, cfg.strip0_max);
+    const Bool_t s1 = SummaryGridPartnerIsStrip1();
+    h.h2_strip0_vs_grid = new TH2F(PlottingUtils::GetRandomName().Data(),
+                                   ";Grid #DeltaE [" + cfg.unit_label +
+                                       Form("];Strip%d #DeltaE [", s1 ? 1 : 0) +
+                                       cfg.unit_label + "]",
+                                   200, 0.0, cfg.grid_max, 200, cfg.strip_e_min,
+                                   s1 ? cfg.strip_e_max : cfg.strip0_max);
   } else if (Constants::cfg.HAS_STRIP0) {
     h.h1_strip0 = new TH1F(PlottingUtils::GetRandomName().Data(),
                            ";Strip0 #DeltaE [" + cfg.unit_label + "];Counts",
@@ -75,7 +81,9 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
   TString multName = "multiplicity" + plot_suffix;
   TString cathName = "cathode" + plot_suffix;
   TString strip17Name = "strip17" + plot_suffix;
-  TString s0gName = "strip0_vs_grid" + plot_suffix;
+  TString s0gName = TString(SummaryGridPartnerIsStrip1() ? "strip1_vs_grid"
+                                                         : "strip0_vs_grid") +
+                    plot_suffix;
   TString s0Name = "strip0" + plot_suffix;
   TString gName = "grid" + plot_suffix;
 
@@ -274,7 +282,9 @@ void EventsSummary::BuildNormedSummaryHistograms(const TString &input_filename,
   cfg.right_even_max = strip_e_max;
   cfg.cathode_max = 1.0;
   cfg.strip17_max = strip_e_max;
-  cfg.grid_max = 1.0;
+  // The grid reads 1.0 for a beam event once it has an anchor (GainGrid), so
+  // it takes the strip range rather than the full-scale fraction it once was.
+  cfg.grid_max = strip_e_max;
   cfg.strip0_max = strip_e_max;
   cfg.music_energy_bins = 400;
 
@@ -315,7 +325,8 @@ void EventsSummary::BuildNormedSummaryHistograms(const TString &input_filename,
       h.h1_strip17->Fill(ev.strip17);
 
     if (h.h2_strip0_vs_grid)
-      h.h2_strip0_vs_grid->Fill(ev.grid, ev.strip0);
+      h.h2_strip0_vs_grid->Fill(
+          ev.grid, SummaryGridPartnerIsStrip1() ? ev.Total(1) : ev.strip0);
 
     if (h.h1_strip0)
       h.h1_strip0->Fill(ev.strip0);

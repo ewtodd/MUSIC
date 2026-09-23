@@ -50,9 +50,31 @@
  * Each field says which it is. The cache fingerprints them all, so rebuilds
  * should happen automatically if they are needed.
  */
+/// An axis of the pure-beam entrance ellipse (PURE_BEAM_GATE_S1_GRID): the
+/// Frisch grid over its beam anchor (`GainGrid`), so it sits at 1.0 like a
+/// strip.
+const Int_t GATE_AXIS_GRID = -1;
+
 struct StripSumScatterConfig {
-  enum PureBeamGate { PURE_BEAM_GATE_S0_S1, PURE_BEAM_GATE_S1_S2 };
+  /// The entrance ellipse of the pure-beam sample (beam-noise reference and
+  /// beam_flat reservoir): strips 0 and 1, strips 1 and 2, or strip 1 and
+  /// the grid.
+  enum PureBeamGate {
+    PURE_BEAM_GATE_S0_S1,
+    PURE_BEAM_GATE_S1_S2,
+    PURE_BEAM_GATE_S1_GRID
+  };
   PureBeamGate PURE_BEAM_GATE;
+  /// One tag per event. When several reaction strips pass the tag for the
+  /// same event, the reaction is attributed to one of them: the first (most
+  /// upstream) strip that passes, where the trace first leaves the beam; or
+  /// the strip with the largest jump from its predecessor, in sigma. The
+  /// others count as "other strip" in the cut report.
+  enum TagResolve { TAG_RESOLVE_FIRST_STRIP, TAG_RESOLVE_LARGEST_JUMP };
+  TagResolve TAG_RESOLVE;
+  /// Mahalanobis level of the pure-beam entrance and exit ellipses; separate
+  /// from GATE_NSIGMA so the beam sample stays narrow whatever the gate does.
+  Double_t PURE_BEAM_NSIGMA;
 
   /// Number of strips summed onto the scatter y-axis after the trigger strip:
   /// y spans reac+1 .. min(reac+POST_TRIGGER_SUM_STRIPS,
@@ -124,13 +146,19 @@ struct StripSumScatterConfig {
   /// less = off.
   Double_t TAIL_CLIFF_MAX_FRACTION;
 
-  /// Cut-variation systematic. With CUT_VARIATION on, the fill also counts
-  /// the tagged events per strip with each active threshold shifted up and
-  /// down by its step, one threshold at a time: the sigma-scaled ones
-  /// (END_STRIP_NSIGMA among them) by NSIGMA_STEP sigma,
+  /// Cut-variation systematic, after the published 87Rb analysis: every
+  /// condition that selects the beam or identifies the reaction is varied
+  /// independently by the detector's resolution, and the change in the cross
+  /// section is the systematic. With CUT_VARIATION on, the fill also counts,
+  /// per strip, the tagged events and the beam denominator with each active
+  /// condition shifted up and down by its step, one at a time: the
+  /// sigma-scaled ones by NSIGMA_STEP sigma of the measured beam spread (3 =
+  /// the resolution at 3 sigma, the paper's "±10%"), the event-level beam
+  /// selection (gate level, pileup, noise, smoothness) among them, and
   /// TAIL_CLIFF_MAX_FRACTION by CLIFF_STEP. The cross section takes, per
-  /// threshold, the larger of the two count changes and adds them in
-  /// quadrature as the point's systematic. The counts travel with the cache.
+  /// condition, the larger change of tagged / denominator under the two
+  /// shifts and adds them in quadrature, with the gas-pressure uncertainty
+  /// (GAS_PRESSURE_TORR_ERR). The counts travel with the cache.
   Bool_t CUT_VARIATION;
   Double_t CUT_VARIATION_NSIGMA_STEP;
   Double_t CUT_VARIATION_CLIFF_STEP;
@@ -214,10 +242,12 @@ struct StripSumScatterConfig {
   Int_t X_LO;
   Int_t X_HI;
 
-  Int_t GATE_STRIP_X;
-  Int_t GATE_STRIP_Y;
-  Double_t GATE_NSIGMA_X;
-  Double_t GATE_NSIGMA_Y;
+  /// The event-level beam gate: one strip, within GATE_NSIGMA of its fitted
+  /// beam peak per gate group. GATE_NSIGMA at or below zero is no gate.
+  Int_t GATE_STRIP;
+  Double_t GATE_NSIGMA;
+  /// The peak to fit, in beam units; zero lets the fit find it.
+  Double_t GATE_CENTER;
   Double_t GATE_MIN;
   Double_t GATE_MAX;
   Int_t GATE_BINS;
@@ -241,8 +271,9 @@ struct StripSumScatterConfig {
   Bool_t RERUN_SIM;
   Int_t CANDIDATE_REAC_STRIP;
 
-  Bool_t REQUIRE_GATE_S3_S4;
-  Bool_t REQUIRE_GATE_S5_S6;
+  /// Leave out the Savitzky-Golay-smoothed copies of the trace overlays (the
+  /// `_sg` figures and cluster-variable histograms), in both the
+  /// strip-sum-scatter region overlays and compute-regions' all-tagged ones.
   Bool_t SKIP_SAVGOL_PLOTS;
 
   /// Also draw the per-region mean traces with RMS bands (the
@@ -292,6 +323,11 @@ struct CrossSectionChannel {
   /// total uncertainty [mb]. Empty when there is nothing to compare to.
   std::vector<std::vector<Double_t>> reference_xs;
   TString reference_label;
+  /// Index into TALYS_MODELS of the model for the second figure
+  /// (`cross_section_<name>_fit`): that model's sum and per-exit curves,
+  /// unscaled, plus the sum with one scale per exit fitted to this work's
+  /// points, its 3-sigma band, and a deviation panel. -1: no second figure.
+  Int_t fit_model = -1;
 };
 
 /// @brief One TALYS model variant to compare against.
@@ -326,6 +362,10 @@ struct CrossSectionConfig {
   TargetGas TARGET_GAS;
   /// At the pressure the gas was actually at rather than the nominal one.
   Double_t GAS_PRESSURE_TORR;
+  /// Its uncertainty [Torr]; a relative systematic on every point (the
+  /// cross section scales as 1 / pressure), added in quadrature with the
+  /// cut variation. 0 = none.
+  Double_t GAS_PRESSURE_TORR_ERR;
 
   /// Beam mass number, for the lab-to-centre-of-mass conversion; its Z and
   /// element symbol name it to a reaction code.
@@ -363,6 +403,15 @@ struct CrossSectionConfig {
   /// Reaction strips for which to calculate a cross-section.
   Int_t XS_STRIP_MIN;
   Int_t XS_STRIP_MAX;
+
+  /// Statistical error on a strip's count. Below this count the 68.27 percent
+  /// Feldman-Cousins interval on the Poisson mean (asymmetric, never below
+  /// zero, an upper limit at zero counts); at or above it, root-N. There is
+  /// no exact crossover: the two differ by 1/sqrt(N) with the discreteness
+  /// ripple on top, about 40 percent of the bar at 4 counts, 15 at 25, 10 at
+  /// 50, 5 at 80. 50 is where the step between the two is under a tenth of
+  /// the bar and the asymmetry under a twentieth.
+  Int_t FELDMAN_COUSINS_MAX_COUNT;
 
   /// Report each strip at its effective centre-of-mass energy (the energy
   /// below which half the strip's yield is produced, with the first TALYS
@@ -501,8 +550,18 @@ public:
   /// which an epoch may override; the decode reads
   /// Constants::ActiveIgnoreShortStrips().
   Bool_t IGNORE_SHORT_STRIPS;
+  /// Drop strip 0 / strip 17 from the analysis altogether: not required for
+  /// a complete event, not in the all-strips cut, left off the trace figures.
   Bool_t IGNORE_STRIP_0;
   Bool_t IGNORE_STRIP_17;
+  /// Whether a complete event must carry a strip 0 hit (EventBuilder's
+  /// CheckEventComplete at build time, and the analysis' all-strips cut).
+  /// Off, an event without one is kept; strip 0 is still stored, drawn and
+  /// gated on where it fired. On 37Cl the strip 0 deposit sits at the DAQ
+  /// threshold and fires in a third of the beam events, so requiring it
+  /// costs two thirds of the statistics for a strip no tag condition reads.
+  /// Moot when IGNORE_STRIP_0 is set.
+  Bool_t REQUIRE_STRIP_0;
 
   Bool_t HAS_CATHODE;
   Bool_t HAS_GRID;
@@ -532,6 +591,27 @@ public:
 
   TString REFERENCE_CHANNEL;
   Double_t EVENT_TIME_WINDOW_US;
+  /// Seed holdoff: a reference hit arriving within SEED_HOLDOFF_US after the
+  /// current seed, when that seed is under SEED_HOLDOFF_MAX_RATIO times the
+  /// new hit, is the pulse behind a pre-trigger -- the grid's slow rise trips
+  /// the trigger early at a small energy, then the real pulse trips it again
+  /// a few microseconds later -- and re-seeds the open event (the larger of
+  /// the two energies is kept, SeedTs becomes the later hit's, the window is
+  /// extended from it, the anodes already collected stay) instead of opening
+  /// a second event that
+  /// splits the anodes between the two and leaves both incomplete. On 37Cl
+  /// run 97 the pre-triggers sit 3.5-8 us early and about 6 percent of grid
+  /// seeds come out with no anodes at all. A pre-trigger is recognised by
+  /// the open event holding no anode hits when the new reference hit
+  /// arrives -- the particle's strips fire after the real grid trigger --
+  /// with the size ratio only as a guard: on its own the ratio cannot tell a
+  /// pre-trigger from a first particle read low by its follower, which lands
+  /// at the same ratios (run 97: no gap between the pre-trigger pile at
+  /// 0.0-0.2 and the follower-deficit floor from 0.3). 0 = off; the build
+  /// summary counts the candidates either way, split by anodes pending, so
+  /// the setting can be judged before it is on.
+  Double_t SEED_HOLDOFF_US;
+  Double_t SEED_HOLDOFF_MAX_RATIO;
   DedupStrategy DEDUP_STRATEGY;
 
   Bool_t USE_GPU_ACCELERATION;
@@ -542,9 +622,11 @@ public:
 
   /// n-sigma of the per-strip beam gate in the beam calibration: strip s is
   /// gated by the ellipse on the (strip s-1, strip s) raw totals, which is what
-  /// defines that strip's beam sample.
-  Double_t BEAM_GATE_NSIGMA_X;
-  Double_t BEAM_GATE_NSIGMA_Y;
+  /// defines that strip's beam sample. One level, in the fitted sigma: the two
+  /// axes are the same kind of quantity and the ridge between them is tilted,
+  /// so the correlation-aware contour is the gate and separate x and y levels
+  /// would mean nothing.
+  Double_t BEAM_GATE_NSIGMA;
 
   Double_t STRIP_DE_MIN_NORMED;
   Double_t STRIP_DE_MAX_NORMED;
@@ -650,6 +732,11 @@ Bool_t ActiveHasCathode();
 Bool_t ActiveUseSolarisData();
 /// @brief Coincidence window for event building, in microseconds.
 Double_t ActiveEventTimeWindowUs();
+/// @brief Seed holdoff in microseconds; 0 = off. See SEED_HOLDOFF_US.
+Double_t ActiveSeedHoldoffUs();
+/// @brief The size, as a fraction of the new hit, under which the current
+///        seed counts as a pre-trigger. See SEED_HOLDOFF_MAX_RATIO.
+Double_t ActiveSeedHoldoffMaxRatio();
 /// @brief Channel whose hits seed events.
 const TString &ActiveReferenceChannel();
 /// @brief Lower energy gate on the seed channel, in ADC.

@@ -89,8 +89,20 @@ std::vector<RemixSim::SimFileSpec> RemixSim::BuildFileSpecs() {
   }
   gSystem->FreeDirectory(d);
   std::sort(specs.begin(), specs.end(), SimFileSpecTagLess);
-  for (Int_t i = 0; i < (Int_t)specs.size(); i++) {
-    std::cout << specs.at(i).tag << std::endl;
+  // One simulation per class and strip: a second control file for the same
+  // reaction at the same strip has no defined precedence, so it stops the
+  // run rather than silently picking one.
+  for (Int_t i = 1; i < Int_t(specs.size()); i++) {
+    const TString a = TagWithoutStrip(specs[i - 1].tag);
+    const TString b = TagWithoutStrip(specs[i].tag);
+    if (a == b &&
+        ReactionStripOf(specs[i - 1].tag) == ReactionStripOf(specs[i].tag)) {
+      std::cerr << "RemixSim: two control files in " << dir
+                << " simulate the same reaction at the same strip: "
+                << specs[i - 1].tag << " and " << specs[i].tag << "; keep one"
+                << std::endl;
+      std::exit(1);
+    }
   }
   return specs;
 }
@@ -121,8 +133,4 @@ TString RemixSim::TagWithoutStrip(const TString &tag) {
     return tag;
   Ssiz_t pos = tag.Last('_');
   return tag(0, pos);
-}
-
-Bool_t RemixSim::IsEresTag(const TString &tag) {
-  return TagWithoutStrip(tag).EndsWith("_eres");
 }

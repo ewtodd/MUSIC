@@ -89,7 +89,8 @@ enum Group {
   kShortRight = 4, ///< Short end, right chain.
   kStrip0 = 5,     ///< Strip 0, unsegmented.
   kStrip17 = 6,    ///< Strip 17, unsegmented.
-  kNGroups = 7     ///< Count of groups; not a group itself.
+  kGrid = 7,       ///< The Frisch grid: the seed channel, one per event.
+  kNGroups = 8     ///< Count of groups; not a group itself.
 };
 /// @brief Human-readable name of a Group.
 const char *GroupName(Int_t g);

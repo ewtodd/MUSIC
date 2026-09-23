@@ -66,6 +66,9 @@ struct RunEpoch {
   Bool_t do_sort;       ///< Time-sort hits before event building.
   /// Coincidence window, in microseconds, for grouping hits into one event.
   Double_t event_time_window_us;
+  /// Seed holdoff and the pre-trigger size ratio; see `SEED_HOLDOFF_US`.
+  Double_t seed_holdoff_us;
+  Double_t seed_holdoff_max_ratio;
   TString reference_channel; ///< Channel whose hits seed events, e.g. `"Grid"`.
   Double_t
       reference_channel_min_adc; ///< Lower energy gate on the seed channel.
@@ -119,7 +122,8 @@ struct RunEpoch {
   RunEpoch()
       : name(""), source(kSolaris), enabled(kTRUE), file_tag(""), max_files(-1),
         n_boards(1), n_channels(64), timing_ref_board(0), do_board_sync(kFALSE),
-        do_sort(kFALSE), event_time_window_us(8.0), reference_channel("Grid"),
+        do_sort(kFALSE), event_time_window_us(8.0), seed_holdoff_us(0.0),
+        seed_holdoff_max_ratio(0.5), reference_channel("Grid"),
         reference_channel_min_adc(0.0), reference_channel_max_adc(16384.0),
         dedup_strategy(kLARGEST_ENERGY), has_cathode(kFALSE),
         split_chunk_seconds(30.0), pulse_history(), ignore_short_strips(kFALSE),

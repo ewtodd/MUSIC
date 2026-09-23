@@ -17,8 +17,10 @@
  * to the reaction component, uncorrected, with the fit-versus-core
  * disagreement taken as the region systematic; or, in the all-tagged region
  * mode, every tagged event, with the cut-variation counts the fill stored
- * (each threshold shifted up and down) folded into the systematic: per
- * threshold the larger change of the count, added in quadrature.
+ * (each beam-selection and identification condition shifted up and down,
+ * tagged count and denominator both) folded into the systematic: per
+ * condition the larger change of the cross section, added in quadrature
+ * with the gas-pressure uncertainty.
  *
  * Beam energies come from the simulated unreacted beam, whose stopping model
  * is chosen to put the beam's Bragg peak in the strip the data shows it in,
@@ -90,8 +92,12 @@ private:
     Int_t reac;
     Double_t e_in, e_out, e_eff, e_eff_lo, e_eff_hi; // E_cm [MeV]
     Double_t n_reac, n_denom;
-    Double_t sigma, stat, sys; // [mb]
-    Double_t Err() const;
+    Double_t sigma, sys; // [mb]
+    /// Statistical error below and above the point [mb]: Feldman-Cousins
+    /// on the Poisson count under FELDMAN_COUSINS_MAX_COUNT, root-N above.
+    Double_t stat_lo, stat_hi;
+    Double_t ErrLo() const; ///< stat_lo and sys in quadrature
+    Double_t ErrHi() const; ///< stat_hi and sys in quadrature
   };
   struct ChannelResult {
     const CrossSectionChannel *ch;
@@ -118,16 +124,28 @@ private:
   // The figure for these channels; name is the file's basename.
   void Draw(const std::vector<const ChannelResult *> &rs,
             const TString &name) const;
+  // The second figure: one model's sum and per-exit curves, the sum with a
+  // scale per exit fitted to the points, and a deviation panel.
+  void DrawFit(const ChannelResult &r, const TString &name) const;
 
   static Long64_t ReadCount(TFile &f, const char *name, Bool_t &ok);
   static TGraph *Clipped(TGraph *g, Double_t e_lo, Double_t e_hi);
+  static Double_t Interpolated(TGraph *g, Double_t e);
   static Double_t EffectiveEnergy(TGraph *axn, Double_t e_out, Double_t e_in);
   static TCutG *ScaledCut(TCutG *cut, Double_t scale);
   static Double_t CountInCut(TH2F *scatter, TCutG *cut, Double_t scale);
   static Double_t Enclosed(Double_t nsigma);
-  // The cut-variation systematic on a strip's tagged count, in counts, from
-  // the per-variant counts the cache carries; `detail` lists them.
-  Double_t CutVariationCounts(Int_t reac, TString &detail) const;
+  /// The 68.27 percent interval on the Poisson mean behind `count` events,
+  /// as the distances below and above the count: Feldman-Cousins on the
+  /// rounded count under FELDMAN_COUSINS_MAX_COUNT, sqrt(count) otherwise.
+  static void PoissonInterval(Double_t count, Double_t &below, Double_t &above);
+  // The cut-variation systematic on a strip's cross section [mb]: per
+  // condition the larger change of tagged / denominator under its two
+  // shifts, from the per-variant counts the cache carries, in quadrature;
+  // `detail` lists them. `per_count` converts a count ratio to mb.
+  Double_t CutVariation(Int_t reac, Double_t per_count, TString &detail) const;
+  // The gas-pressure uncertainty on a point [mb]: relative, 1 / pressure.
+  Double_t GasPressureSys(Double_t sigma) const;
 
   TFile *cache_ = nullptr;
   Long64_t n_seen_ = 0, n_beam_ = 0;

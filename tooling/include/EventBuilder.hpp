@@ -135,9 +135,10 @@ public:
                         UInt_t flags, DedupStrategy strategy);
   /**
    * @brief Whether an event has everything required to be written out: the
-   *        long end of every split strip, plus strip 0 and strip 17 unless
-   *        `IGNORE_STRIP_0` / `IGNORE_STRIP_17` say the dataset does without
-   *        them. The same condition as the analysis' first event-level cut.
+   *        long end of every split strip, plus strip 17 unless
+   *        `IGNORE_STRIP_17`, and strip 0 unless `IGNORE_STRIP_0` or
+   *        `REQUIRE_STRIP_0` off says the dataset does without it. The same
+   *        condition as the analysis' first event-level cut.
    * @param e Event to test.
    * @return `kTRUE` if it is complete.
    */

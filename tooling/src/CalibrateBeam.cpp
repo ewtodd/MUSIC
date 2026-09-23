@@ -2,7 +2,7 @@
 #include <Rtypes.h>
 #include <utility>
 
-const Int_t kMaxChannels = 35;
+const Int_t kMaxChannels = 36;
 // Raw total of one strip. Strips 0 and 17 are unsegmented and read once;
 // strips 1-16 are read at two ends, held in arrays of 16 indexed by strip - 1,
 // and their total is the sum of both.
@@ -54,6 +54,12 @@ std::vector<ChannelCal> CalibrateBeam::BuildChannels() {
   }
   c.name = "Cathode";
   c.side = 'C';
+  c.strip = -1;
+  chans.push_back(c);
+  // The grid: anchored on its modal beam peak like a strip, so the analysis
+  // can gate on it in beam units (GATE_AXIS_GRID).
+  c.name = "Grid";
+  c.side = 'G';
   c.strip = -1;
   chans.push_back(c);
   return chans;
@@ -124,14 +130,21 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
                kBeamGateNBins, 0.0, Constants::ActiveStripEMaxAdc());
   h->SetDirectory(nullptr);
   Long64_t n = tree->GetEntries();
+  // The same events unbinned (up to a cap), for the clipped moments below.
+  const Long64_t kMaxPoints = 2000000;
+  std::vector<std::pair<Float_t, Float_t>> pts;
+  pts.reserve(std::min(n, kMaxPoints));
   for (Long64_t j = 0; j < n; j++) {
     tree->GetEntry(j);
     const Double_t tx =
         StripTotalAdc(leftdE_adc, rightdE_adc, strip0_adc, strip17_adc, sx);
     const Double_t ty =
         StripTotalAdc(leftdE_adc, rightdE_adc, strip0_adc, strip17_adc, sy);
-    if (tx > 0.0 && ty > 0.0)
+    if (tx > 0.0 && ty > 0.0) {
       h->Fill(tx, ty);
+      if (Long64_t(pts.size()) < kMaxPoints)
+        pts.push_back(std::make_pair(Float_t(tx), Float_t(ty)));
+    }
   }
   sf->Close();
   delete sf;
@@ -189,17 +202,52 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
       break;
     m = m_ref;
   }
-  out.amp = peak_val;
-  out.mu_x = m.mu_x;
-  out.mu_y = m.mu_y;
-  out.sigma_x = m.sigma_x;
-  out.sigma_y = m.sigma_y;
-  out.rho = m.rho;
-  out.ok = kTRUE;
+  // The core moments only seed the clip; the clip seeds the fit and is the
+  // fallback.
+  m = BeamFitUtils::ClippedMoments(pts, m);
+
+  // The width BEAM_GATE_NSIGMA is in is a fitted sigma: the same events,
+  // finely binned around the seed, fitted with a correlated Gaussian on a
+  // pedestal. Fine binning matters — over the full ADC range the spot is a
+  // few bins wide and the fit would be fitting the binning.
+  // Only the inner kFitWindow is fitted, narrow so the ~2x pileup blob and any
+  // reaction shoulder stay out of the width; the rest of the histogram is what
+  // the goodness check reads.
+  const Double_t kSpotWindow = 4.0;
+  const Double_t kFitWindow = 2.0;
+  const Int_t kSpotBins = 160;
+  TH2F *hf = new TH2F(Form("%s_fit", h->GetName()), "", kSpotBins,
+                      m.mu_x - kSpotWindow * m.sigma_x,
+                      m.mu_x + kSpotWindow * m.sigma_x, kSpotBins,
+                      m.mu_y - kSpotWindow * m.sigma_y,
+                      m.mu_y + kSpotWindow * m.sigma_y);
+  hf->SetDirectory(nullptr);
+  for (size_t k = 0; k < pts.size(); k++)
+    hf->Fill(pts[k].first, pts[k].second);
+  std::vector<std::pair<Float_t, Float_t>>().swap(pts);
+  Double_t chi2_ndf = -1.0;
+  BeamFit2D fit = BeamFitUtils::FitSpot(hf, m, kFitWindow, &chi2_ndf);
+  delete hf;
+
+  if (fit.ok) {
+    out = fit;
+  } else {
+    // A fit that ran away is dropped for the clipped moments.
+    out.amp = peak_val;
+    out.mu_x = m.mu_x;
+    out.mu_y = m.mu_y;
+    out.sigma_x = m.sigma_x;
+    out.sigma_y = m.sigma_y;
+    out.rho = m.rho;
+    out.ok = kTRUE;
+  }
   Constants::Detail() << "  beam gate strip " << sy << " (strips " << sx
-                      << " vs " << sy << "): mu=(" << out.mu_x << ","
-                      << out.mu_y << ") sigma=(" << out.sigma_x << ","
-                      << out.sigma_y << ") rho=" << out.rho << std::endl;
+                      << " vs " << sy << "): "
+                      << (fit.ok ? "fit" : "CLIPPED MOMENTS (fit failed)")
+                      << " mu=(" << out.mu_x << "," << out.mu_y << ") sigma=("
+                      << out.sigma_x << "," << out.sigma_y
+                      << ") rho=" << out.rho << " chi2/ndf=" << chi2_ndf
+                      << std::endl;
 
   if (save_plot) {
     TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
@@ -215,8 +263,7 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
     Double_t lambda1 = 0.5 * (sum + det);
     Double_t lambda2 = 0.5 * (sum - det);
     Double_t theta = 0.5 * TMath::ATan2(2.0 * sxy, diff) * 180.0 / TMath::Pi();
-    Double_t n = 0.5 * (Constants::cfg.BEAM_GATE_NSIGMA_X +
-                        Constants::cfg.BEAM_GATE_NSIGMA_Y);
+    const Double_t n = Constants::cfg.BEAM_GATE_NSIGMA;
     TEllipse *e = new TEllipse(out.mu_x, out.mu_y, n * TMath::Sqrt(lambda1),
                                n * TMath::Sqrt(lambda2), 0, 360, theta);
     e->SetFillStyle(0);
@@ -389,12 +436,13 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
   // the unsegmented strips in Strip0dE/Strip17dE. Strip totals are L+R; the
   // gate uses the strip1/strip2 totals.
   UShort_t leftdE_adc[16], rightdE_adc[16], strip0_adc = 0, strip17_adc = 0;
-  Short_t cathode_adc = 0;
+  Short_t cathode_adc = 0, grid_adc = 0;
   tree->SetBranchAddress("LeftdE", leftdE_adc);
   tree->SetBranchAddress("RightdE", rightdE_adc);
   tree->SetBranchAddress("Strip0dE", &strip0_adc);
   tree->SetBranchAddress("Strip17dE", &strip17_adc);
   tree->SetBranchAddress("Cathode", &cathode_adc);
+  tree->SetBranchAddress("Grid", &grid_adc);
 
   Long64_t n = tree->GetEntries();
   for (Long64_t j = 0; j < n; j++) {
@@ -423,8 +471,7 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
       if (x <= 0.0 || y <= 0.0)
         continue;
       pass[s] = BeamFitUtils::InEllipseXY(gate[s], x, y,
-                                          Constants::cfg.BEAM_GATE_NSIGMA_X,
-                                          Constants::cfg.BEAM_GATE_NSIGMA_Y);
+                                          Constants::cfg.BEAM_GATE_NSIGMA);
     }
     // Strip 0 shares strip 1's gate, so share its verdict: GatePartner(0) is
     // 0, and a self-test lands every event outside, zeroing its gain.
@@ -448,8 +495,9 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
       if (Long64_t(samples[i].size()) >= kSampleCap)
         continue;
       const ChannelCal &c = chans[i];
-      // The cathode has no strip of its own, so it rides on strip 1's gate.
-      const Int_t s = (c.side == 'C') ? 1 : c.strip;
+      // The cathode and the grid have no strip of their own, so they ride on
+      // strip 1's gate.
+      const Int_t s = (c.side == 'C' || c.side == 'G') ? 1 : c.strip;
       if (s < 0 || s > 17 || !pass[s])
         continue;
       Int_t v = 0;
@@ -461,6 +509,8 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
         v = Int_t(rightdE_adc[c.strip - 1]);
       else if (c.side == 'C')
         v = Int_t(cathode_adc);
+      else if (c.side == 'G')
+        v = Int_t(grid_adc);
       if (v > 0)
         samples[i].push_back(Float_t(v));
     }
@@ -1145,6 +1195,7 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
   Float_t gain_left[16] = {0}, gain_right[16] = {0};
   Float_t gain_strip0 = 0.0f, gain_strip17 = 0.0f;
   Float_t gain_cathode = 0.0f;
+  Float_t gain_grid = 0.0f;
   // OffsetLeft[k]/OffsetRight[k]: ADC subtracted from LeftdE[k]/RightdE[k]
   // before the gain, only when that end fired (see ComputeLRGainMatch: the
   // short-end offset). Zero on the long ends.
@@ -1184,6 +1235,8 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
       offset_right[c.strip - 1] = Float_t(c.offset_adc);
     } else if (c.side == 'C')
       gain_cathode = gain[k];
+    else if (c.side == 'G')
+      gain_grid = gain[k];
   }
   cal->Branch("Gain", gain, Form("Gain[%d]/F", kMaxChannels));
   cal->Branch("Ok", ok, Form("Ok[%d]/O", kMaxChannels));
@@ -1194,6 +1247,7 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
   cal->Branch("GainStrip0", &gain_strip0, "GainStrip0/F");
   cal->Branch("GainStrip17", &gain_strip17, "GainStrip17/F");
   cal->Branch("GainCathode", &gain_cathode, "GainCathode/F");
+  cal->Branch("GainGrid", &gain_grid, "GainGrid/F");
   cal->Branch("OffsetLeft", offset_left, "OffsetLeft[16]/F");
   cal->Branch("OffsetRight", offset_right, "OffsetRight[16]/F");
   cal->Branch("RidgeRatio", ridge_ratio, "RidgeRatio[18]/F");
@@ -1288,6 +1342,11 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
       delete h[s];
     return;
   }
+  // The grid alone on the same axis, so its beam classes read against the
+  // strips' range.
+  TH1D *hg = new TH1D(Form("h_dynrange_%s_grid", file_label.Data()),
+                      ";Grid #DeltaE [a.u.];Counts", nbins, emin, emax);
+  hg->SetDirectory(nullptr);
   Long64_t n = tree->GetEntries();
   for (Long64_t j = 0; j < n; j++) {
     tree->GetEntry(j);
@@ -1297,6 +1356,8 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
       if (v > 0)
         h[s]->Fill(v);
     }
+    if (ev.grid > 0.0)
+      hg->Fill(ev.grid);
   }
   sf->Close();
   delete sf;
@@ -1327,6 +1388,13 @@ void SaveDynamicRangeOverlay(const FileSpec &spec,
                               PlotSaveOptions::kLOG);
   delete cv;
   delete leg;
+  TCanvas *cg = PlottingUtils::GetConfiguredCanvas(kTRUE);
+  PlottingUtils::ConfigureAndDrawHistogram(hg, kBlue + 1);
+  if (Constants::SavePlots())
+    PlottingUtils::SaveFigure(cg, "grid_spectrum", plot_subdir,
+                              PlotSaveOptions::kLOG);
+  delete cg;
+  delete hg;
   for (Int_t s = 0; s < kNStrips; s++)
     delete h[s];
 }
@@ -1610,6 +1678,8 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
     TString kind;
     if (c.side == 'C')
       kind = "cathode";
+    else if (c.side == 'G')
+      kind = "grid";
     else if (c.side == 'S')
       kind = "unsegmented";
     else

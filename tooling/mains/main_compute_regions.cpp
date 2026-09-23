@@ -17,6 +17,7 @@
 #include <TFile.h>
 #include <TH2F.h>
 #include <TNamed.h>
+#include <TParameter.h>
 #include <TROOT.h>
 #include <TSystem.h>
 #include <iostream>
@@ -142,6 +143,27 @@ int main() {
                  "the beam"
               << std::endl;
     scatter.DrawAllTaggedTraces("compute_regions");
+  } else {
+    // The selection over the sim reads the measured beam spread, which
+    // Prepare() set in the all-tagged branch; here take it from the cache.
+    TFile fc(cache, "READ");
+    Double_t mean[18], sigma[18];
+    Bool_t have = kTRUE;
+    for (Int_t s = 0; s < 18 && have; s++) {
+      TParameter<Double_t> *pm = static_cast<TParameter<Double_t> *>(
+          fc.Get(Form("strip_mean_s%d", s)));
+      TParameter<Double_t> *ps = static_cast<TParameter<Double_t> *>(
+          fc.Get(Form("strip_sigma_s%d", s)));
+      have = pm && ps;
+      mean[s] = pm ? pm->GetVal() : 1.0;
+      sigma[s] = ps ? ps->GetVal() : 0.0;
+    }
+    fc.Close();
+    if (have)
+      StripSumScatter::SetStripNoise(mean, sigma);
   }
+  // The data selection over every simulated population (also printed by
+  // strip-sum-scatter): here so a regions run refreshes it.
+  scatter.SimTagReport();
   return nOk > 0 ? 0 : 1;
 }

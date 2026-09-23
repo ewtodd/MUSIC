@@ -122,10 +122,13 @@ void EventBuilder::AssignHit(EventState &e, PerChannelData *pc,
 // The same condition the analysis applies as its first event-level cut
 // (StripSumScatter::AllStripsFired): the long end of every split strip, L on
 // odd strips and R on even, plus the unsegmented strips the configuration
-// does not ignore. One definition, so nothing is stored that the analysis
-// would only drop, and no half-read event reaches the beam-gate fits.
+// requires (IGNORE_STRIP_0 / IGNORE_STRIP_17 drop one from the analysis,
+// REQUIRE_STRIP_0 off keeps strip 0 optional). One definition, so nothing is
+// stored that the analysis would only drop, and no half-read event reaches
+// the beam-gate fits.
 Bool_t EventBuilder::CheckEventComplete(const EventState &e) {
-  if (!Constants::cfg.IGNORE_STRIP_0 && e.strip0dE == 0)
+  if (!Constants::cfg.IGNORE_STRIP_0 && Constants::cfg.REQUIRE_STRIP_0 &&
+      e.strip0dE == 0)
     return kFALSE;
   if (!Constants::cfg.IGNORE_STRIP_17 && e.strip17dE == 0)
     return kFALSE;
@@ -262,7 +265,9 @@ void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
         hSum.h1_strip17->Fill(Double_t(e.strip17dE));
 
       if (hSum.h2_strip0_vs_grid)
-        hSum.h2_strip0_vs_grid->Fill(Double_t(e.grid), Double_t(e.strip0dE));
+        hSum.h2_strip0_vs_grid->Fill(
+            Double_t(e.grid),
+            Double_t(SummaryGridPartnerIsStrip1() ? e.Total(1) : e.strip0dE));
 
       if (hSum.h1_strip0)
         hSum.h1_strip0->Fill(Double_t(e.strip0dE));
@@ -473,6 +478,23 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   Long64_t cathode_hits_total = 0;
   Long64_t dropped_outside_window = 0;
   Long64_t event_idx = 0;
+  // Seed holdoff (SEED_HOLDOFF_US); off, the candidates are still counted in
+  // a 10 us window so the summary says what turning it on would do.
+  const Double_t holdoff_us = Constants::ActiveSeedHoldoffUs();
+  const Double_t holdoff_ratio = Constants::ActiveSeedHoldoffMaxRatio();
+  const Bool_t holdoff_on = holdoff_us > 0.0;
+  const ULong64_t holdoff_ps =
+      ULong64_t((holdoff_on ? holdoff_us : 10.0) * 1.0e6);
+  Long64_t seeds_pretrigger = 0;
+  Long64_t seeds_merged = 0;
+  Long64_t seeds_close_pair = 0;
+  // A pre-trigger has no anodes pending: the strips fire after the real grid
+  // trigger. Size alone cannot tell it from a first particle read low.
+  const Int_t kPreTriggerMaxPending = 2;
+  Long64_t seeds_close_empty = 0;
+  Long64_t seeds_close_anodes = 0;
+  ULong64_t cur_window_end = 0;
+  UShort_t cur_seed_energy = 0;
 
   ULong64_t window_ps = ULong64_t(Constants::ActiveEventTimeWindowUs() * 1.0e6);
   DedupStrategy dedup_strat = Constants::ActiveDedupStrategy();
@@ -517,10 +539,40 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
         last_ref_ts = h.timestamp;
         n_ref++;
 
+        // Seed holdoff: the pulse behind a pre-trigger re-seeds the open event
+        // rather than opening a second one that splits the anodes.
+        if (have_cur && h.timestamp - cur_ref_ts <= holdoff_ps) {
+          const Bool_t empty = Int_t(pending.size()) <= kPreTriggerMaxPending;
+          if (empty)
+            seeds_close_empty++;
+          else
+            seeds_close_anodes++;
+          if (empty &&
+              Double_t(cur_seed_energy) < holdoff_ratio * Double_t(h.energy)) {
+            seeds_pretrigger++;
+            if (holdoff_on) {
+              seeds_merged++;
+              cur_ref_ts = h.timestamp;
+              cur_event.ref_ts = cur_ref_ts;
+              cur_window_end = cur_ref_ts + window_ps;
+              // The larger energy is the real pulse; the stamp is the later
+              // hit.
+              const UShort_t keep_e = std::max(cur_seed_energy, h.energy);
+              cur_seed_energy = keep_e;
+              cur_event.hits[ref_slot] = 0;
+              AssignHit(cur_event, pc_cur, cur_ref_ts, ref_slot, keep_e,
+                        h.timestamp, h.flags, dedup_strat);
+              continue;
+            }
+          } else {
+            seeds_close_pair++;
+          }
+        }
+
         if (have_cur) {
           // Flush pending hits that fall within the current window.
           for (Int_t p = 0; p < Int_t(pending.size()); p++) {
-            if (pending[p].timestamp - cur_ref_ts <= window_ps) {
+            if (pending[p].timestamp <= cur_window_end) {
               AssignHit(cur_event, pc_cur, cur_ref_ts, pending[p].slot,
                         pending[p].energy, pending[p].timestamp,
                         pending[p].flags, dedup_strat);
@@ -544,11 +596,13 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
         ResetPerChannelData(cur_per_channel);
         cur_ref_ts = h.timestamp;
         cur_event.ref_ts = cur_ref_ts;
+        cur_window_end = cur_ref_ts + window_ps;
+        cur_seed_energy = h.energy;
         have_cur = kTRUE;
         AssignHit(cur_event, pc_cur, cur_ref_ts, ref_slot, h.energy,
                   h.timestamp, h.flags, dedup_strat);
       } else {
-        if (have_cur && h.timestamp - cur_ref_ts <= window_ps) {
+        if (have_cur && h.timestamp <= cur_window_end) {
           PendingHit ph;
           ph.slot = slot;
           ph.energy = h.energy;
@@ -599,7 +653,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   if (have_cur) {
     if (ref_mode) {
       for (Int_t p = 0; p < Int_t(pending.size()); p++) {
-        if (pending[p].timestamp - cur_ref_ts <= window_ps) {
+        if (pending[p].timestamp <= cur_window_end) {
           AssignHit(cur_event, pc_cur, cur_ref_ts, pending[p].slot,
                     pending[p].energy, pending[p].timestamp, pending[p].flags,
                     dedup_strat);
@@ -685,6 +739,27 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   if (dropped_outside_window > 0)
     std::cout << "Dropped " << dropped_outside_window
               << " hits outside coincidence window." << std::endl;
+  if (ref_mode && n_ref > 0) {
+    // What the seed holdoff did, or would do.
+    const Double_t pct = 100.0 / Double_t(n_ref);
+    std::cout << "Seed holdoff " << (holdoff_on ? "ON" : "off") << " ("
+              << (holdoff_on ? holdoff_us : 10.0) << " us"
+              << (holdoff_on ? "" : " diagnostic") << ", guard ratio "
+              << holdoff_ratio << "x): close seed pairs "
+              << seeds_close_empty + seeds_close_anodes << " ("
+              << Form("%.2f",
+                      pct * Double_t(seeds_close_empty + seeds_close_anodes))
+              << "% of seeds): " << seeds_close_empty
+              << " with no anodes pending ("
+              << Form("%.2f", pct * Double_t(seeds_close_empty)) << "%), "
+              << seeds_close_anodes << " with anodes pending ("
+              << Form("%.2f", pct * Double_t(seeds_close_anodes))
+              << "%). Pre-triggers (no anodes, current seed under the guard): "
+              << seeds_pretrigger << " ("
+              << Form("%.2f", pct * Double_t(seeds_pretrigger)) << "%), "
+              << seeds_merged << " merged; " << seeds_close_pair
+              << " kept apart." << std::endl;
+  }
 
   std::cout << Constants::ActiveReferenceChannel() << " hits total: " << n_ref
             << std::endl;

@@ -10,6 +10,7 @@
 #include "Paths.hpp"
 #include "PlottingUtils.hpp"
 #include <Rtypes.h>
+#include <TBox.h>
 #include <TCanvas.h>
 #include <TDirectory.h>
 #include <TEllipse.h>
@@ -54,7 +55,7 @@
 struct ChannelCal {
   TString name; ///< Channel name from the active channel map.
   /// Readout end: `'L'` or `'R'` for the split strips 1-16, `'S'` for the
-  /// unsplit end strips 0 and 17, `'C'` for the cathode.
+  /// unsplit end strips 0 and 17, `'C'` for the cathode, `'G'` for the grid.
   Char_t side;
   Int_t strip; ///< Anode strip index this channel reads; `-1` for the cathode.
   /// Modal beam peak, in ADC: the modal bin of the channel's beam-peak

@@ -34,6 +34,7 @@ GPU_LIB  ?= $(abspath $(GPU_DIR)/libgpuaccel.so)
 # TALYS, for talys-xs: the flake passes the talys-nix store path; empty means
 # whatever `talys` is on PATH at run time.
 TALYS_BIN ?=
+TALYS_ATOMKI_V2_DIR ?=
 # Runtime paths that can be overridden by nix build (default: same as build paths)
 DATASET_DIR_OUT ?= $(DATASET_DIR)
 GPU_LIB_OUT     ?= $(GPU_LIB)
@@ -50,6 +51,7 @@ CXXFLAGS  := -O3 -g -Wall -Wno-unused-variable -fPIC -std=c++17 \
              -DMUSIC_GIT_HASH='"$(GIT_HASH)"' \
              -DMUSIC_GPU_LIB='"$(GPU_LIB_OUT)"' \
              -DMUSIC_TALYS_BIN='"$(TALYS_BIN)"' \
+             -DMUSIC_TALYS_ATOMKI_V2_DIR='"$(TALYS_ATOMKI_V2_DIR)"' \
              -DMUSIC_ASSETS_DIR='"$(ASSETS_DIR_OUT)"' \
              -MMD -MP
 LDFLAGS   := -Wl,--gc-sections $(ROOT_LIBS) -lSpectrum -lMinuit \

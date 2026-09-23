@@ -23,6 +23,7 @@
 #include <TH2F.h>
 #include <TKey.h>
 #include <TLegend.h>
+#include <TLine.h>
 #include <TMath.h>
 #include <TNamed.h>
 #include <TROOT.h>
@@ -70,6 +71,7 @@ enum TagCut {
   kCutCross,     ///< Read below the beam before POST_CROSS_MIN_STRIP.
   kCutEndStrip,  ///< The end strip not END_STRIP_NSIGMA below the beam.
   kCutCliff,     ///< The fall happened in the last step (TAIL_CLIFF_*).
+  kCutOtherTag,  ///< Passed, but the event's one tag went to another strip.
   kNTagCuts
 };
 /// @brief Short labels for TagCut, indexed by it.
@@ -87,6 +89,13 @@ extern const char *const kTagCutName[kNTagCuts];
  * and re-applies a variant's value the same way.
  */
 struct TagThresholds {
+  /// @name Event level: the beam selection every strip's count and
+  /// denominator go through. Varied like the rest.
+  /// @{
+  Double_t gate_nsigma = 0.0;   ///< GATE_NSIGMA; 0 = off.
+  Double_t pileup_nsigma = 0.0; ///< PILEUP_NSIGMA; 0 = off.
+  Double_t noise_nsigma = 0.0;  ///< NOISE_NSIGMA; 0 = off.
+  /// @}
   Bool_t require_upstream = kTRUE;
   Double_t upstream_nsigma = 0.0;
   Double_t jump_nsigma = 0.0;
@@ -143,12 +152,6 @@ struct SelectionStep {
   Int_t tag_cut;  ///< The TagCut it counts under, or -1.
 };
 
-/// @brief A pair of strips whose sums form one classification plane.
-struct GateSpec {
-  Int_t sx; ///< Strip whose sum forms the x axis.
-  Int_t sy; ///< Strip whose sum forms the y axis.
-};
-
 /**
  * @brief The fixed window every strip-sum scatter is built over.
  *
@@ -179,10 +182,19 @@ const Double_t kYMax =
 struct BeamEllipses {
   BeamFit2D s0_s1;    ///< Entrance ellipse on strips 0 and 1.
   BeamFit2D s1_s2;    ///< Alternative entrance ellipse, per `PURE_BEAM_GATE`.
+  BeamFit2D s1_grid;  ///< Alternative entrance ellipse on strip 1 and the grid.
   BeamFit2D s16_s17;  ///< Exit ellipse on strips 16 and 17.
   BeamFit2D s15_s16;  ///< Alternative exit ellipse.
   Bool_t ok;          ///< Whether the fits succeeded.
   Bool_t use_s15_s16; ///< Which exit ellipse is in force.
+};
+
+/// @brief The event-level gate: one strip's fitted beam peak and width.
+struct BeamGate1D {
+  Double_t mu;
+  Double_t sigma;
+  Bool_t ok;
+  BeamGate1D() : mu(0.0), sigma(0.0), ok(kFALSE) {}
 };
 
 /**
@@ -252,9 +264,9 @@ struct TraceEvt {
  * sequential one.
  */
 struct SingleRunFitResult {
-  BeamEllipses pure_beam;              ///< Entrance and exit ellipses.
-  std::vector<BeamFit2D> series_gates; ///< One gate per active GateSpec.
-  Bool_t ok;                           ///< Whether the fits succeeded.
+  BeamEllipses pure_beam; ///< Entrance and exit ellipses.
+  BeamGate1D gate;        ///< The strip gate.
+  Bool_t ok;              ///< Whether the fits succeeded.
   /// @brief Construct unfitted.
   SingleRunFitResult() : ok(kFALSE) {}
 };
@@ -274,9 +286,10 @@ struct SingleRunFillResult {
   /// multiplicity. Every tagged event passed exactly this selection, which is
   /// what makes it the denominator in which those efficiencies cancel.
   Long64_t normed;
-  /// Per-strip denominator: beam particles that reached that strip under
-  /// exactly the conditions a reaction there would have had to satisfy — every
-  /// strip fired, and strips `1..reac-1` beam-like.
+  /// Per-strip denominator: beam particles incident on that strip. Those that
+  /// met exactly the conditions a reaction there would have had to satisfy —
+  /// every strip fired, strips `1..reac-1` beam-like — and had not been tagged
+  /// at an earlier strip, so N(reac+1) = N(reac) - reactions at reac.
   ///
   /// Those conditions are strip-dependent: strip 5 needs four upstream strips
   /// to look like beam where strip 3 needs two. A single flat denominator would
@@ -287,6 +300,9 @@ struct SingleRunFillResult {
   /// Events tagged under each threshold variant, `[variant][ReacIndex]`, in
   /// the order of StripSumScatter::ThresholdVariants().
   std::vector<std::vector<Long64_t>> tagged_var;
+  /// The per-strip denominator under each variant, indexed the same way: a
+  /// variant of the beam selection moves it as well as the tagged count.
+  std::vector<std::vector<Long64_t>> normed_var;
   /// Sequential per-condition counts, `[ReacIndex(reac) * kNTagCuts + cut]`,
   /// for the tag-cut report. `kTagPass` entries equal `tagged`.
   std::vector<Long64_t> cut_counts;
@@ -344,6 +360,16 @@ public:
    * @return `kFALSE` when there are no runs or the beam cannot be measured.
    */
   Bool_t Prepare();
+  /// @brief Run the data selection over every simulated population: the
+  ///        event-level cuts (all but the beam gate, which is fitted on data)
+  ///        and the tag at every reaction strip with the one-tag rule, against
+  ///        the measured beam spread. Per file: the event-level funnel, the
+  ///        first failing condition at the file's own strip, and where the
+  ///        event's one tag went. Printed and written to
+  ///        plots/strip_sum_scatter/sim_tag_report.txt. No correction is
+  ///        derived from it. Needs the strip noise set (Prepare, or
+  ///        SetStripNoise from the cache).
+  void SimTagReport();
 
   /**
    * @brief Region-trace overlays of every tagged event, one figure per
@@ -432,6 +458,7 @@ private:
   /// variant names alongside, persisted with the cache for the cross
   /// section's cut-variation systematic.
   std::vector<std::vector<Long64_t>> m_taggedVar;
+  std::vector<std::vector<Long64_t>> m_normedVar;
   std::vector<TString> m_variantNames;
   // Per-condition tag counts from the last fill, for the cut report; not
   // cached, so a cache load leaves them empty and writes no report.
@@ -478,15 +505,27 @@ private:
   static Bool_t BeamUpstreamOf(const EnergyView &ev, Int_t reac,
                                const TagThresholds &T);
   static Double_t SumRange(const Double_t *total, Int_t lo, Int_t hi);
-  static std::vector<GateSpec> ActiveGates();
 
-  static Bool_t PassesGate(const BeamFit2D &gate, const EnergyView &ev,
-                           Int_t sx, Int_t sy);
+  /// Whether `strip` read within `nsigma` of the gate's fitted beam peak.
+  static Bool_t PassesGate(const BeamGate1D &gate, const EnergyView &ev,
+                           Int_t strip, Double_t nsigma);
 
+  /// Whether the event sits inside `gate` at `nsigma` (Mahalanobis) on the
+  /// axes `sx`, `sy`: the pure-beam ellipses, at PURE_BEAM_NSIGMA. One level,
+  /// and the correlation kept, because a clean-beam sample wants the spot's
+  /// own contour rather than a per-axis limit.
+  static Bool_t PassesEllipse(const BeamFit2D &gate, const EnergyView &ev,
+                              Int_t sx, Int_t sy, Double_t nsigma);
+
+  /// Fits the beam spot on `sx`, `sy` and draws its ellipse at `nsigma`.
   static BeamFit2D FindBeamGate(TChain *chain, Int_t sx, Int_t sy,
-                                const std::vector<GateSpec> &prior_specs,
-                                const std::vector<BeamFit2D> &prior_gates,
-                                const TString &tag, const TString &subdir);
+                                const TString &tag, const TString &subdir,
+                                Double_t nsigma);
+  /// Fits `strip`'s beam peak (held at `center` when above zero) and draws
+  /// the cut at `nsigma`.
+  static BeamGate1D FindStripGate(TChain *chain, Int_t strip,
+                                  const TString &tag, const TString &subdir,
+                                  Double_t nsigma, Double_t center);
 
   static void DrawTraceSet(const std::vector<TGraph *> &traces, Int_t color);
   static TGraph *TraceFromTotal(const Double_t *total);
@@ -497,6 +536,21 @@ private:
   /// the sample's own RMS (for smoothed traces, whose noise is narrower).
   /// `an_label` renames the red class in the legend (the all-tagged overlay
   /// draws every tagged event there); an empty class is left out of it.
+  /// @brief One population on a trace overlay: its traces, legend label and
+  ///        colour.
+  struct TraceClass {
+    std::vector<TGraph *> traces;
+    TString label;
+    Int_t color;
+  };
+  /// @brief The overlay for any number of populations against the beam
+  ///        band; the two-class signature below is the (a,a'), (a,n) case.
+  static void DrawRegionTraces(const TString &save_name, const TString &subdir,
+                               const std::vector<TGraph *> &beam,
+                               const std::vector<TraceClass> &classes,
+                               Double_t y_min, Double_t y_max,
+                               const char *y_title,
+                               Bool_t beam_sigma_measured = kTRUE);
   static void DrawRegionTraces(const TString &save_name, const TString &subdir,
                                const std::vector<TGraph *> &beam,
                                const std::vector<TGraph *> &aa,
@@ -504,6 +558,9 @@ private:
                                Double_t y_max, const char *y_title,
                                Bool_t beam_sigma_measured = kTRUE,
                                const char *an_label = nullptr);
+  /// @brief The overlay colour of a sim population by its tag base:
+  ///        (a,a') azure, (a,n) red, then a fixed palette by first sight.
+  static Int_t SimClassColor(const TString &base);
 
   static void DrawRegionMeanTraces(const TString &save_name,
                                    const TString &subdir,
@@ -519,14 +576,12 @@ private:
                           Double_t &y_max);
   /// One gate group (FileSet::GateGroups): a run's chunks on SOLARIS, one
   /// subfile on CoMPASS. `label` names it in logs and plot folders.
-  static SingleRunFitResult
-  FitRunGates(Int_t key, const TString &label, TChain *chain,
-              const std::vector<GateSpec> &activeGates);
-  static SingleRunFillResult
-  FillRunScatters(Int_t key, const TString &label, TChain *chain,
-                  const std::vector<GateSpec> &activeGates,
-                  const std::vector<BeamFit2D> &runGates,
-                  const BeamEllipses &runBeam);
+  static SingleRunFitResult FitRunGates(Int_t key, const TString &label,
+                                        TChain *chain);
+  static SingleRunFillResult FillRunScatters(Int_t key, const TString &label,
+                                             TChain *chain,
+                                             const BeamGate1D &gate,
+                                             const BeamEllipses &runBeam);
   static TCutG *PromptCut(TCanvas *c, const char *name, const char *label);
   static void SaveRegionCuts(Int_t reac, TCutG *cut_an, TCutG *cut_aa);
   static TCutG *LoadRegionCut(const char *name, Int_t reac);
@@ -592,6 +647,16 @@ public:
    * @return `kTagPass` if tagged, else the first failing TagCut. PassesReaction
    *         is exactly `RejectReason(ev, reac) == kTagPass`.
    */
+  /// @brief The one strip an event is tagged at, among those whose tag
+  ///        passed (`pass[ReacIndex]`), per TAG_RESOLVE; -1 when none.
+  static Int_t ResolveTag(const EnergyView &ev,
+                          const std::vector<Bool_t> &pass);
+  /// @brief One tag condition on its own: whether `c` passes for `reac`
+  ///        under `T`, true where it does not apply at that strip.
+  static Bool_t Condition(TagCut c, const EnergyView &ev, Int_t reac,
+                          const TagThresholds &T);
+  /// @brief Whether the configuration has condition `c` in force.
+  static Bool_t ConditionActive(TagCut c, const TagThresholds &T);
   static TagCut RejectReason(const EnergyView &ev, Int_t reac);
   /// @brief RejectReason under an explicit threshold set.
   static TagCut RejectReason(const EnergyView &ev, Int_t reac,
@@ -605,6 +670,8 @@ public:
   ///        sigma of the measured beam spread.
   static Bool_t IsPileup(const EnergyView &ev);
   static Bool_t IsNoise(const EnergyView &ev);
+  static Bool_t IsPileup(const EnergyView &ev, Double_t nsigma);
+  static Bool_t IsNoise(const EnergyView &ev, Double_t nsigma);
   /// @brief The largest strip-to-strip step of the trace, |E(s) - E(s-1)|
   ///        over strips 2 to the last in sigma of strip s's measured spread,
   ///        with the single largest rise left out (the reaction jump); strips

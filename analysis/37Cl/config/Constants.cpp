@@ -48,13 +48,12 @@ void InitDatasetConfig() {
   gInstance.STRIP_DE_MAX_NORMED = 4;
 
   gInstance.REFERENCE_CHANNEL = "Grid";
-  gInstance.REFERENCE_CHANNEL_MIN_ADC = 900;
-  gInstance.REFERENCE_CHANNEL_MAX_ADC = 3600;
   gInstance.EVENT_TIME_WINDOW_US = 5.0;
+  gInstance.SEED_HOLDOFF_US = 10.0;
+  gInstance.SEED_HOLDOFF_MAX_RATIO = 0.8;
   gInstance.DEDUP_STRATEGY = kLARGEST_ENERGY;
 
   gInstance.PULSE_HISTORY_CORRECTION = kTRUE;
-  gInstance.PULSE_HISTORY_GROUPS.strip0.enabled = kTRUE;
   gInstance.PULSE_HISTORY_GROUPS.long_left.enabled = kTRUE;
   gInstance.PULSE_HISTORY_GROUPS.long_left.kernel = kPulseHistoryBinned;
   gInstance.PULSE_HISTORY_GROUPS.long_right.enabled = kTRUE;
@@ -65,33 +64,34 @@ void InitDatasetConfig() {
   gInstance.PULSE_HISTORY_AMP_BINS = 4;
 
   gInstance.MAX_FUSED_WORKERS = 16;
-  gInstance.SKIP_EXISTING = kTRUE;
+  gInstance.SKIP_EXISTING = kFALSE;
   gInstance.SAVE_SAMPLE_TRACES = 10;
 
-  gInstance.IGNORE_STRIP_0 = kFALSE;
+  gInstance.IGNORE_STRIP_0 = kTRUE;
+  gInstance.REQUIRE_STRIP_0 = kFALSE;
   gInstance.IGNORE_STRIP_17 = kTRUE;
-  gInstance.BEAM_GATE_NSIGMA_X = 5;
-  gInstance.BEAM_GATE_NSIGMA_Y = 5;
+  gInstance.BEAM_GATE_NSIGMA = 3.0;
+
   gInstance.SIM_BEAM_FILE = "traces_37Cl_beam.root";
-
-  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_X = 0;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP_Y = 1;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_X = 10.0;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA_Y = 10.0;
-
+  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_STRIP = 1;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_MAX = 4.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_BINS = 200;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_NSIGMA = 5.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.GATE_CENTER = 1.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.PURE_BEAM_NSIGMA = 3.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.PILEUP_NSIGMA = 8.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.PILEUP_MIN_STRIPS = 2;
   gInstance.STRIP_SUM_SCATTER_CONFIG.NOISE_NSIGMA = 12.0;
   gInstance.STRIP_SUM_SCATTER_CONFIG.NOISE_MIN_STRIPS = 2;
 
   gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN = 2;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX = 8;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX = 9;
   gInstance.STRIP_SUM_SCATTER_CONFIG.REQUIRE_BEAM_UPSTREAM_OF_REAC = kTRUE;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.BEAM_UPSTREAM_NSIGMA = 2.0;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.BEAM_UPSTREAM_NSIGMA = 3.0;
 
-  gInstance.STRIP_SUM_SCATTER_CONFIG.REAC_JUMP_NSIGMA = 1.0;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_ABOVE_NSIGMA = 1.1;
-  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_ABOVE_STRIPS = 4;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.REAC_JUMP_NSIGMA = 1.5;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_ABOVE_NSIGMA = 1.5;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.POST_ABOVE_STRIPS = 3;
   gInstance.STRIP_SUM_SCATTER_CONFIG.POST_CROSS_MIN_STRIP = 9;
 
   gInstance.STRIP_SUM_SCATTER_CONFIG.SMOOTHNESS_NSIGMA = 4.0;
@@ -119,29 +119,30 @@ void InitDatasetConfig() {
   gInstance.STRIP_SUM_SCATTER_CONFIG.Y_DISPLAY_MAX = 7;
   gInstance.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP = 3;
 
-  gInstance.STRIP_SUM_SCATTER_CONFIG.MAX_STRIP_SUM_WORKERS = 8;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.MAX_STRIP_SUM_WORKERS = 16;
   gInstance.STRIP_SUM_SCATTER_CONFIG.SKIP_SAVGOL_PLOTS = kTRUE;
   gInstance.STRIP_SUM_SCATTER_CONFIG.RERUN_SIM = kFALSE;
 
-  gInstance.STRIP_SUM_SCATTER_CONFIG.CUT_VARIATION_NSIGMA_STEP = 0.05;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CUT_VARIATION = kFALSE;
+  gInstance.STRIP_SUM_SCATTER_CONFIG.CUT_VARIATION_NSIGMA_STEP = 3.0;
 
   gInstance.CROSS_SECTION_CONFIG.TARGET_GAS = kHELIUM;
   gInstance.CROSS_SECTION_CONFIG.GAS_PRESSURE_TORR = 400.0;
+  gInstance.CROSS_SECTION_CONFIG.GAS_PRESSURE_TORR_ERR = 1.0;
   gInstance.CROSS_SECTION_CONFIG.BEAM_A = 37;
   gInstance.CROSS_SECTION_CONFIG.BEAM_Z = 17;
   gInstance.CROSS_SECTION_CONFIG.BEAM_ELEMENT = "Cl";
   gInstance.CROSS_SECTION_CONFIG.BEAM_SIM_FILE = "traces_37Cl_beam.root";
   gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MIN = 2;
-  gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MAX = 8;
+  gInstance.CROSS_SECTION_CONFIG.XS_STRIP_MAX = 9;
   gInstance.CROSS_SECTION_CONFIG.EFFECTIVE_ENERGY = kTRUE;
   gInstance.CROSS_SECTION_CONFIG.PRELIMINARY = kTRUE;
   gInstance.CROSS_SECTION_CONFIG.EPOCHS = {"late"};
   gInstance.CROSS_SECTION_CONFIG.CHANNELS = {
-      {"an", "(#alpha, n)", {"n"}, {}, ""}};
+      {"an", "(#alpha, n+p)", {"n", "p"}, {}, "", 0}};
   gInstance.CROSS_SECTION_CONFIG.TALYS_MODELS = {
-      {"McFadden-Satchler 1966", {"alphaomp 2"}},
-      {"Demetriou II 2002", {"alphaomp 4"}},
-      {"Avrigeanu 2014", {"alphaomp 6"}}};
+      {"TALYS HF + McFadden-Satchler", {"alphaomp 2"}},
+      {"TALYS HF + Avrigeanu", {"alphaomp 6"}}};
 
   // Here because I needed to check if CoMPASS data could be salvaged with the
   // pulse history correction... the answer is a resounding NO!
@@ -208,7 +209,7 @@ void InitDatasetConfig() {
   RunEpoch early = MakeEpoch("early", RunRange(30, 40));
   early.split_chunk_seconds = 15;
 
-  RunEpoch late = MakeEpoch("late", RunRange(97, 137));
+  RunEpoch late = MakeEpoch("late", RunRange(97, 97));
   late.pulse_history.long_left.tau_us = 25;
   late.pulse_history.long_right.tau_us = 10;
   late.pulse_history.short_left.tau_us = 25;

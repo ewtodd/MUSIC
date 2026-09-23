@@ -51,7 +51,8 @@ public:
    * @brief Every simulation this dataset defines.
    * @return One spec per control file that writes a `traces_<iso>_` output,
    *         sorted by tag so colour and legend ordering stay stable between
-   *         runs.
+   *         runs. Two control files for the same reaction at the same strip
+   *         stop the run.
    */
   static std::vector<SimFileSpec> BuildFileSpecs();
 
@@ -76,10 +77,6 @@ public:
   /// @brief The tag with any trailing `_s<N>` reaction-strip token removed.
   /// @param tag Simulation tag; one without a suffix passes through unchanged.
   static TString TagWithoutStrip(const TString &tag);
-
-  /// @brief Whether a tag denotes an energy-resolution simulation.
-  /// @param tag Simulation tag.
-  static Bool_t IsEresTag(const TString &tag);
 
   /**
    * @brief One entry of a simulation's `events_MeV` tree.

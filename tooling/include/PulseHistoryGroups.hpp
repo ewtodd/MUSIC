@@ -68,12 +68,17 @@ struct PulseHistoryGroups {
   PulseHistoryGroupOption short_right; ///< Short end of the odd strips (R).
   PulseHistoryGroupOption strip0;      ///< Strip 0, unsegmented.
   PulseHistoryGroupOption strip17;     ///< Strip 17, unsegmented.
+  /// The Frisch grid, the channel whose hits seed the events. Its height per
+  /// event is the seed hit's own; the correction is applied before event
+  /// building, so the seed's ADC gate reads the corrected value.
+  PulseHistoryGroupOption grid;
 
   /// @brief Whether any group is on: an epoch with none skips the
   ///        correction altogether.
   Bool_t AnyEnabled() const {
     return long_left.enabled || long_right.enabled || short_left.enabled ||
-           short_right.enabled || strip0.enabled || strip17.enabled;
+           short_right.enabled || strip0.enabled || strip17.enabled ||
+           grid.enabled;
   }
 };
 

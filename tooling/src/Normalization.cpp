@@ -39,6 +39,7 @@ void EnergyView::LoadGains() {
   gain_strip0 = 0.0f;
   gain_strip17 = 0.0f;
   gain_cathode = 0.0f;
+  gain_grid = 0.0f;
   is_normed = kFALSE;
   if (!tree_)
     return;
@@ -48,7 +49,8 @@ void EnergyView::LoadGains() {
   TTree *cal = static_cast<TTree *>(f->Get("calibration"));
   if (!cal || cal->GetEntries() < 1)
     return;
-  Float_t gl[16] = {0}, gr[16] = {0}, g0 = 0.0f, g17 = 0.0f, gc = 0.0f;
+  Float_t gl[16] = {0}, gr[16] = {0}, g0 = 0.0f, g17 = 0.0f, gc = 0.0f,
+          gg = 0.0f;
   Float_t ol[16] = {0}, orr[16] = {0};
   Float_t sf[18] = {0}, so[18] = {0};
   cal->SetBranchAddress("GainLeft", gl);
@@ -56,6 +58,9 @@ void EnergyView::LoadGains() {
   cal->SetBranchAddress("GainStrip0", &g0);
   cal->SetBranchAddress("GainStrip17", &g17);
   cal->SetBranchAddress("GainCathode", &gc);
+  // Absent on files calibrated before the grid had an anchor.
+  if (cal->GetBranch("GainGrid"))
+    cal->SetBranchAddress("GainGrid", &gg);
   // Per-end offsets are absent on files calibrated before they were
   // measured; absent -> 0 (no offset).
   Bool_t has_off = cal->GetBranch("OffsetLeft") != nullptr;
@@ -87,6 +92,7 @@ void EnergyView::LoadGains() {
   gain_strip0 = g0;
   gain_strip17 = g17;
   gain_cathode = gc;
+  gain_grid = gg;
   is_normed = kTRUE;
 }
 
@@ -120,8 +126,10 @@ void EnergyView::Decode() {
     // The -1 "no cathode" sentinel: uncalibrated/absent -> 0 a.u.
     cathode = (cathode_adc > 0) ? Double_t(gain_cathode) * Double_t(cathode_adc)
                                 : 0.0;
-    // Grid has no calibration gain; normalize to [0, 1] by dividing by max ADC.
-    grid = Double_t(grid_adc) / 16384.0;
+    // The grid over its modal beam peak (1.0 for a beam event); files
+    // calibrated before it had an anchor fall back to a full-scale fraction.
+    grid = gain_grid > 0.0f ? Double_t(gain_grid) * Double_t(grid_adc)
+                            : Double_t(grid_adc) / 16384.0;
   } else {
     for (Int_t k = 0; k < 16; k++) {
       left[k] = Double_t(leftdE_adc[k]);
