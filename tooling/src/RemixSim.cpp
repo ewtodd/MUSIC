@@ -89,9 +89,8 @@ std::vector<RemixSim::SimFileSpec> RemixSim::BuildFileSpecs() {
   }
   gSystem->FreeDirectory(d);
   std::sort(specs.begin(), specs.end(), SimFileSpecTagLess);
-  // One simulation per class and strip: a second control file for the same
-  // reaction at the same strip has no defined precedence, so it stops the
-  // run rather than silently picking one.
+  // One simulation per class and strip: a duplicate has no defined
+  // precedence, so it stops the run rather than silently picking one.
   for (Int_t i = 1; i < Int_t(specs.size()); i++) {
     const TString a = TagWithoutStrip(specs[i - 1].tag);
     const TString b = TagWithoutStrip(specs[i].tag);

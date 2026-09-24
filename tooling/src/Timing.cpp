@@ -516,8 +516,7 @@ RefIndexPerBoard(const std::vector<LongChan> &long_channels,
 }
 
 // One shift per board against the ref board's ref channel: the shift in
-// seconds and the ps result, WARNINGs and continues where a board has no
-// data.
+// seconds and the ps result; boards with no data WARNING and continue.
 static void MeasureBoardShifts(
     const std::map<UShort_t, Int_t> &board_to_ref_idx,
     const std::vector<TGraph *> &long_graphs, TGraph *ref_graph,

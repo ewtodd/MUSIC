@@ -119,13 +119,8 @@ void EventBuilder::AssignHit(EventState &e, PerChannelData *pc,
   e.hits[slot]++;
 }
 
-// The same condition the analysis applies as its first event-level cut
-// (StripSumScatter::AllStripsFired): the long end of every split strip, L on
-// odd strips and R on even, plus the unsegmented strips the configuration
-// requires (IGNORE_STRIP_0 / IGNORE_STRIP_17 drop one from the analysis,
-// REQUIRE_STRIP_0 off keeps strip 0 optional). One definition, so nothing is
-// stored that the analysis would only drop, and no half-read event reaches
-// the beam-gate fits.
+// The same first event-level cut as the analysis (AllStripsFired), so no
+// half-read event reaches the beam-gate fits.
 Bool_t EventBuilder::CheckEventComplete(const EventState &e) {
   if (!Constants::cfg.IGNORE_STRIP_0 && Constants::cfg.REQUIRE_STRIP_0 &&
       e.strip0dE == 0)
@@ -343,9 +338,7 @@ struct BuildConfig {
   ULong64_t holdoff_ps;
 };
 
-// The event currently being built: its state, the per-slot detail, the
-// reference stamp and window end, the seed's energy, whether it is open,
-// and the hits queued for it.
+// The event currently being built and the hits queued for it.
 struct OpenEvent {
   EventState event;
   PerChannelData per_channel;
@@ -357,9 +350,7 @@ struct OpenEvent {
   std::vector<PendingHit> pending;
 };
 
-// What the build writes into: the tree and its branch variables, the
-// summary histograms, the counters, the sampled traces, and the event
-// index.
+// What the build writes into: tree, branch variables, histograms, counters.
 struct EventSink {
   TTree *tree;
   EventBranches *br;
@@ -391,9 +382,8 @@ struct BuildTallies {
 // trigger. Size alone cannot tell it from a first particle read low.
 static const Int_t kPreTriggerMaxPending = 2;
 
-// The events tree, its branches over `br`'s variables, and the large
-// baskets with auto-flush disabled so ZSTD compresses in big chunks
-// instead of many small basket flushes during Fill().
+// The events tree; the large baskets have auto-flush disabled so ZSTD
+// compresses in big chunks instead of many small basket flushes.
 static TTree *BookEventBranches(EventBranches &br) {
   TTree *output_tree = new TTree("events", "MUSIC events");
   output_tree->Branch("LeftdE", br.leftdE, "LeftdE[16]/s");
@@ -446,9 +436,8 @@ static void DeleteSummaryHistograms(SummaryHistograms &hSum) {
   delete hSum.h1_grid;
 }
 
-// The sample-trace stride in event units: a rough event estimate from the
-// hit count, each complete event having ~20 hits (18 strips + cathode +
-// grid).
+// The sample-trace stride: a rough event estimate, each complete event
+// having ~20 hits (18 strips + cathode + grid).
 static Long64_t SampleTraceStride(Long64_t n_hits) {
   Long64_t sample_stride = 0;
   if (Constants::cfg.SAVE_SAMPLE_TRACES > 0) {
@@ -547,9 +536,7 @@ static inline void CloseEvent(const OpenEvent &oe, EventSink &sink) {
 }
 
 // The seed holdoff: the pulse behind a pre-trigger re-seeds the open event
-// rather than opening a second one that splits the anodes. The close-pair
-// tallies count before the merge decision. kTRUE when the hit was consumed
-// and the caller skips it.
+// rather than splitting the anodes. kTRUE when the hit was consumed.
 static inline Bool_t MergePreTriggerSeed(const RawHit &h, Int_t ref_slot,
                                          OpenEvent &oe, const BuildConfig &cfg,
                                          BuildTallies &t) {
@@ -582,10 +569,8 @@ static inline Bool_t MergePreTriggerSeed(const RawHit &h, Int_t ref_slot,
   return kFALSE;
 }
 
-// Reference-channel mode: a reference hit seeds a new event, the
-// non-reference hits queue until the next reference hit (or the stream
-// end). kTRUE when the hit was skipped, which skips the hot-path print
-// with it.
+// Reference-channel mode: a reference hit seeds a new event, the others
+// queue until the next one. kTRUE when the hit was skipped.
 static inline Bool_t ReferenceModeHit(const RawHit &h, Int_t slot,
                                       const BuildConfig &cfg, OpenEvent &oe,
                                       EventSink &sink, BuildTallies &t) {
@@ -631,8 +616,7 @@ static inline Bool_t ReferenceModeHit(const RawHit &h, Int_t slot,
 }
 
 // Time-window mode (REFERENCE_CHANNEL == "NONE"): the first hit opens a
-// window, the hits in window_ps join it, and the window's passing closes
-// the event and opens the next.
+// window; its passing closes the event and opens the next.
 static inline void WindowModeHit(const RawHit &h, Int_t slot,
                                  const BuildConfig &cfg, OpenEvent &oe,
                                  EventSink &sink) {

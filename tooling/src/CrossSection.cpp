@@ -96,8 +96,7 @@ void CrossSection::PoissonInterval(Double_t count, Double_t &below,
     return;
   }
   // Feldman & Cousins, PRD 57 (1998) 3873, no background: the interval on
-  // mu is the set of means whose likelihood-ratio-ordered 68.27 percent
-  // acceptance region holds n. ROOT tabulates mu to MuMax in MuStep.
+  // mu whose likelihood-ratio-ordered 68.27% acceptance region holds n.
   TFeldmanCousins fc(0.6827);
   fc.SetMuMax(n + 10.0 * std::sqrt(n + 1.0) + 10.0);
   fc.SetMuStep(0.005);
@@ -196,7 +195,6 @@ Long64_t CrossSection::ReadCount(TFile &f, const char *name, Bool_t &ok) {
   return p->GetVal();
 }
 
-// The curve clipped to an energy window, for drawing.
 // The curve at e, log-linear between grid points where both are positive
 // (as it is drawn), zero outside the grid.
 Double_t CrossSection::Interpolated(TGraph *g, Double_t e) {
@@ -215,10 +213,10 @@ Double_t CrossSection::Interpolated(TGraph *g, Double_t e) {
   return 0.0;
 }
 
+// The curve clipped to an energy window, for drawing.
 TGraph *CrossSection::Clipped(TGraph *g, Double_t e_lo, Double_t e_hi) {
-  // The grid points inside the window, with the curve carried to the
-  // window's edges by interpolation so it reaches the frame rather than
-  // stopping a grid step short of it.
+  // The grid points inside the window, carried to its edges by
+  // interpolation so the curve reaches the frame.
   std::vector<Double_t> x, y;
   Double_t v = 0.0;
   if (CurveAt(g, e_lo, v)) {
@@ -314,11 +312,8 @@ Double_t CrossSection::GasPressureSys(Double_t sigma) const {
   return sigma * X.GAS_PRESSURE_TORR_ERR / X.GAS_PRESSURE_TORR;
 }
 
-// The cut-variation systematic on a strip's cross section: per
-// threshold the larger change of the count under its up and down shift
-// (the cache holds one count per variant, named "+" / "-" per threshold),
-// added in quadrature. `detail` receives one "name change" pair per
-// threshold; 0 and an empty detail when the cache carries no variants.
+// The cut-variation systematic: per threshold the larger change of the
+// count under its up and down shift, in quadrature; `detail` lists them.
 Double_t CrossSection::CutVariation(Int_t reac, Double_t per_count,
                                     TString &detail) const {
   detail = "";
@@ -541,11 +536,8 @@ Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
   // Disagreement = region systematic; geometric runs away over beam tail.
   const Double_t n_raw = CountInCut(h, cut, 1.0);
   if (all_tagged) {
-    // Every tagged event is the reaction: the count is what the tag left,
-    // with no enclosed-fraction correction and no region systematic. The
-    // systematic is the cut variation: per condition the larger change of
-    // the cross section under its up and down shift, in quadrature, with
-    // the gas-pressure uncertainty.
+    // Every tagged event is the reaction: no enclosed-fraction correction,
+    // and the systematic is the cut variation plus the gas pressure.
     pt.n_reac = n_raw;
     pt.sigma = pt.n_reac / norm;
     Double_t below = 0.0, above = 0.0;
@@ -784,8 +776,7 @@ void CrossSection::Draw(const std::vector<const ChannelResult *> &rs,
   for (Int_t k = 0; k < Int_t(measured.size()); k++)
     measured[k].g->Draw("P SAME");
   // Bottom right is the one empty corner: the excitation function climbs to
-  // the upper right and the reference table starts at the lower left. One
-  // row per entry at the standard text size.
+  // the upper right and the reference table starts at the lower left.
   const Int_t n_entries =
       Int_t(measured.size() + published.size() + drawn.size());
   TLegend *leg =

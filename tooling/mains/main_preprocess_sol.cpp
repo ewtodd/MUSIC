@@ -191,12 +191,8 @@ int main(int argc, char *argv[]) {
     nWorkers = std::stoi(argv[2]);
   }
 
-  // The runs to split, each with its chunk length: every enabled SOLARIS
-  // epoch's runs at the epoch's `split_chunk_seconds`, or the flat list at
-  // SOL_SPLIT_CHUNK_SECONDS. CoMPASS has no .sol and is skipped. A
-  // non-positive length means no splitting for those runs: the pipeline then
-  // reads their whole files from SOL_BASE_DIR (FileSet::DiscoverSolRunSuffixes
-  // ignores the split directory for that epoch).
+  // The runs to split: every enabled SOLARIS epoch's runs at the epoch's
+  // chunk seconds (non-positive = no splitting), or the flat list.
   std::vector<std::pair<Int_t, Double_t>> runs; // run, chunk seconds
   if (Constants::cfg.EPOCHS.empty()) {
     const Double_t sec =

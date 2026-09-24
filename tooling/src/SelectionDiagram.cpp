@@ -78,9 +78,8 @@ const char *StageTitle(SelectionStep::Stage s) {
   return "";
 }
 
-// The DOT layout runs in three columns, so the figure is a landscape page
-// rather than a strip: input and the event-level cuts, the per-strip
-// conditions, the outcome.
+// The DOT layout runs in three columns, so a landscape page: input and
+// event-level cuts, per-strip conditions, outcome.
 Int_t Column(SelectionStep::Stage s) {
   switch (s) {
   case SelectionStep::kInput:
@@ -94,11 +93,8 @@ Int_t Column(SelectionStep::Stage s) {
   return 0;
 }
 
-// The chain: every step feeds the next within the input, event-level and
-// per-strip stages and across their boundaries; the outcome nodes are wired
-// by id: "tagged" from the last per-strip step, "xs" from "tagged" and
-// "n_beam". The beam count's own origin is in its text: an edge from the
-// event-level column to it would cross the per-strip column.
+// The chain: every step feeds the next within and across stages; "xs" from
+// "tagged" and "n_beam"; the beam count's origin is in its text, no edge.
 struct Edge {
   TString from, to;
   Bool_t across; // between columns
@@ -173,10 +169,8 @@ TString SelectionDiagram::Dot(const std::vector<SelectionStep> &all,
                 st.id.Data(), fill, name.Data(), detail.Data())
         << std::endl;
       if (IsCut(st)) {
-        // The reject exit beside the box, on the same rank and to its left,
-        // so the gap to the right of each column stays free for the
-        // connector to the next one (a flat edge keeps its tail on the
-        // left; dir=back puts the arrowhead on the exit).
+        // The reject exit beside the box, same rank, to its left, so the
+        // right gap stays free for the connector (flat tail, dir=back).
         s << Form("    rej_%s [shape=plaintext, style=\"\", fontsize=9, "
                   "fontcolor=\"#b00020\", label=\"%s\"];",
                   st.id.Data(), RejectLabel(st))

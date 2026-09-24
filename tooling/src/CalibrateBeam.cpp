@@ -4,9 +4,8 @@
 #include <utility>
 
 const Int_t kMaxChannels = 36;
-// Raw total of one strip. Strips 0 and 17 are unsegmented and read once;
-// strips 1-16 are read at two ends, held in arrays of 16 indexed by strip - 1,
-// and their total is the sum of both.
+// Raw total of one strip: strips 0 and 17 read once, strips 1-16 the sum
+// of their two ends, indexed by strip - 1.
 inline Double_t StripTotalAdc(const UShort_t *l, const UShort_t *r, UShort_t s0,
                               UShort_t s17, Int_t s) {
   if (s <= 0)
@@ -183,10 +182,8 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
       break;
     m = m_ref;
   }
-  // The width BEAM_GATE_NSIGMA is in is a fitted sigma: the spot events,
-  // finely binned around the seed, fitted with a correlated Gaussian on a
-  // pedestal. Fine binning matters — over the full ADC range the spot is a
-  // few bins wide and the fit would be fitting the binning.
+  // The width BEAM_GATE_NSIGMA is in is a fitted sigma, finely binned
+  // around the seed; over the full ADC range the spot is a few bins wide.
   BeamFitUtils::SpotFit spot = BeamFitUtils::FitSpotFromPoints(h, pts, m);
   out = spot.fit;
   Constants::Detail() << "  beam gate strip " << sy << " (strips " << sx
@@ -318,9 +315,8 @@ void CollectAnchorSamplesOneSubfile(const FileSpec &spec,
     delete sf;
     return;
   }
-  // Raw ADC, pre-calibration: the two ends of strips 1-16 in LeftdE/RightdE,
-  // the unsegmented strips in Strip0dE/Strip17dE. Strip totals are L+R; the
-  // gate uses the strip1/strip2 totals.
+  // Raw ADC, pre-calibration: the two ends of strips 1-16 and the
+  // unsegmented strips; strip totals are L+R.
   UShort_t leftdE_adc[16], rightdE_adc[16], strip0_adc = 0, strip17_adc = 0;
   Short_t cathode_adc = 0, grid_adc = 0;
   tree->SetBranchAddress("LeftdE", leftdE_adc);
@@ -489,9 +485,8 @@ const Long64_t kRidgeMinPerSlice = 200;
 // thinly-spread ridges: below this a slice median is dominated by shot noise.
 const Long64_t kRidgeNoiseFloor = 20;
 const Int_t kRidgeMinPts = 6;
-// C_short/C_long is a preamp gain ratio, so it is order unity (0.9-1.3 on
-// 37Cl); outside this range the ridge fit has failed in a way the intercept
-// test cannot see, typically a flat fit through the threshold blob.
+// C_short/C_long is a preamp gain ratio, order unity; outside this range
+// the ridge fit failed in a way the intercept test cannot see.
 const Double_t kRidgeRatioLo = 0.50;
 const Double_t kRidgeRatioHi = 2.00;
 const Double_t kGmEsumLo = 0.8; // a.u. eSum peak search window (pass 2)
@@ -651,10 +646,8 @@ Double_t RidgeShortAnchor(const std::vector<Float_t> &v_short,
     dbg.fail = "slope >= 0";
     return 0.0;
   }
-  // Line must cross the long axis near the modal seed: above it by the
-  // short-end offset times the slope (up to ~20% on the R-chain short ends,
-  // see ComputeLRGainMatch); a large departure means the band selection
-  // missed the single-particle ridge; window loose.
+  // The line must cross the long axis near the modal seed (the short-end
+  // offset adds up to ~20% on the R-chain); a large departure means a miss.
   if (inter < 0.80 * c_long || inter > 1.35 * c_long) {
     dbg.fail = "intercept outside [0.80, 1.35]*C_long";
     return 0.0;
@@ -798,10 +791,7 @@ static void IndexStripEnds(const std::vector<ChannelCal> &chans,
 }
 
 // One strip's beam-gated ridge fit: the gate removes pile-up/junk while
-// keeping off-centre crossings; ungated's 2/3-particle bands steepen the
-// slope. The line is long = a - k short, so C_short = C_long/k and the
-// offset is the short reading at which the line reaches the long-only
-// peak; the detail line (or the error with its diagnostics) is printed.
+// keeping off-centre crossings; the line is long = a - k short.
 static void FitStripRidge(Int_t s, const StripPairSamples &p,
                           const ChannelCal &c_long, RidgeFit &dbg,
                           Double_t &peak_short, Double_t &peak_long,
@@ -837,10 +827,8 @@ static void FitStripRidge(Int_t s, const StripPairSamples &p,
                            << std::endl;
 }
 
-// Pass 1: per strip, the LONG anchor = the modal peak (ReduceToAnchors),
-// from the ridge line the SHORT anchor = C_long/k and the short-end
-// offset S0 = (a - C_long)/k. Unmeasurable strips keep no anchor; the
-// parity-median fallback fills them in ApplyGainMatch.
+// Pass 1: per strip the LONG anchor = the modal peak, the SHORT anchor
+// C_long/k and the offset from the ridge line; the fallback fills gaps.
 static void MeasureRidges(std::vector<ChannelCal> &chans,
                           const StripPairSamples pairs[18],
                           const Int_t idx_l[18], const Int_t idx_r[18],
@@ -885,8 +873,7 @@ static void MeasureRidges(std::vector<ChannelCal> &chans,
 }
 
 // The fallback medians, per parity (the L/R preamps differ, odd ~1.2 and
-// even ~0.9) and globally over the ratios; the parity guard is size >= 2
-// and the global guard a non-empty list.
+// even ~0.9) and globally over the ratios.
 static void RidgeFallbackMedians(GainMatchState &m) {
   // Fall back on the median RATIO (preamp property, transfers across
   // strips; ADC anchors don't).
@@ -969,12 +956,8 @@ static void ApplyGainMatch(std::vector<ChannelCal> &chans,
   }
 }
 
-// Pass 2: check, do not correct. On the pairs inside the ridge fit window
-// (short between kRidgeShortMinFrac and kRidgeShortMaxFrac of the long
-// anchor, so on the ridge and clear of the threshold blob) eSum, with the
-// short offset removed, peaks at the long-only peak, 1.0 a.u., by
-// construction; departures expose bad ridge fits or a poor fallback —
-// rescaling would hide that failure.
+// Pass 2: check, do not correct. On the pairs on the ridge, eSum with the
+// short offset removed peaks at 1.0 a.u.; rescaling would hide a failure.
 static void CheckSummedBeamPeaks(std::vector<ChannelCal> &chans,
                                  const StripPairSamples pairs[18],
                                  const Int_t idx_l[18], const Int_t idx_r[18],
@@ -1088,20 +1071,17 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
   Float_t fit_adc[kMaxChannels] = {0};
   Long64_t fit_n[kMaxChannels] = {0};
   Bool_t ok[kMaxChannels] = {0};
-  // GainLeft[k]/GainRight[k] scale LeftdE[k]/RightdE[k], the two ends of
-  // strip k+1; GainStrip0/GainStrip17 the unsegmented strips. EnergyView
-  // reads these to calibrate on the fly.
+  // GainLeft[k]/GainRight[k] scale the two ends of strip k+1;
+  // GainStrip0/GainStrip17 the unsegmented strips.
   Float_t gain_left[16] = {0}, gain_right[16] = {0};
   Float_t gain_strip0 = 0.0f, gain_strip17 = 0.0f;
   Float_t gain_cathode = 0.0f;
   Float_t gain_grid = 0.0f;
-  // OffsetLeft[k]/OffsetRight[k]: ADC subtracted from LeftdE[k]/RightdE[k]
-  // before the gain, only when that end fired (see ComputeLRGainMatch: the
-  // short-end offset). Zero on the long ends.
+  // OffsetLeft[k]/OffsetRight[k] are subtracted before the gain, only when
+  // that end fired (the short-end offset); zero on the long ends.
   Float_t offset_left[16] = {0}, offset_right[16] = {0};
-  // Per-strip ridge ratio and offset (x C_long) measured in THIS subfile, 0
-  // where the ridge was not measurable. AggregateRidgeRatiosForRun medians
-  // these across a run.
+  // Per-strip ridge ratio and offset (x C_long) measured in this subfile,
+  // 0 where not measurable; AggregateRidgeRatiosForRun medians them.
   Float_t ridge_ratio[18] = {0};
   Float_t ridge_offset[18] = {0};
   Float_t long_anchor[18] = {0};
@@ -1153,10 +1133,8 @@ void WriteCalibrationTree(TFile *dst, const std::vector<ChannelCal> &chans,
   cal->Branch("RidgeOffset", ridge_offset, "RidgeOffset[18]/F");
   cal->Branch("LongAnchor", long_anchor, "LongAnchor[18]/F");
 
-  // Per-strip two-point alignment: EnergyView multiplies every end of a strip
-  // by StripFactor after the gain and adds StripOffset to the long end (or the
-  // unsegmented value), so beam = 1 and pile-up = 2 on the strip total.
-  // Defaults 1 and 0 (identity).
+  // Per-strip two-point alignment: StripFactor on every end, StripOffset on
+  // the long end, so beam = 1 and pile-up = 2 on the strip total.
   Float_t strip_factor[18], strip_offset[18];
   for (Int_t s = 0; s < 18; s++) {
     strip_factor[s] = 1.0f;
@@ -1457,9 +1435,8 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
       delete proj;
       continue;
     }
-    // The 2-particle peak sits near twice the beam; a window placed from the
-    // beam keeps the 3-particle shoulder and the inter-peak tail out, and a
-    // peak on the window edge is rejected by SmoothedPeakIn.
+    // The 2-particle peak sits near twice the beam; a peak on the window
+    // edge is rejected by SmoothedPeakIn.
     Double_t pile = SmoothedPeakIn(proj, kPileLoX * beam, kPileHiX * beam);
     delete proj;
 
@@ -1603,9 +1580,8 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
   // needs this on disk so EnergyView can decode events in a.u.
   WriteCalibrationToEvents(spec, chans, &align);
 
-  // Per-strip two-point alignment on the strip total: beam peak to 1.0,
-  // two-particle pile-up peak to 2.0 (factor on every end, offset on the
-  // long end).
+  // Per-strip two-point alignment on the strip total: beam to 1.0, pile-up
+  // to 2.0 (factor on every end, offset on the long end).
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
     align = FindStripCentroidAlignment(spec, plot_subdir, file_label);

@@ -96,9 +96,8 @@ Moments2D BeamFitUtils::ClippedMoments(
     Double_t clip) {
   const Int_t kMaxPasses = 50;
   const Double_t kTolerance = 1.0e-4;
-  // A 2-D Gaussian's r^2 is exponential with mean 2, so inside radius c each
-  // axis keeps 1 - (c^2/2) e^(-c^2/2) / (1 - e^(-c^2/2)) of its variance
-  // (0.949 at c = 3).
+  // A 2-D Gaussian's r^2 is exponential with mean 2: inside radius c each
+  // axis keeps 0.949 of its variance at c = 3.
   const Double_t e = std::exp(-0.5 * clip * clip);
   const Double_t kept_var = 1.0 - 0.5 * clip * clip * e / (1.0 - e);
   Moments2D m = seed;
@@ -169,11 +168,8 @@ BeamFitUtils::FitSpotFromPoints(TH2F *h,
   // fallback.
   Moments2D m = ClippedMoments(pts, seed);
 
-  // The width the fit reports is a fitted sigma: the same events, finely
-  // binned around the seed, fitted with a correlated Gaussian on a pedestal.
-  // Only the inner kFitWindow is fitted, narrow so the ~2x pileup blob and
-  // any reaction shoulder stay out of the width; the rest of the histogram is
-  // what the goodness check reads.
+  // The width the fit reports is a fitted sigma on the inner kFitWindow,
+  // finely binned so pileup and the reaction shoulder stay out of it.
   const Double_t kSpotWindow = 4.0;
   const Double_t kFitWindow = 2.0;
   const Int_t kSpotBins = 160;

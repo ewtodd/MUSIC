@@ -13,9 +13,8 @@ Double_t FusedSecSince(const std::chrono::steady_clock::time_point &t0) {
       .count();
 }
 
-// /proc/self/statm reports VmRSS in pages (field 2); 4 KiB/page on Linux.
-// Worker-local label so concurrent log lines stay attributable. Detail: only
-// the per-file sample logs it.
+// /proc/self/statm reports VmRSS in pages (4 KiB/page on Linux); the
+// label is worker-local and only the per-file sample logs it.
 void PrintMemUsage(const char *label) {
   if (!Constants::FileInSample())
     return;
@@ -185,9 +184,8 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
                 << std::endl;
     }
 
-    // Pole-zero pulse-history correction on long ends, measured on this
-    // subfile's beam-like events; before build, changing energies it dedups
-    // on. The groups are the active epoch's: an era with none on skips it.
+    // Pole-zero pulse-history correction before build, changing energies it
+    // dedups on; the groups are the active epoch's, none on skips it.
     if (Constants::cfg.PULSE_HISTORY_CORRECTION &&
         Constants::ActivePulseHistoryGroups().AnyEnabled()) {
       t0 = std::chrono::steady_clock::now();

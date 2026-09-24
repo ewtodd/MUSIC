@@ -28,10 +28,8 @@ void CrossSectionConfig::SetDefaults() {
   BEAM_ELEMENT = "";
 
   TALYS_MODELS.clear();
-  // The shared TALYS settings, from the group's 14O(a,p) input. Not here:
-  // the energies (talys-xs writes its own grid), alphaomp (per model),
-  // outdiscrete (output only, talys-xs reads the rp*.tot files) and
-  // astro/astrogs (reaction rates, off by default).
+  // The shared TALYS settings, from the group's 14O(a,p) input; not here:
+  // the energies (per file), alphaomp (per model) and the rate options.
   TALYS_COMMON_KEYWORDS = {
       "# level density",
       "ldmodel 1",
@@ -266,10 +264,8 @@ RunEpoch MakeEpoch(const TString &name, const std::vector<Int_t> &runs) {
   ep.n_channels = cfg.N_CHANNELS;
   ep.channel_map =
       !cfg.channelMap64.empty() ? cfg.channelMap64 : cfg.channelMap;
-  // The snapshot is only as good as the flat block at this moment. An epoch
-  // declared before the channel map, board or channel count was set would
-  // carry the tooling defaults and fail far downstream ("reference channel
-  // not found"), so refuse it here.
+  // An epoch declared before the channel map was set would carry the
+  // tooling defaults and fail far downstream, so refuse it here.
   if (ep.channel_map.empty()) {
     std::cerr << "FATAL: MakeEpoch(\"" << name
               << "\") called before the channel map was set; declare epochs "
@@ -497,9 +493,8 @@ Bool_t ActiveIgnoreShortStrips() {
   return cfg.IGNORE_SHORT_STRIPS;
 }
 
-// The plot sample is a per-thread mark: every tool that walks the files on
-// worker threads sets it before each file, so the stages a file runs through
-// need no plumbing to know whether they draw.
+// The plot sample is a per-thread mark, set by every file-walking tool
+// before each file, so the stages need no plumbing to know when to draw.
 namespace {
 thread_local Bool_t t_plot_sample = kFALSE;
 }

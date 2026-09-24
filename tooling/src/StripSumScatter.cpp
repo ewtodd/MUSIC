@@ -290,9 +290,8 @@ Bool_t StripSumScatter::Condition(TagCut c, const EnergyView &ev, Int_t reac,
     return kTRUE;
   }
   case kCutPostAbove:
-    // Persistence: the excess must hold for post_above_strips strips after
-    // the reaction, each more than post_above_nsigma of its spread above the
-    // beam.
+    // Persistence: the excess must hold for post_above_strips strips
+    // after the reaction, each more than post_above_nsigma of its spread.
     for (Int_t s = reac + 1; s <= TMath::Min(reac + T.post_above_strips, kLast);
          s++)
       if (StripSigma(s) > 0.0 &&
@@ -301,9 +300,7 @@ Bool_t StripSumScatter::Condition(TagCut c, const EnergyView &ev, Int_t reac,
     return kTRUE;
   case kCutCross: {
     // The residue's range: the trace may not read below the beam before
-    // strip cross_min_strip, an absolute strip (see POST_CROSS_MIN_STRIP), so
-    // the window checked is reac+1 .. S and vacuous once reac reaches S.
-    // Never reading below it is for the end strip to judge.
+    // strip cross_min_strip (an absolute strip); the window is reac+1..S.
     const Int_t upto = TMath::Min(Int_t(T.cross_min_strip + 0.5), kLast);
     for (Int_t s = reac + 1; s <= upto; s++)
       if (StripSigma(s) > 0.0 && ev.Total(s) < StripMean(s))
@@ -317,8 +314,7 @@ Bool_t StripSumScatter::Condition(TagCut c, const EnergyView &ev, Int_t reac,
            StripMean(end_strip) - T.end_strip_nsigma * StripSigma(end_strip);
   case kCutCliff: {
     // A stop is gradual: the last step may take only part of the fall from
-    // the peak. The elastic class keeps its excess to end_strip-1 and drops
-    // there.
+    // the peak; the elastic class keeps its excess to end_strip-1.
     if (!(end_strip - 1 > reac))
       return kTRUE;
     Double_t peak = ev.Total(reac);
@@ -406,10 +402,7 @@ TString FewerStrips(Int_t n) {
 } // namespace
 
 // The selection in words, one step per condition in the order RejectReason
-// and the fill apply them. Each detail states what an event must satisfy to
-// go on; "beam" is the strip's measured beam mean and "σ" its measured
-// spread (SetStripNoise). A step the configuration switches off stays in the
-// list with `on` false, so a reader sees the option exists.
+// and the fill apply them; disabled steps stay in the list with `on` false.
 std::vector<SelectionStep> StripSumScatter::DescribeSelection() {
   const StripSumScatterConfig &C = Constants::cfg.STRIP_SUM_SCATTER_CONFIG;
   const Bool_t ign0 = Constants::cfg.IGNORE_STRIP_0;
@@ -571,14 +564,8 @@ std::vector<SelectionStep> StripSumScatter::DescribeSelection() {
   return out;
 }
 
-// Sigma-clipped mean and width of a sample, started from the median and the
-// MAD. The start matters even on a beam-gated sample: what the gate lets
-// through still carries the odd partial pile-up and reaction, and a clip that
-// starts from the plain RMS of a sample with a second population never sheds
-// it (before the gate was used here it settled at 0.41 a.u. against a beam
-// width of 0.06 on 37Cl run 97, which turned every sigma-scaled cut into a
-// no-op). The MAD sees such a population as a minority and starts inside the
-// beam.
+// Sigma-clipped mean and width, started from the median and MAD, not the
+// RMS: never sheds a second population (0.41 a.u. vs 0.06 on 37Cl 97).
 static Double_t ClippedWidth(const std::vector<Double_t> &values,
                              Double_t *mean_out = nullptr) {
   const Int_t kClipPasses = 3;
@@ -764,13 +751,8 @@ Bool_t StripSumScatter::IsNoise(const EnergyView &ev, Double_t kNSigma) {
       return kTRUE;
   return kFALSE;
 }
-// The trace's largest step with its single largest upward step exempted,
-// whatever strip is asked about: a reaction is one rise, the jump at the
-// reaction strip, followed by gradual change, while a spike, a partial
-// second particle or a glitch shows more than one abrupt step (up and back
-// down, or two rises). So the biggest rise is the reaction's and is left
-// alone, and everything else, every fall and every other rise, is held to
-// the limit. Strip 0 stays out (its own scale and spread).
+// The largest step with its single largest rise exempted: a reaction is
+// one rise then gradual change; strip 0 stays out (its own scale).
 Double_t StripSumScatter::MaxStepNSigma(const EnergyView &ev) {
   const Int_t kLast = Constants::cfg.IGNORE_STRIP_17 ? 16 : 17;
   Double_t worst = 0.0, best_rise = 0.0, second_rise = 0.0;
@@ -912,8 +894,7 @@ BeamFit2D StripSumScatter::FindBeamGate(TChain *chain, Int_t sx, Int_t sy,
   }
 
   // The per-group beam-gate figures are the only thing written under
-  // strip_sum_scatter/<group>; the groups outside the plot sample (see
-  // SAVE_FULL_PLOTS) write no such folder.
+  // strip_sum_scatter/<group>; groups outside the plot sample write none.
   if (!Constants::SavePlots()) {
     delete h;
     return out;
@@ -1658,9 +1639,8 @@ std::vector<TGraph *> StripSumScatter::SimPopTraces(const TString &file,
   return traces;
 }
 
-// The segmented strips where both ends FIRED, read off RAW ADC so it sees
-// the short end even when IGNORE_SHORT_STRIPS zeroes it in the decode,
-// over strips 1..hi.
+// The segmented strips where both ends FIRED, read off RAW ADC (sees the
+// short end even when IGNORE_SHORT_STRIPS zeroes it), over strips 1..hi.
 static Int_t CountBothEnds(const EnergyView &ev, Int_t hi) {
   Int_t nboth = 0;
   for (Int_t s = 1; s <= hi; s++)
@@ -2475,9 +2455,8 @@ static void VariantMovesEventLevel(
   }
 }
 
-// The trace record for the reservoir: the calibrated and raw ADC strips,
-// the strip-0 and -17 ends, the mirrored short side, the both-channel
-// multiplicity, and the seed, mask and beam flags.
+// The trace record: calibrated and raw ADC strips, the strip-0/-17 ends,
+// the mirrored short side, the both-channel multiplicity, seed, mask, beam.
 static void FillTraceEvt(TraceEvt &e, const EnergyView &ev, ULong64_t seed_ts,
                          UInt_t mask, Bool_t beam) {
   for (Int_t k = 0; k < 16; k++) {
@@ -2679,11 +2658,8 @@ StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
       res.pre_counts[kPreAllStrips]++;
       continue;
     }
-    // The beam selection: gate, pileup, noise, smoothness. Each is decided
-    // at the nominal level for the count and again at each variant's level
-    // for the cut variation, so an event the nominal selection drops is
-    // still counted (tagged and in the denominator) for the variants that
-    // would keep it. Sequential rejection counts as before.
+    // The beam selection, decided at the nominal level for the count and
+    // at each variant's level for the cut variation; sequential rejection.
     const Double_t step_z = MaxStepNSigma(ev);
     const EventLevelVerdict nom =
         JudgeEventLevel(gate, ev, kGateStrip, step_z, nominal);
@@ -2707,16 +2683,11 @@ StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
         continue;
       }
     }
-    // One tag per event: every strip's verdict first, then the one strip
-    // the event is attributed to (ResolveTag); a strip that passed but did
-    // not take it counts as "other strip". The variants resolve the same way
-    // under their own thresholds.
-    //
-    // Per-strip denominator: the beam incident on `reac` is what met the
-    // conditions a reaction there must meet (beam-like upstream, so the
-    // efficiencies cancel in the ratio) and had not reacted before it: an
-    // event tagged at `won` is incident on the strips up to `won` and on none
-    // after. N(reac+1) = N(reac) - reactions at reac, exactly.
+    // One tag per event: every strip's verdict, then the attributed strip
+    // (ResolveTag); a passing strip that lost it counts as "other strip".
+
+    // Per-strip denominator: what met a reaction's conditions at `reac`
+    // and had not reacted before; N(reac+1) = N(reac) - reactions at reac.
     UInt_t mask = 0;
     Double_t totals[18];
     ev.Totals(totals);
@@ -2838,10 +2809,8 @@ void StripSumScatter::FitGateRun(Int_t i, std::vector<SingleRunFitResult> &fits,
   fits[i] = FitRunGates(runOrder[i], labelVec[i], chainVec[i]);
 }
 
-// Merge one file's fill into the totals: the scatters, the reservoir and
-// the counts. The pure-beam events are capped GLOBALLY, not per task
-// (reaction-tagged are never dropped); per-task capping would scale kept
-// beam with file count.
+// Merge one file's fill into the totals; the pure-beam events are capped
+// GLOBALLY, not per task, so the kept beam does not scale with file count.
 void StripSumScatter::MergeRunFill(Int_t t,
                                    std::vector<SingleRunFillResult> &fills,
                                    Int_t &nBeamKept, Long64_t &totalGated,
@@ -2889,9 +2858,8 @@ void StripSumScatter::MergeRunFill(Int_t t,
   std::vector<TraceEvt>().swap(fills[t].reservoir);
 }
 
-// Phase 2: one file of the fill, then the finished prefixes merged into
-// the totals in task order as each prefix finishes, freeing on the spot;
-// the order keeps the pure-beam budget identical to sequential.
+// Phase 2: one file of the fill; finished prefixes merge in task order,
+// freeing on the spot; the budget stays identical to sequential.
 void StripSumScatter::FillScatterFile(
     Int_t t, const std::vector<FillTask> &tasks,
     const std::vector<Int_t> &runOrder, const std::vector<TString> &labelVec,
@@ -2996,9 +2964,8 @@ void StripSumScatter::FillScatters(const FileSet::GateGroups &groups) {
   std::cout << "strip-sum-scatter: filling " << nTasks << " files on "
             << fill_workers << " workers" << std::endl;
 
-  // The workers fill their file and merge the finished prefixes into the
-  // shared phase as each prefix finishes; the merge runs in task order, so
-  // the pure-beam budget stays identical to sequential.
+  // The workers fill their file and merge the finished prefixes in task
+  // order, so the pure-beam budget stays identical to sequential.
   FillPhase phase;
   phase.fills.resize(nTasks);
   phase.filled.assign(nTasks, kFALSE);
@@ -3087,9 +3054,8 @@ void StripSumScatter::WriteCutReport() const {
   }
   std::cout << out.str();
 
-  // The cut variation: tagged count per strip under each shifted threshold,
-  // beside the nominal, so the sensitivity is readable before the cross
-  // section folds it into a systematic.
+  // The cut variation: tagged counts per strip under each shifted
+  // threshold, beside the nominal, so the sensitivity is readable.
   if (!m_variantNames.empty()) {
     out << std::endl;
     out << "Cut variation (tagged events per strip with one threshold "
@@ -3352,9 +3318,7 @@ Bool_t StripSumScatter::Prepare() {
   const TString first_label = groups.label[run_order[0]];
 
   // Every level and step cut is in sigma of the beam, so the beam comes
-  // first: the first group's entrance and exit ellipses select its beam
-  // events, and each strip's mean and width over them are the reference.
-  // The fingerprint stamps the resolved thresholds.
+  // first: the first group's ellipses select its beam events, the reference.
   Double_t strip_mean[18], strip_sigma[18];
   {
     Constants::SetPlotsThisFile(Constants::InPlotSample(0));
@@ -3462,9 +3426,8 @@ void StripSumScatter::DrawAllTaggedTraces(const TString &subdir) {
   for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
     const UInt_t bit = (1u << ReacIndex(reac));
     std::vector<TGraph *> tr_tag, tr_tag_adc, tr_tag_sg;
-    // Every tagged event at this strip, uncapped: in the all-tagged mode the
-    // count IS these traces, so the figure shows all of them. Only the beam
-    // sample above is capped.
+    // Every tagged event at this strip, uncapped: in the all-tagged mode
+    // the count IS these traces, so the figure shows all of them.
     for (Int_t k = 0; k < Int_t(m_reservoir.size()); k++) {
       const TraceEvt &e = m_reservoir[k];
       if (e.beam_flat || !(e.reac_mask & bit))

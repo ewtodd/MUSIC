@@ -146,8 +146,7 @@ std::vector<TString> FileSet::DiscoverSolRunSuffixes(Int_t run) {
   TString prefix = Form("music_exp1915_%03d_00_66222_", run);
 
   // Check for split chunks first, unless splitting is off for the active
-  // epoch (non-positive chunk length): then whole files only, so chunks left
-  // in the split directory from an earlier setting cannot be picked up.
+  // epoch; whole files only, so stale chunks cannot be picked up.
   TString split_dir = Constants::cfg.SOL_SPLIT_DIR;
   void *dirp = Constants::ActiveSplitChunkSeconds() > 0
                    ? gSystem->OpenDirectory(split_dir)

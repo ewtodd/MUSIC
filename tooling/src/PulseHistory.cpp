@@ -255,8 +255,7 @@ Int_t AmpBinOf(Double_t e_prev, Double_t mode, Int_t n_amp) {
 }
 
 // What a band covers, in the beam pulse's units: the first is everything
-// below half a beam pulse, the last is open ended. Latex for the figures,
-// plain text for the log.
+// below half a beam pulse, the last is open ended.
 TString BandLabel(Int_t a, Int_t n_amp, Bool_t latex) {
   if (n_amp <= 1)
     return "";
@@ -343,11 +342,8 @@ struct Past {
   Double_t e; // raw ADC
 };
 
-// Feature layout of the fit: 0 is the intercept; then the binned kernel's
-// (band, dt bin); then, when the form is fitted too, the form's free low-dt
-// bins (band, bin < n_free) and, per tau of the grid and band, the
-// direct-tail and the baseline feature. One scan fills all of them and each
-// model is solved from its own block of the normal matrix.
+// Feature layout: intercept, the binned kernel's (band, dt bin), and when
+// fitted the form's free low bins and per-tau direct-tail/baseline pairs.
 struct FeatLayout {
   Int_t n_amp = 1;
   Int_t n_free = 0;
@@ -371,10 +367,8 @@ struct FeatLayout {
 struct FormGrid {
   Double_t t_m_us = 0.0, t_f_us = 0.0, t_lo_us = 0.0;
   std::vector<Double_t> tau_us, em, ef; // tau, exp(-t_m/tau), exp(-t_f/tau)
-  // exp(-dt/tau_j) tabulated against log10(dt [us]) over the kernel reach,
-  // linearly interpolated: one table read per tau and past pulse in the scan
-  // instead of one exp(). 4096 points over 2.5 decades put the interpolation
-  // error below 1e-5, far inside the fit's own precision.
+  // exp(-dt/tau_j) tabulated against log10(dt) and interpolated: one table
+  // read per tau instead of an exp(); 4096 points put the error below 1e-5.
   static const Int_t kTabN = 4096;
   std::vector<Double_t> tab; // [j * kTabN + i]
   Double_t tab_lo = 0.0, tab_step = 0.0;
@@ -408,12 +402,8 @@ struct ScanNeeds {
   std::vector<Int_t> taus; // grid indices whose form features are built
 };
 
-// One accumulated least-squares problem: the right-hand side, the sums that
-// give the residual, and the normal matrix in a plain array, of which only
-// the blocks a fit reads are accumulated (see the scan in Measure): the
-// binned block, the free low bins, and per tau its two features against the
-// low bins and each other. Cross terms between the bins and the form, or
-// between two taus, are never read, and the upper triangle is enough.
+// One accumulated least-squares problem; only the normal-matrix blocks a
+// fit reads are accumulated (upper triangle, no bin/form or tau/tau terms).
 struct Normal {
   Int_t np = 0;
   std::vector<Double_t> A; // np x np, upper triangle of the read blocks
@@ -476,17 +466,8 @@ Double_t Predict(const Kernel &K, const FeatLayout &lay,
   return pred;
 }
 
-// Least squares on a subset of the features from the full normal matrix:
-// the matrix scaled to unit diagonal, a ridge of kRidge on it and a
-// Cholesky solve. The ridge is what keeps the near-collinear directions in
-// hand (far-dt bins of rare bands against the intercept, the tau grid's
-// neighbours against each other) and what makes a feature nobody populated
-// solve to zero rather than leave the matrix singular; at 1e-8 on a unit
-// diagonal it does not move a determined coefficient. Cholesky rather than
-// SVD because it cannot fail to converge: the SVD's iteration stalled on
-// the sparse CoMPASS channels and printed a stack of errors for each. Returns
-// the coefficients in the order of `keep` and the drop in the residual sum
-// of squares, sum p b, so ss_res = syy - drop.
+// Least squares on a feature subset: unit diagonal, kRidge ridge, Cholesky
+// (SVD stalled on sparse CoMPASS); `drop` gives ss_res = syy - drop.
 Bool_t SolveSubset(const Normal &N, const std::vector<Int_t> &keep, TVectorD &p,
                    Double_t &drop) {
   const Double_t kRidge = 1.0e-8;
@@ -664,16 +645,11 @@ void Scan(const ScanState &st, Int_t g, const std::vector<size_t> &seeds_g,
   }
 }
 
-// Fits one kernel from an accumulated problem: always the binned model and,
-// when the layout carries the form's features, the form as well, at every tau
-// of the grid (the profile) and at the given tau `given_j` when there is one
-// (-1 when the tau is to be profiled). Then picks the applied one: the form
-// where `want_form` and it fitted, the bins otherwise. K.j_tau records the
-// grid index of the applied tau for the diagnostics. Returns K.ok; `why`
-// receives a one-line reason when the given tau could not be used.
-// R^2 that a kernel fitted elsewhere (the group's) reaches on this problem:
-// the residual of its coefficient vector on the channel's own normal
-// equations, so a channel's own fit can be judged against the fallback.
+// Fits one kernel from an accumulated problem: the binned model and, when
+// the layout carries the form, the form at every grid tau and `given_j`.
+
+// R^2 that a kernel fitted elsewhere (the group's) reaches on this problem,
+// so a channel's own fit can be judged against the fallback.
 Double_t R2Of(const Kernel &K, const Normal &N, const FeatLayout &lay) {
   if (N.n < 1)
     return 0.0;
@@ -761,11 +737,8 @@ Bool_t FitKernel(const Normal &N, const FeatLayout &lay, const FormGrid &grid,
     }
   }
 
-  // The form: for each tau of the grid, intercept plus the free low bins and
-  // the two form features per band. The profile keeps the tau with the
-  // smallest residual among the grid's own points; a given tau has its own
-  // point and its solution is the one applied. c is minus the direct-tail
-  // coefficient (undershoot > 0).
+  // The form: for each grid tau, intercept plus the free low bins and the
+  // two form features per band; c is minus the direct-tail coefficient.
   K.form_ok = kFALSE;
   if (lay.HasForm()) {
     Double_t best_res = 0.0, given_res = 0.0;
@@ -862,8 +835,7 @@ Bool_t FitKernel(const Normal &N, const FeatLayout &lay, const FormGrid &grid,
   }
 
   // Which one is applied: the form where asked for and fitted, the bins
-  // otherwise (a form that failed falls back). K.k holds the applied kernel
-  // at the bin centres.
+  // otherwise (a failed form falls back).
   K.form = want_form && K.form_ok;
   if (K.form) {
     K.intercept = K.intercept_form;
@@ -901,10 +873,8 @@ void AccumulateClassBlock(Normal &Nc, const std::vector<Double_t> &xx,
   }
 }
 
-// One (x, y) sample of a channel's least-squares problem: the intercept and
-// the right-hand side, then every nonzero feature class against the
-// intercept, the right-hand side and itself, and the low bins against each
-// tau's features (the classes are in Normal).
+// One (x, y) sample of a channel's least-squares problem, filling every
+// nonzero feature class (see Normal) against its partners.
 struct FitSample {
   std::vector<Normal> &N;
   const FeatLayout &lay;
@@ -1076,8 +1046,7 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
   const Double_t olo = Constants::cfg.PULSE_HISTORY_OWN_LO;
   const Double_t ohi = Constants::cfg.PULSE_HISTORY_OWN_HI;
   // The form is fitted for every group as soon as one asks for it, so the
-  // report can compare it with the bins everywhere; nothing is fitted for it
-  // otherwise, which keeps the scan at its old cost.
+  // report can compare it everywhere; otherwise the scan keeps its cost.
   Bool_t want_form = kFALSE;
   for (Int_t g = 1; g < kNGroups; g++)
     want_form = want_form || (GroupEnabled(g) && GroupWantsForm(g));
@@ -1099,8 +1068,7 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
       }
   }
   // A tau given for a group is appended to the grid so the applied form is
-  // solved at exactly that value; the profile stays over the first kNTauGrid
-  // points. given_j[g] is its index, -1 when the group's tau is profiled.
+  // solved at exactly that value; given_j[g] is -1 when profiled.
   Int_t given_j[kNGroups];
   for (Int_t g = 0; g < kNGroups; g++)
     given_j[g] = -1;
@@ -1170,16 +1138,13 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
     mean[c] = nmean[c] ? mean[c] / Double_t(nmean[c]) : 0.0;
   }
 
-  // Pass B: normal equations, one per channel; a group's is their sum. Every
-  // channel gets its own kernel where it has the pairs for one, since the
-  // preamps differ within a chain; the group kernel is the fallback.
+  // Pass B: normal equations, one per channel; a group's is their sum.
+  // Every channel gets its own kernel (the preamps differ within a chain).
   std::vector<Normal> N(nidx);
   for (Int_t k = 0; k < Int_t(fit_ch.size()); k++)
     N[fit_ch[k]].Init(np);
-  // The fit scan builds every feature. Only the blocks a fit reads are
-  // accumulated (see Normal), upper triangle: the nonzero features are
-  // sorted into their classes first, then each class against itself and the
-  // low bins against each tau.
+  // The fit scan builds every feature; only the blocks a fit reads are
+  // accumulated (see Normal): nonzero features sorted into classes first.
   ScanNeeds all_needs;
   for (Int_t j = 0; j < lay.n_tau; j++)
     all_needs.taus.push_back(j);
@@ -1411,9 +1376,8 @@ TString FormLines(const Kernel &K, const char *indent) {
             (!K.form && K.form_ok) ? "  [bins applied]" : "")
     << std::endl;
   if (K.tau_given) {
-    // The check: where the free profile lands and what it costs to hold the
-    // given value. The grid step is about 15 percent, so a free tau within
-    // one step of the given one is a match.
+    // The check: where the free profile lands; the grid step is about 15
+    // percent, so a free tau within one step of the given one is a match.
     const Double_t ratio = K.tau_us > 0.0 ? K.tau_free_us / K.tau_us : 0.0;
     s << Form("%s  profile prefers tau %.1f us (%.2f x given, grid step "
               "1.15)  R^2 %.4f there vs %.4f at given%s",
@@ -1452,8 +1416,7 @@ TString Report(const Result &res, const TString &file_label, Bool_t detail) {
   for (Int_t g = 1; g < kNGroups; g++) {
     const Kernel &K = res.kernel[g];
     // The group's own fit (the sum of its channels) is the fallback kernel
-    // and the reference the per-channel lines below are read against. The
-    // summary form lists the enabled groups only.
+    // and the reference the per-channel lines are read against.
     if (!detail && !res.enabled[g])
       continue;
     s << Form("    %-22s %s  beam events %lld  n %lld  R^2 %.3f  rms %.1f -> "
@@ -1539,9 +1502,8 @@ TString Report(const Result &res, const TString &file_label, Bool_t detail) {
 
 namespace {
 
-// A legend in the right-hand column, sized to its rows at the standard text
-// size so long entries neither shrink nor spill; top corner or bottom, one
-// or two columns, with the header (set by the caller) on a row of its own.
+// A legend in the right-hand column, sized to its rows so long entries
+// neither shrink nor spill; top or bottom, one or two columns.
 TLegend *RightLegend(Int_t nentries, Bool_t header, Bool_t top,
                      Double_t x1 = 0.62, Int_t ncols = 1) {
   const Int_t nrows = (header ? 1 : 0) + (nentries + ncols - 1) / ncols;
@@ -1553,8 +1515,7 @@ TLegend *RightLegend(Int_t nentries, Bool_t header, Bool_t top,
 }
 
 // One kernel figure: the binned coefficients as points, the form as a curve
-// over them when it was fitted (solid where applied, dashed where the bins
-// are), one colour per amplitude band.
+// over them (solid where applied, dashed where the bins are).
 void DrawKernelFigure(const Kernel &K, const TString &subdir,
                       const char *fname) {
   const Int_t colors[kMaxAmpBins] = {kBlack,     kRed + 1,    kAzure + 1,
@@ -1572,9 +1533,8 @@ void DrawKernelFigure(const Kernel &K, const TString &subdir,
                   "Relative Amplitude Shift");
   TLegend *leg = nullptr;
   if (K.n_amp > 1 || K.form_ok) {
-    // The tail of every kernel runs to zero at the right, so the legend goes
-    // into the right-hand corner away from the zero line: the top for an
-    // overshoot (positive kernel), the bottom for an undershoot.
+    // The tail of every kernel runs to zero at the right, so the legend
+    // goes into the right-hand corner: top for an overshoot, bottom otherwise.
     leg = RightLegend(K.n_amp * (K.form_ok ? 2 : 1), K.form_ok,
                       !(TMath::Abs(ylo) > yhi), 0.45);
     if (K.form_ok)
@@ -1889,9 +1849,8 @@ void WriteToEventsFile(const TString &events_subpath, const Result &res) {
   f->cd();
   if (TObject *old = f->Get("pulse_history"))
     old->Delete();
-  // One entry per channel with a kernel (Board/Channel from the map, Name
-  // the channel's), plus one per group (Board and Channel -1, Name the
-  // group's tag): the group fit that is the channels' fallback.
+  // One entry per channel with a kernel (Board/Channel from the map) and
+  // one per group (Board/Channel -1, Name the group's tag).
   TTree *t = new TTree("pulse_history",
                        "Pulse-history kernel per channel and per group");
   PulseRow row;
@@ -1931,8 +1890,7 @@ void WriteToEventsFile(const TString &events_subpath, const Result &res) {
   t->Branch("MeanShift", &row.mean_shift, "MeanShift/D");
   t->Branch("ApplyMaxUs", &row.apply_max_us, "ApplyMaxUs/D");
   // Decay-time summary of the raw dt profile (p0 + p1 exp(-dt/p2) + p3 dt);
-  // see Kernel::TauFit. Group rows only; flat groups have tau_ok but
-  // tau_flat and p2 = 0.
+  // see Kernel::TauFit. Flat groups have tau_ok and tau_flat with p2 = 0.
   t->Branch("TauOk", &row.tau_ok, "TauOk/O");
   t->Branch("TauFlat", &row.tau_flat, "TauFlat/O");
   t->Branch("TauUs", &row.tau_us, "TauUs/D");

@@ -150,13 +150,8 @@ void EnergyView::Decode() {
         left[s - 1] = 0.0;
     }
   }
-  // Per-strip two-point alignment (beam at 1.0, pile-up at 2.0 on the strip
-  // total): the factor on every end, so the sum carries it, and the offset on
-  // the long end (L on odd strips, R on even) or the unsegmented value. A
-  // long end that did not fire stays 0: the offset belongs to a reading, and
-  // adding it to nothing put every missing-channel event on a line at the
-  // offset (0.05 a.u.), where on the CoMPASS runs, with half the events
-  // missing a channel, it outnumbered the beam peak and caught the gate fit.
+  // The factor on every end, the offset on the fired long end only:
+  // unfired ends stay 0; on CoMPASS offset on nothing outnumbered the beam.
   if (is_normed) {
     for (Int_t s = 1; s <= 16; s++) {
       left[s - 1] *= Double_t(strip_factor[s]);
