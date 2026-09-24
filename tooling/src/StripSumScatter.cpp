@@ -1658,6 +1658,17 @@ std::vector<TGraph *> StripSumScatter::SimPopTraces(const TString &file,
   return traces;
 }
 
+// The segmented strips where both ends FIRED, read off RAW ADC so it sees
+// the short end even when IGNORE_SHORT_STRIPS zeroes it in the decode,
+// over strips 1..hi.
+static Int_t CountBothEnds(const EnergyView &ev, Int_t hi) {
+  Int_t nboth = 0;
+  for (Int_t s = 1; s <= hi; s++)
+    if (ev.leftdE_adc[s - 1] > 0 && ev.rightdE_adc[s - 1] > 0)
+      nboth++;
+  return nboth;
+}
+
 void StripSumScatter::SimTagReport() {
   const StripSumScatterConfig &C = Constants::cfg.STRIP_SUM_SCATTER_CONFIG;
   const Int_t kReacMin = C.REACTION_STRIP_MIN;
@@ -1762,11 +1773,8 @@ void StripSumScatter::SimTagReport() {
         continue;
       }
       if (C.BOTH_MULT_MAX >= 0) {
-        Int_t nboth = 0;
-        for (Int_t s = 1; s <= TMath::Min(16, C.BOTH_MULT_COUNT_TO); s++)
-          if (ev.leftdE_adc[s - 1] > 0 && ev.rightdE_adc[s - 1] > 0)
-            nboth++;
-        if (nboth > C.BOTH_MULT_MAX) {
+        if (CountBothEnds(ev, TMath::Min(16, C.BOTH_MULT_COUNT_TO)) >
+            C.BOTH_MULT_MAX) {
           pre[kPreBothMult]++;
           continue;
         }
@@ -2453,6 +2461,160 @@ SingleRunFitResult StripSumScatter::FitRunGates(Int_t key, const TString &label,
   return res;
 }
 
+// Which variants move the beam selection: those re-evaluate the event
+// level themselves; the rest share the nominal decision.
+static void VariantMovesEventLevel(
+    const std::vector<std::pair<TString, TagThresholds>> &variants,
+    const TagThresholds &nominal, std::vector<Bool_t> &varies_event) {
+  varies_event.assign(variants.size(), kFALSE);
+  for (size_t v = 0; v < variants.size(); v++) {
+    const TagThresholds &T = variants[v].second;
+    varies_event[v] = T.gate_nsigma != nominal.gate_nsigma ||
+                      T.pileup_nsigma != nominal.pileup_nsigma ||
+                      T.noise_nsigma != nominal.noise_nsigma;
+  }
+}
+
+// The trace record for the reservoir: the calibrated and raw ADC strips,
+// the strip-0 and -17 ends, the mirrored short side, the both-channel
+// multiplicity, and the seed, mask and beam flags.
+static void FillTraceEvt(TraceEvt &e, const EnergyView &ev, ULong64_t seed_ts,
+                         UInt_t mask, Bool_t beam) {
+  for (Int_t k = 0; k < 16; k++) {
+    e.leftdE[k] = Float_t(ev.left[k]);
+    e.rightdE[k] = Float_t(ev.right[k]);
+    e.leftdE_adc[k] = Float_t(ev.leftdE_adc[k]);
+    e.rightdE_adc[k] = Float_t(ev.rightdE_adc[k]);
+  }
+  e.strip0dE = Float_t(ev.strip0);
+  e.strip17dE = Float_t(ev.strip17);
+  e.strip0_adc = Float_t(ev.strip0_adc);
+  e.strip17_adc = Float_t(ev.strip17_adc);
+  // Mirror IGNORE_SHORT_STRIPS on the raw record too: the decode zeroes the
+  // short end, so the raw ADC trace drops the same side for comparability.
+  if (Constants::ActiveIgnoreShortStrips())
+    for (Int_t s = 1; s <= 16; s++) {
+      if ((s % 2) != 0)
+        e.rightdE_adc[s - 1] = 0.0f;
+      else
+        e.leftdE_adc[s - 1] = 0.0f;
+    }
+  e.both_mult = CountBothEnds(ev, 16);
+  e.seed_ts = seed_ts;
+  e.reac_mask = mask;
+  e.beam_flat = beam;
+}
+
+EventLevelVerdict StripSumScatter::JudgeEventLevel(const BeamGate1D &gate,
+                                                   const EnergyView &ev,
+                                                   Int_t gate_strip,
+                                                   Double_t step_z,
+                                                   const TagThresholds &T) {
+  EventLevelVerdict v;
+  v.gate = PassesGate(gate, ev, gate_strip, T.gate_nsigma);
+  v.pileup = IsPileup(ev, T.pileup_nsigma);
+  v.noise = IsNoise(ev, T.noise_nsigma);
+  v.smooth_ok = !(T.smooth_nsigma > 0.0) || step_z <= T.smooth_nsigma;
+  v.event = v.gate && !v.pileup && !v.noise;
+  // Sequential rejection: the first cut that fails counts.
+  if (!v.gate)
+    v.pre_cut = kPreGate;
+  else if (v.pileup)
+    v.pre_cut = kPrePileup;
+  else if (v.noise)
+    v.pre_cut = kPreNoise;
+  else if (!v.smooth_ok)
+    v.pre_cut = kPreSmooth;
+  return v;
+}
+
+Bool_t StripSumScatter::AnyVariantKeeps(
+    const BeamGate1D &gate, const EnergyView &ev, Int_t gate_strip,
+    const std::vector<std::pair<TString, TagThresholds>> &variants,
+    const std::vector<Bool_t> &varies_event, Bool_t nom_event,
+    std::vector<Bool_t> &var_event) {
+  // Every variant's event-level decision, before the smoothness it tests
+  // itself.
+  var_event.assign(variants.size(), nom_event);
+  for (size_t v = 0; v < variants.size(); v++)
+    if (varies_event[v]) {
+      const TagThresholds &T = variants[v].second;
+      var_event[v] = PassesGate(gate, ev, gate_strip, T.gate_nsigma) &&
+                     !IsPileup(ev, T.pileup_nsigma) &&
+                     !IsNoise(ev, T.noise_nsigma);
+    }
+  Bool_t any_event = nom_event;
+  for (size_t v = 0; !any_event && v < variants.size(); v++)
+    any_event = var_event[v];
+  return any_event;
+}
+
+void StripSumScatter::TagUnderVariants(
+    const EnergyView &ev, Double_t step_z, Int_t kReacMin, Int_t kReacMax,
+    const std::vector<std::pair<TString, TagThresholds>> &variants,
+    const std::vector<Bool_t> &var_event, std::vector<Bool_t> &pass,
+    SingleRunFillResult &res) {
+  for (size_t v = 0; v < variants.size(); v++) {
+    const TagThresholds &T = variants[v].second;
+    if (!var_event[v] || (T.smooth_nsigma > 0.0 && step_z > T.smooth_nsigma))
+      continue;
+    for (Int_t reac = kReacMin; reac <= kReacMax; reac++)
+      pass[ReacIndex(reac)] = RejectReason(ev, reac, T) == kTagPass;
+    const Int_t won = ResolveTag(ev, pass);
+    if (won >= 0)
+      res.tagged_var[v][ReacIndex(won)]++;
+    for (Int_t reac = kReacMin; reac <= kReacMax; reac++)
+      if ((won < 0 || reac <= won) && BeamUpstreamOf(ev, reac, T))
+        res.normed_var[v][ReacIndex(reac)]++;
+  }
+}
+
+Int_t StripSumScatter::TagNominal(const EnergyView &ev,
+                                  const Double_t totals[18], Int_t kReacMin,
+                                  Int_t kReacMax, Int_t nReacStrips,
+                                  std::vector<Bool_t> &pass,
+                                  SingleRunFillResult &res, UInt_t &mask) {
+  std::vector<TagCut> why(nReacStrips, kTagPass);
+  for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
+    why[ReacIndex(reac)] = RejectReason(ev, reac);
+    pass[ReacIndex(reac)] = why[ReacIndex(reac)] == kTagPass;
+  }
+  const Int_t won = ResolveTag(ev, pass);
+  for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
+    TagCut w = why[ReacIndex(reac)];
+    if (w == kTagPass && reac != won)
+      w = kCutOtherTag;
+    res.cut_counts[ReacIndex(reac) * kNTagCuts + w]++;
+  }
+  if (won >= 0) {
+    mask |= (1u << ReacIndex(won));
+    res.tagged[ReacIndex(won)]++;
+    Double_t x = 0.0, y = 0.0;
+    PlaneXY(totals, won, x, y);
+    res.scatters[ReacIndex(won)]->Fill(x, y);
+  }
+  for (Int_t reac = kReacMin; reac <= kReacMax; reac++)
+    if ((won < 0 || reac <= won) && BeamUpstreamOf(ev, reac))
+      res.normed_at[ReacIndex(reac)]++;
+  return won;
+}
+
+void StripSumScatter::AllocateRunScatters(Int_t run, Int_t kReacMin,
+                                          Int_t kReacMax, Int_t kXBins,
+                                          Int_t kYBins,
+                                          std::vector<TH2F *> &scatters) {
+  // Private, directory-less clones over the same fixed build range as the
+  // merged ones.
+  for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
+    TH2F *h =
+        new TH2F(Form("scatter_r%d_run%d", reac, run), "", kXBins,
+                 ScatterBuildRange::kXMin, ScatterBuildRange::kXMax, kYBins,
+                 ScatterBuildRange::kYMin, ScatterBuildRange::kYMax);
+    h->SetDirectory(nullptr);
+    scatters[ReacIndex(reac)] = h;
+  }
+}
+
 /// One run's scatter fill. Each call builds PRIVATE scatter histograms and its
 /// own reservoir slice, so the runs never touch shared state; the caller merges
 /// them in run order, which makes the threaded result identical to sequential.
@@ -2476,16 +2638,7 @@ StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
   res.scatters.assign(nReacStrips, nullptr);
   if (!chain)
     return res;
-  // Private, directory-less clones over the same fixed build range as the
-  // merged ones.
-  for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
-    TH2F *h =
-        new TH2F(Form("scatter_r%d_run%d", reac, run), "", kXBins,
-                 ScatterBuildRange::kXMin, ScatterBuildRange::kXMax, kYBins,
-                 ScatterBuildRange::kYMin, ScatterBuildRange::kYMax);
-    h->SetDirectory(nullptr);
-    res.scatters[ReacIndex(reac)] = h;
-  }
+  AllocateRunScatters(run, kReacMin, kReacMax, kXBins, kYBins, res.scatters);
   Long64_t totalGated = 0, totalSeen = 0, totalNormed = 0;
   res.tagged.assign(nReacStrips, 0);
   res.normed_at.assign(nReacStrips, 0);
@@ -2498,15 +2651,8 @@ StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
   const TagThresholds nominal = NominalThresholds();
   res.tagged_var.assign(variants.size(), std::vector<Long64_t>(nReacStrips, 0));
   res.normed_var.assign(variants.size(), std::vector<Long64_t>(nReacStrips, 0));
-  // Which variants move the beam selection: those re-evaluate the event
-  // level themselves; the rest share the nominal decision.
-  std::vector<Bool_t> variesEvent(variants.size(), kFALSE);
-  for (size_t v = 0; v < variants.size(); v++) {
-    const TagThresholds &T = variants[v].second;
-    variesEvent[v] = T.gate_nsigma != nominal.gate_nsigma ||
-                     T.pileup_nsigma != nominal.pileup_nsigma ||
-                     T.noise_nsigma != nominal.noise_nsigma;
-  }
+  std::vector<Bool_t> variesEvent;
+  VariantMovesEventLevel(variants, nominal, variesEvent);
   Int_t nBeamKept = 0;
   EnergyView ev;
   ev.Attach(chain);
@@ -2539,49 +2685,24 @@ StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
     // still counted (tagged and in the denominator) for the variants that
     // would keep it. Sequential rejection counts as before.
     const Double_t step_z = MaxStepNSigma(ev);
-    const Bool_t nom_gate =
-        PassesGate(gate, ev, kGateStrip, nominal.gate_nsigma);
-    const Bool_t nom_pileup = IsPileup(ev, nominal.pileup_nsigma);
-    const Bool_t nom_noise = IsNoise(ev, nominal.noise_nsigma);
-    const Bool_t smooth_ok =
-        !(nominal.smooth_nsigma > 0.0) || step_z <= nominal.smooth_nsigma;
-    const Bool_t nom_event = nom_gate && !nom_pileup && !nom_noise;
-    if (!nom_gate)
-      res.pre_counts[kPreGate]++;
-    else if (nom_pileup)
-      res.pre_counts[kPrePileup]++;
-    else if (nom_noise)
-      res.pre_counts[kPreNoise]++;
-    else if (!smooth_ok)
-      res.pre_counts[kPreSmooth]++;
-    // Every variant's event-level decision, before the smoothness it tests
-    // itself.
-    std::vector<Bool_t> var_event(variants.size(), nom_event);
-    for (size_t v = 0; v < variants.size(); v++)
-      if (variesEvent[v]) {
-        const TagThresholds &T = variants[v].second;
-        var_event[v] = PassesGate(gate, ev, kGateStrip, T.gate_nsigma) &&
-                       !IsPileup(ev, T.pileup_nsigma) &&
-                       !IsNoise(ev, T.noise_nsigma);
-      }
-    Bool_t any_event = nom_event;
-    for (size_t v = 0; !any_event && v < variants.size(); v++)
-      any_event = var_event[v];
-    if (!any_event)
+    const EventLevelVerdict nom =
+        JudgeEventLevel(gate, ev, kGateStrip, step_z, nominal);
+    if (nom.pre_cut >= 0)
+      res.pre_counts[nom.pre_cut]++;
+    std::vector<Bool_t> var_event;
+    if (!AnyVariantKeeps(gate, ev, kGateStrip, variants, variesEvent, nom.event,
+                         var_event))
       continue;
     // Both-ends multiplicity: counted on raw ADC so it sees the short end
     // even when IGNORE_SHORT_STRIPS zeroes it in the decode.
     if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_MAX >= 0) {
       const Int_t hi = TMath::Min(
           16, Constants::cfg.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_COUNT_TO);
-      Int_t nboth = 0;
-      for (Int_t s = 1; s <= hi; s++)
-        if (ev.leftdE_adc[s - 1] > 0 && ev.rightdE_adc[s - 1] > 0)
-          nboth++;
-      if (nboth > Constants::cfg.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_MAX) {
+      if (CountBothEnds(ev, hi) >
+          Constants::cfg.STRIP_SUM_SCATTER_CONFIG.BOTH_MULT_MAX) {
         // Sequential: counted here only if the rest let it through. Not
         // varied: it drops the event for every variant too.
-        if (nom_event && smooth_ok)
+        if (nom.event && nom.smooth_ok)
           res.pre_counts[kPreBothMult]++;
         continue;
       }
@@ -2600,51 +2721,19 @@ StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
     Double_t totals[18];
     ev.Totals(totals);
     std::vector<Bool_t> pass(nReacStrips, kFALSE);
-    for (size_t v = 0; v < variants.size(); v++) {
-      const TagThresholds &T = variants[v].second;
-      if (!var_event[v] || (T.smooth_nsigma > 0.0 && step_z > T.smooth_nsigma))
-        continue;
-      for (Int_t reac = kReacMin; reac <= kReacMax; reac++)
-        pass[ReacIndex(reac)] = RejectReason(ev, reac, T) == kTagPass;
-      const Int_t won = ResolveTag(ev, pass);
-      if (won >= 0)
-        res.tagged_var[v][ReacIndex(won)]++;
-      for (Int_t reac = kReacMin; reac <= kReacMax; reac++)
-        if ((won < 0 || reac <= won) && BeamUpstreamOf(ev, reac, T))
-          res.normed_var[v][ReacIndex(reac)]++;
-    }
-    if (nom_event && smooth_ok) {
+    TagUnderVariants(ev, step_z, kReacMin, kReacMax, variants, var_event, pass,
+                     res);
+    if (nom.event && nom.smooth_ok) {
       res.pre_counts[kPrePass]++;
       // The last pre-reaction count: here, not at `seen`, is what makes the
       // tag-count ratio a cross section: same gate + quality efficiencies.
       totalNormed++;
-      std::vector<TagCut> why(nReacStrips, kTagPass);
-      for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
-        why[ReacIndex(reac)] = RejectReason(ev, reac);
-        pass[ReacIndex(reac)] = why[ReacIndex(reac)] == kTagPass;
-      }
-      const Int_t won = ResolveTag(ev, pass);
-      for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
-        TagCut w = why[ReacIndex(reac)];
-        if (w == kTagPass && reac != won)
-          w = kCutOtherTag;
-        res.cut_counts[ReacIndex(reac) * kNTagCuts + w]++;
-      }
-      if (won >= 0) {
-        mask |= (1u << ReacIndex(won));
-        res.tagged[ReacIndex(won)]++;
-        Double_t x = 0.0, y = 0.0;
-        PlaneXY(totals, won, x, y);
-        res.scatters[ReacIndex(won)]->Fill(x, y);
-      }
-      for (Int_t reac = kReacMin; reac <= kReacMax; reac++)
-        if ((won < 0 || reac <= won) && BeamUpstreamOf(ev, reac))
-          res.normed_at[ReacIndex(reac)]++;
+      TagNominal(ev, totals, kReacMin, kReacMax, nReacStrips, pass, res, mask);
     }
 
     // Keep reaction-passing events for traces; cap pure-beam (mutually
     // exclusive, no reaction jump); a per-task bound: the merge re-caps it.
-    if (!nom_event || !smooth_ok)
+    if (!nom.event || !nom.smooth_ok)
       continue;
     Bool_t beam = (mask == 0) && IsPureBeam(ev, runBeam);
     if (mask == 0 && !(beam && nBeamKept < kBeamReservoirCap))
@@ -2653,35 +2742,7 @@ StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
       nBeamKept++;
 
     TraceEvt e;
-    for (Int_t k = 0; k < 16; k++) {
-      e.leftdE[k] = Float_t(ev.left[k]);
-      e.rightdE[k] = Float_t(ev.right[k]);
-      e.leftdE_adc[k] = Float_t(ev.leftdE_adc[k]);
-      e.rightdE_adc[k] = Float_t(ev.rightdE_adc[k]);
-    }
-    e.strip0dE = Float_t(ev.strip0);
-    e.strip17dE = Float_t(ev.strip17);
-    e.strip0_adc = Float_t(ev.strip0_adc);
-    e.strip17_adc = Float_t(ev.strip17_adc);
-    // Mirror IGNORE_SHORT_STRIPS on the raw record too: the decode zeroes the
-    // short end, so the raw ADC trace drops the same side for comparability.
-    if (Constants::ActiveIgnoreShortStrips())
-      for (Int_t s = 1; s <= 16; s++) {
-        if ((s % 2) != 0)
-          e.rightdE_adc[s - 1] = 0.0f;
-        else
-          e.leftdE_adc[s - 1] = 0.0f;
-      }
-    // Both-channel multiplicity: segmented strips where both ends FIRED, read
-    // off RAW ADC, not calibrated: short-end gains are 0 (no sim anchor).
-    Int_t both = 0;
-    for (Int_t k = 0; k < 16; k++)
-      if (ev.leftdE_adc[k] > 0 && ev.rightdE_adc[k] > 0)
-        both++;
-    e.both_mult = both;
-    e.seed_ts = seed_ts_in;
-    e.reac_mask = mask;
-    e.beam_flat = beam;
+    FillTraceEvt(e, ev, seed_ts_in, mask, beam);
     res.reservoir.push_back(e);
     if (mask != 0)
       totalGated++;

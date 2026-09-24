@@ -581,6 +581,48 @@ private:
                                              TChain *chain,
                                              const BeamGate1D &gate,
                                              const BeamEllipses &runBeam);
+  /// The event-level beam verdict at one threshold set: the gate, pileup,
+  /// noise and smoothness decisions, the combined event decision, and the
+  /// sequential pre-reaction cut, or -1 when none.
+  struct EventLevelVerdict {
+    Bool_t gate = kFALSE;
+    Bool_t pileup = kFALSE;
+    Bool_t noise = kFALSE;
+    Bool_t smooth_ok = kTRUE;
+    Bool_t event = kFALSE;
+    Int_t pre_cut = -1;
+  };
+  /// The event-level beam verdict at `T`, from the precomputed largest
+  /// step.
+  static EventLevelVerdict JudgeEventLevel(const BeamGate1D &gate,
+                                           const EnergyView &ev,
+                                           Int_t gate_strip, Double_t step_z,
+                                           const TagThresholds &T);
+  /// Every variant's event-level decision, before the smoothness it tests
+  /// itself; kTRUE when the nominal or any variant keeps the event.
+  static Bool_t AnyVariantKeeps(
+      const BeamGate1D &gate, const EnergyView &ev, Int_t gate_strip,
+      const std::vector<std::pair<TString, TagThresholds>> &variants,
+      const std::vector<Bool_t> &varies_event, Bool_t nom_event,
+      std::vector<Bool_t> &var_event);
+  /// The variant tagging: each kept variant re-resolves the tag under its
+  /// own thresholds into the per-variant tagged and normed counts.
+  static void TagUnderVariants(
+      const EnergyView &ev, Double_t step_z, Int_t kReacMin, Int_t kReacMax,
+      const std::vector<std::pair<TString, TagThresholds>> &variants,
+      const std::vector<Bool_t> &var_event, std::vector<Bool_t> &pass,
+      SingleRunFillResult &res);
+  /// The nominal tagging: the per-strip reasons and cut counts, the tag,
+  /// the scatter fill and the normed-at counts; returns the tagged strip
+  /// or -1 and sets the bit of the mask.
+  static Int_t TagNominal(const EnergyView &ev, const Double_t totals[18],
+                          Int_t kReacMin, Int_t kReacMax, Int_t nReacStrips,
+                          std::vector<Bool_t> &pass, SingleRunFillResult &res,
+                          UInt_t &mask);
+  /// The private, directory-less run scatters over the fixed build range.
+  static void AllocateRunScatters(Int_t run, Int_t kReacMin, Int_t kReacMax,
+                                  Int_t kXBins, Int_t kYBins,
+                                  std::vector<TH2F *> &scatters);
   static TCutG *PromptCut(TCanvas *c, const char *name, const char *label);
   static void SaveRegionCuts(Int_t reac, TCutG *cut_an, TCutG *cut_aa);
   static TCutG *LoadRegionCut(const char *name, Int_t reac);
