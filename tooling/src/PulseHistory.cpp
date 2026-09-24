@@ -887,6 +887,114 @@ Bool_t FitKernel(const Normal &N, const FeatLayout &lay, const FormGrid &grid,
   return K.ok;
 }
 
+// One feature class against the intercept, the right-hand side and itself
+// (upper triangle: a class's features against each other from `ia`).
+void AccumulateClassBlock(Normal &Nc, const std::vector<Double_t> &xx,
+                          Double_t y, const std::vector<Int_t> &v) {
+  for (size_t ia = 0; ia < v.size(); ia++) {
+    const Int_t i = v[ia];
+    const Double_t xi = xx[i];
+    Nc.At(0, i) += xi;
+    Nc.b[i] += xi * y;
+    for (size_t ib = ia; ib < v.size(); ib++)
+      Nc.At(i, v[ib]) += xi * xx[v[ib]];
+  }
+}
+
+// One (x, y) sample of a channel's least-squares problem: the intercept and
+// the right-hand side, then every nonzero feature class against the
+// intercept, the right-hand side and itself, and the low bins against each
+// tau's features (the classes are in Normal).
+struct FitSample {
+  std::vector<Normal> &N;
+  const FeatLayout &lay;
+  Int_t n_amp;
+  Int_t bin_lo, bin_hi, low_lo, low_hi;
+  std::vector<Int_t> &nz_bin;
+  std::vector<Int_t> &nz_low;
+  std::vector<std::vector<Int_t>> &nz_tau;
+
+  void operator()(Int_t c, const std::vector<Double_t> &xx, Double_t y,
+                  Double_t) {
+    Normal &Nc = N[c];
+    Nc.n++;
+    Nc.sy += y;
+    Nc.syy += y * y;
+    Nc.At(0, 0) += 1.0;
+    Nc.b[0] += y;
+    nz_bin.clear();
+    for (Int_t i = bin_lo; i < bin_hi; i++)
+      if (xx[i] != 0.0)
+        nz_bin.push_back(i);
+    nz_low.clear();
+    for (Int_t i = low_lo; i < low_hi; i++)
+      if (xx[i] != 0.0)
+        nz_low.push_back(i);
+    for (Int_t j = 0; j < lay.n_tau; j++) {
+      nz_tau[j].clear();
+      for (Int_t a = 0; a < n_amp; a++) {
+        if (xx[lay.D(j, a)] != 0.0)
+          nz_tau[j].push_back(lay.D(j, a));
+        if (xx[lay.B(j, a)] != 0.0)
+          nz_tau[j].push_back(lay.B(j, a));
+      }
+    }
+    AccumulateClassBlock(Nc, xx, y, nz_bin);
+    AccumulateClassBlock(Nc, xx, y, nz_low);
+    for (Int_t j = 0; j < lay.n_tau; j++) {
+      const std::vector<Int_t> &vt = nz_tau[j];
+      if (vt.empty())
+        continue;
+      AccumulateClassBlock(Nc, xx, y, vt);
+      for (size_t ia = 0; ia < nz_low.size(); ia++)
+        for (size_t ib = 0; ib < vt.size(); ib++)
+          Nc.At(nz_low[ia], vt[ib]) += xx[nz_low[ia]] * xx[vt[ib]];
+    }
+  }
+};
+
+// The raw dt profile sample for the tau fit: the previous-pulse gap and the
+// deviation, kept in the fit's window.
+struct TauSample {
+  std::vector<Double_t> &dt_us;
+  std::vector<Double_t> &dev;
+
+  void operator()(Int_t, const std::vector<Double_t> &, Double_t y,
+                  Double_t dt_prev) {
+    if (dt_prev >= kTauFitLoUs && dt_prev <= kTauFitHiUs) {
+      dt_us.push_back(dt_prev);
+      dev.push_back(y);
+    }
+  }
+};
+
+// One diagnostics sample: the deviation before and after the channel's own
+// kernel against the prediction, and the deviation vs the previous-pulse gap.
+struct DiagSample {
+  const Result &res;
+  const FeatLayout &lay;
+  Int_t g;
+
+  void operator()(Int_t c, const std::vector<Double_t> &xx, Double_t y,
+                  Double_t dt_prev) {
+    const Kernel &K = res.kernel_ch[c];
+    if (!K.ok)
+      return;
+    const Double_t pred = Predict(K, lay, xx);
+    const Double_t after = y - pred;
+    res.dev_vs_pred[g]->Fill(pred, y);
+    res.dev_before[g]->Fill(y);
+    res.dev_after[g]->Fill(after);
+    if (dt_prev > 0.0) {
+      const Double_t l = TMath::Log10(dt_prev * 1.0e6);
+      res.dtprev_before[g]->Fill(l, y);
+      res.dtprev_after[g]->Fill(l, after);
+      res.dtprev_before_ch[c]->Fill(l, y);
+      res.dtprev_after_ch[c]->Fill(l, after);
+    }
+  }
+};
+
 } // namespace
 
 Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
@@ -1083,54 +1191,9 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
     res.enabled[g] = GroupEnabled(g);
     if (!res.enabled[g])
       continue; // configured off: no kernel, no correction
-    Scan(st, g, seeds[g], all_needs, x,
-         [&](Int_t c, const std::vector<Double_t> &xx, Double_t y, Double_t) {
-           Normal &Nc = N[c];
-           Nc.n++;
-           Nc.sy += y;
-           Nc.syy += y * y;
-           Nc.At(0, 0) += 1.0;
-           Nc.b[0] += y;
-           nz_bin.clear();
-           for (Int_t i = bin_lo; i < bin_hi; i++)
-             if (xx[i] != 0.0)
-               nz_bin.push_back(i);
-           nz_low.clear();
-           for (Int_t i = low_lo; i < low_hi; i++)
-             if (xx[i] != 0.0)
-               nz_low.push_back(i);
-           for (Int_t j = 0; j < lay.n_tau; j++) {
-             nz_tau[j].clear();
-             for (Int_t a = 0; a < n_amp; a++) {
-               if (xx[lay.D(j, a)] != 0.0)
-                 nz_tau[j].push_back(lay.D(j, a));
-               if (xx[lay.B(j, a)] != 0.0)
-                 nz_tau[j].push_back(lay.B(j, a));
-             }
-           }
-           // A class against the intercept, the right-hand side and itself.
-           auto block = [&](const std::vector<Int_t> &v) {
-             for (size_t ia = 0; ia < v.size(); ia++) {
-               const Int_t i = v[ia];
-               const Double_t xi = xx[i];
-               Nc.At(0, i) += xi;
-               Nc.b[i] += xi * y;
-               for (size_t ib = ia; ib < v.size(); ib++)
-                 Nc.At(i, v[ib]) += xi * xx[v[ib]];
-             }
-           };
-           block(nz_bin);
-           block(nz_low);
-           for (Int_t j = 0; j < lay.n_tau; j++) {
-             const std::vector<Int_t> &vt = nz_tau[j];
-             if (vt.empty())
-               continue;
-             block(vt);
-             for (size_t ia = 0; ia < nz_low.size(); ia++)
-               for (size_t ib = 0; ib < vt.size(); ib++)
-                 Nc.At(nz_low[ia], vt[ib]) += xx[nz_low[ia]] * xx[vt[ib]];
-           }
-         });
+    FitSample fit_sample{N,      lay,    n_amp,  bin_lo, bin_hi,
+                         low_lo, low_hi, nz_bin, nz_low, nz_tau};
+    Scan(st, g, seeds[g], all_needs, x, fit_sample);
   }
 
   res.group_of = group_of;
@@ -1202,14 +1265,8 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
     ScanNeeds none;
     none.bins = kFALSE;
     none.low = kFALSE;
-    Scan(st, g, seeds[g], none, x,
-         [&](Int_t, const std::vector<Double_t> &, Double_t y,
-             Double_t dt_prev) {
-           if (dt_prev >= kTauFitLoUs && dt_prev <= kTauFitHiUs) {
-             dt_us.push_back(dt_prev);
-             dev.push_back(y);
-           }
-         });
+    TauSample tau_sample{dt_us, dev};
+    Scan(st, g, seeds[g], none, x, tau_sample);
     FitTauDecay(dt_us, dev, K.tau);
   }
 
@@ -1288,25 +1345,8 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
                                       K.j_tau) == needs.taus.end())
           needs.taus.push_back(K.j_tau);
       }
-      Scan(st, g, seeds[g], needs, x,
-           [&](Int_t c, const std::vector<Double_t> &xx, Double_t y,
-               Double_t dt_prev) {
-             const Kernel &K = res.kernel_ch[c];
-             if (!K.ok)
-               return;
-             const Double_t pred = Predict(K, lay, xx);
-             const Double_t after = y - pred;
-             res.dev_vs_pred[g]->Fill(pred, y);
-             res.dev_before[g]->Fill(y);
-             res.dev_after[g]->Fill(after);
-             if (dt_prev > 0.0) {
-               const Double_t l = TMath::Log10(dt_prev * 1.0e6);
-               res.dtprev_before[g]->Fill(l, y);
-               res.dtprev_after[g]->Fill(l, after);
-               res.dtprev_before_ch[c]->Fill(l, y);
-               res.dtprev_after_ch[c]->Fill(l, after);
-             }
-           });
+      DiagSample diag_sample{res, lay, g};
+      Scan(st, g, seeds[g], needs, x, diag_sample);
     }
   }
   return kTRUE;
@@ -1595,6 +1635,79 @@ Int_t ChannelColor(Int_t k) {
   return colors[k % 16];
 }
 
+// One row of the pulse_history tree: the branch variables, registered by
+// address in WriteToEventsFile. Group rows have Board and Channel -1.
+struct PulseRow {
+  Int_t group = 0, board = -1, channel = -1, n_amp = 1;
+  Char_t name[32] = {0};
+  Bool_t ok = kFALSE, enabled = kTRUE, from_group = kFALSE, form = kFALSE,
+         form_ok = kFALSE, form_tau_given = kFALSE;
+  Double_t form_tau_us = 0.0, form_tau_free_us = 0.0, r2_form_free = 0.0,
+           r2_form = 0.0, r2_binned = 0.0, r2_group = 0.0;
+  Double_t form_c[kMaxAmpBins], form_cb[kMaxAmpBins];
+  Double_t k_binned[kMaxAmpBins * kNBins], k[kMaxAmpBins * kNBins],
+      centre_us[kNBins];
+  Double_t tau_us = 0.0, tau_err_us = 0.0, tau_p0 = 0.0, tau_p1 = 0.0,
+           tau_p3 = 0.0;
+  Bool_t tau_ok = kFALSE, tau_flat = kTRUE;
+  Double_t intercept = 0.0, r2 = 0.0, rms_before = 0.0, rms_after = 0.0,
+           mean_shift = 0.0, apply_max_us = 0.0;
+  Long64_t n = 0, n_beam = 0, n_corrected = 0, n_clamped = 0;
+};
+
+// Fill the tree's current row from a group or channel kernel and fill the
+// row: `idx` is the channel index, -1 for a group row.
+void FillPulseRow(PulseRow &row, const Kernel &K, Int_t g, Int_t idx,
+                  const Result &res, Int_t nch, TTree *t) {
+  row.group = g;
+  row.board = idx >= 0 ? idx / nch : -1;
+  row.channel = idx >= 0 ? idx % nch : -1;
+  strncpy(row.name, idx >= 0 ? res.name_ch[idx].Data() : GroupTag(g),
+          sizeof(row.name) - 1);
+  row.name[sizeof(row.name) - 1] = 0;
+  row.ok = K.ok;
+  row.enabled = res.enabled[g];
+  row.from_group = K.from_group;
+  row.form = K.form;
+  row.form_ok = K.form_ok;
+  row.form_tau_us = K.tau_us;
+  row.form_tau_given = K.tau_given;
+  row.form_tau_free_us = K.tau_free_us;
+  row.r2_form_free = K.r2_form_free;
+  row.r2_form = K.r2_form;
+  row.r2_binned = K.r2_binned;
+  row.r2_group = K.r2_group;
+  row.n_amp = K.n_amp;
+  for (Int_t a = 0; a < kMaxAmpBins; a++) {
+    row.form_c[a] = K.c[a];
+    row.form_cb[a] = K.cb[a];
+    for (Int_t b = 0; b < kNBins; b++) {
+      row.k[a * kNBins + b] = K.k[a][b];
+      row.k_binned[a * kNBins + b] = K.k_binned[a][b];
+    }
+  }
+  for (Int_t b = 0; b < kNBins; b++)
+    row.centre_us[b] = BinCentreUs(b);
+  row.intercept = K.intercept;
+  row.r2 = K.r2;
+  row.rms_before = K.rms_before;
+  row.rms_after = K.rms_after;
+  row.mean_shift = res.mean_shift[g];
+  row.apply_max_us = Constants::cfg.PULSE_HISTORY_APPLY_MAX_US;
+  row.tau_ok = K.tau.ok;
+  row.tau_flat = K.tau.flat;
+  row.tau_us = K.tau.ok ? K.tau.p2 : 0.0;
+  row.tau_err_us = K.tau.ok ? K.tau.p2err : 0.0;
+  row.tau_p0 = K.tau.p0;
+  row.tau_p1 = K.tau.p1;
+  row.tau_p3 = K.tau.p3;
+  row.n = K.n;
+  row.n_beam = res.n_beam_events;
+  row.n_corrected = res.n_corrected;
+  row.n_clamped = res.n_clamped;
+  t->Fill();
+}
+
 } // namespace
 
 void SavePlots(Result &res, const TString &file_label) {
@@ -1781,125 +1894,62 @@ void WriteToEventsFile(const TString &events_subpath, const Result &res) {
   // group's tag): the group fit that is the channels' fallback.
   TTree *t = new TTree("pulse_history",
                        "Pulse-history kernel per channel and per group");
-  Int_t group = 0, board = -1, channel = -1, n_amp = 1;
-  Char_t name[32] = {0};
-  Bool_t ok = kFALSE, enabled = kTRUE, from_group = kFALSE, form = kFALSE,
-         form_ok = kFALSE;
-  Bool_t form_tau_given = kFALSE;
-  Double_t form_tau_us = 0.0, form_tau_free_us = 0.0, r2_form_free = 0.0,
-           form_c[kMaxAmpBins], form_cb[kMaxAmpBins], r2_form = 0.0,
-           r2_binned = 0.0, r2_group = 0.0, k_binned[kMaxAmpBins * kNBins];
-  Double_t tau_us = 0.0, tau_err_us = 0.0, tau_p0 = 0.0, tau_p1 = 0.0,
-           tau_p3 = 0.0;
-  Bool_t tau_ok = kFALSE, tau_flat = kTRUE;
-  Double_t k[kMaxAmpBins * kNBins], centre_us[kNBins],
-      intercept = 0.0, r2 = 0.0, rms_before = 0.0, rms_after = 0.0,
-      mean_shift = 0.0, apply_max_us = 0.0;
-  Long64_t n = 0, n_beam = 0, n_corrected = 0, n_clamped = 0;
-  t->Branch("Group", &group, "Group/I");
-  t->Branch("Board", &board, "Board/I");
-  t->Branch("Channel", &channel, "Channel/I");
-  t->Branch("Name", name, "Name/C");
-  t->Branch("Ok", &ok, "Ok/O");
+  PulseRow row;
+  t->Branch("Group", &row.group, "Group/I");
+  t->Branch("Board", &row.board, "Board/I");
+  t->Branch("Channel", &row.channel, "Channel/I");
+  t->Branch("Name", row.name, "Name/C");
+  t->Branch("Ok", &row.ok, "Ok/O");
   // Whether PULSE_HISTORY_GROUPS had the group on; off means the group was
   // never fitted, as opposed to fitted and rejected (Ok false, Enabled true).
-  t->Branch("Enabled", &enabled, "Enabled/O");
+  t->Branch("Enabled", &row.enabled, "Enabled/O");
   // Channel rows only: the channel is corrected with the group's kernel
   // because its own could not be fitted.
-  t->Branch("FromGroup", &from_group, "FromGroup/O");
-  t->Branch("NAmpBins", &n_amp, "NAmpBins/I");
+  t->Branch("FromGroup", &row.from_group, "FromGroup/O");
+  t->Branch("NAmpBins", &row.n_amp, "NAmpBins/I");
   // Kernel is what was applied, at the bin centres (the form evaluated there
   // when Form is true); KernelBinned the binned fit, always.
-  t->Branch("Kernel", k, Form("Kernel[%d]/D", kMaxAmpBins * kNBins));
-  t->Branch("KernelBinned", k_binned,
+  t->Branch("Kernel", row.k, Form("Kernel[%d]/D", kMaxAmpBins * kNBins));
+  t->Branch("KernelBinned", row.k_binned,
             Form("KernelBinned[%d]/D", kMaxAmpBins * kNBins));
-  t->Branch("Form", &form, "Form/O");
-  t->Branch("FormOk", &form_ok, "FormOk/O");
-  t->Branch("FormTauUs", &form_tau_us, "FormTauUs/D");
-  t->Branch("FormTauGiven", &form_tau_given, "FormTauGiven/O");
-  t->Branch("FormTauFreeUs", &form_tau_free_us, "FormTauFreeUs/D");
-  t->Branch("R2FormFree", &r2_form_free, "R2FormFree/D");
-  t->Branch("FormC", form_c, Form("FormC[%d]/D", kMaxAmpBins));
-  t->Branch("FormCB", form_cb, Form("FormCB[%d]/D", kMaxAmpBins));
-  t->Branch("R2Form", &r2_form, "R2Form/D");
-  t->Branch("R2Binned", &r2_binned, "R2Binned/D");
-  t->Branch("R2Group", &r2_group, "R2Group/D");
-  t->Branch("BinCentreUs", centre_us, Form("BinCentreUs[%d]/D", kNBins));
-  t->Branch("Intercept", &intercept, "Intercept/D");
-  t->Branch("R2", &r2, "R2/D");
-  t->Branch("RmsBefore", &rms_before, "RmsBefore/D");
-  t->Branch("RmsAfter", &rms_after, "RmsAfter/D");
-  t->Branch("MeanShift", &mean_shift, "MeanShift/D");
-  t->Branch("ApplyMaxUs", &apply_max_us, "ApplyMaxUs/D");
+  t->Branch("Form", &row.form, "Form/O");
+  t->Branch("FormOk", &row.form_ok, "FormOk/O");
+  t->Branch("FormTauUs", &row.form_tau_us, "FormTauUs/D");
+  t->Branch("FormTauGiven", &row.form_tau_given, "FormTauGiven/O");
+  t->Branch("FormTauFreeUs", &row.form_tau_free_us, "FormTauFreeUs/D");
+  t->Branch("R2FormFree", &row.r2_form_free, "R2FormFree/D");
+  t->Branch("FormC", row.form_c, Form("FormC[%d]/D", kMaxAmpBins));
+  t->Branch("FormCB", row.form_cb, Form("FormCB[%d]/D", kMaxAmpBins));
+  t->Branch("R2Form", &row.r2_form, "R2Form/D");
+  t->Branch("R2Binned", &row.r2_binned, "R2Binned/D");
+  t->Branch("R2Group", &row.r2_group, "R2Group/D");
+  t->Branch("BinCentreUs", row.centre_us, Form("BinCentreUs[%d]/D", kNBins));
+  t->Branch("Intercept", &row.intercept, "Intercept/D");
+  t->Branch("R2", &row.r2, "R2/D");
+  t->Branch("RmsBefore", &row.rms_before, "RmsBefore/D");
+  t->Branch("RmsAfter", &row.rms_after, "RmsAfter/D");
+  t->Branch("MeanShift", &row.mean_shift, "MeanShift/D");
+  t->Branch("ApplyMaxUs", &row.apply_max_us, "ApplyMaxUs/D");
   // Decay-time summary of the raw dt profile (p0 + p1 exp(-dt/p2) + p3 dt);
   // see Kernel::TauFit. Group rows only; flat groups have tau_ok but
   // tau_flat and p2 = 0.
-  t->Branch("TauOk", &tau_ok, "TauOk/O");
-  t->Branch("TauFlat", &tau_flat, "TauFlat/O");
-  t->Branch("TauUs", &tau_us, "TauUs/D");
-  t->Branch("TauErrUs", &tau_err_us, "TauErrUs/D");
-  t->Branch("TauP0", &tau_p0, "TauP0/D");
-  t->Branch("TauAmp", &tau_p1, "TauAmp/D");
-  t->Branch("TauLift", &tau_p3, "TauLift/D");
-  t->Branch("N", &n, "N/L");
-  t->Branch("NBeamEvents", &n_beam, "NBeamEvents/L");
-  t->Branch("NCorrected", &n_corrected, "NCorrected/L");
-  t->Branch("NClamped", &n_clamped, "NClamped/L");
+  t->Branch("TauOk", &row.tau_ok, "TauOk/O");
+  t->Branch("TauFlat", &row.tau_flat, "TauFlat/O");
+  t->Branch("TauUs", &row.tau_us, "TauUs/D");
+  t->Branch("TauErrUs", &row.tau_err_us, "TauErrUs/D");
+  t->Branch("TauP0", &row.tau_p0, "TauP0/D");
+  t->Branch("TauAmp", &row.tau_p1, "TauAmp/D");
+  t->Branch("TauLift", &row.tau_p3, "TauLift/D");
+  t->Branch("N", &row.n, "N/L");
+  t->Branch("NBeamEvents", &row.n_beam, "NBeamEvents/L");
+  t->Branch("NCorrected", &row.n_corrected, "NCorrected/L");
+  t->Branch("NClamped", &row.n_clamped, "NClamped/L");
   const Int_t nch = Constants::ActiveNChannels();
-  auto fill = [&](const Kernel &K, Int_t g, Int_t idx) {
-    group = g;
-    board = idx >= 0 ? idx / nch : -1;
-    channel = idx >= 0 ? idx % nch : -1;
-    strncpy(name, idx >= 0 ? res.name_ch[idx].Data() : GroupTag(g),
-            sizeof(name) - 1);
-    name[sizeof(name) - 1] = 0;
-    ok = K.ok;
-    enabled = res.enabled[g];
-    from_group = K.from_group;
-    form = K.form;
-    form_ok = K.form_ok;
-    form_tau_us = K.tau_us;
-    form_tau_given = K.tau_given;
-    form_tau_free_us = K.tau_free_us;
-    r2_form_free = K.r2_form_free;
-    r2_form = K.r2_form;
-    r2_binned = K.r2_binned;
-    r2_group = K.r2_group;
-    n_amp = K.n_amp;
-    for (Int_t a = 0; a < kMaxAmpBins; a++) {
-      form_c[a] = K.c[a];
-      form_cb[a] = K.cb[a];
-      for (Int_t b = 0; b < kNBins; b++) {
-        k[a * kNBins + b] = K.k[a][b];
-        k_binned[a * kNBins + b] = K.k_binned[a][b];
-      }
-    }
-    for (Int_t b = 0; b < kNBins; b++)
-      centre_us[b] = BinCentreUs(b);
-    intercept = K.intercept;
-    r2 = K.r2;
-    rms_before = K.rms_before;
-    rms_after = K.rms_after;
-    mean_shift = res.mean_shift[g];
-    apply_max_us = Constants::cfg.PULSE_HISTORY_APPLY_MAX_US;
-    tau_ok = K.tau.ok;
-    tau_flat = K.tau.flat;
-    tau_us = K.tau.ok ? K.tau.p2 : 0.0;
-    tau_err_us = K.tau.ok ? K.tau.p2err : 0.0;
-    tau_p0 = K.tau.p0;
-    tau_p1 = K.tau.p1;
-    tau_p3 = K.tau.p3;
-    n = K.n;
-    n_beam = res.n_beam_events;
-    n_corrected = res.n_corrected;
-    n_clamped = res.n_clamped;
-    t->Fill();
-  };
   for (Int_t g = 1; g < kNGroups; g++)
-    fill(res.kernel[g], g, -1);
+    FillPulseRow(row, res.kernel[g], g, -1, res, nch, t);
   for (Int_t c = 0; c < Int_t(res.kernel_ch.size()); c++)
     if (res.group_of[c] != kNone)
-      fill(res.kernel_ch[c], res.group_of[c], c);
+      FillPulseRow(row, res.kernel_ch[c], res.group_of[c], c, res, nch, t);
   t->Write("pulse_history", TObject::kOverwrite);
   f->Close();
   delete f;
