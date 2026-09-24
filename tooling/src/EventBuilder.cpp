@@ -300,52 +300,123 @@ void FinalizeEvent(EventState &e, TTree *output_tree, UShort_t *leftdE_branch,
   }
 }
 
-Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
-                                               const SlotMap &slot_map,
-                                               const TString &output_name,
-                                               const TString &file_label) {
-  TString output_filepath = output_name + ".root";
-  TFile *output_file = IO::OpenForWriting(output_filepath);
-  if (!output_file || output_file->IsZombie()) {
-    std::cerr << "Error opening output: " << output_filepath << std::endl;
-    return kFALSE;
-  }
+// A hit a reference-channel event has not yet assigned, queued until the
+// next reference hit (or the stream end) decides its window.
+struct PendingHit {
+  Int_t slot;
+  UShort_t energy;
+  ULong64_t timestamp;
+  UInt_t flags;
+};
 
+// The events tree's branch variables. The tree holds their addresses, so
+// the instance must outlive the tree's Fills.
+struct EventBranches {
   /// ADC energies are 14-bit unsigned at the source; store them as UShort_t,
   /// not Int_t. LeftdE and RightdE hold the two ends of the segmented strips
   /// 1-16, indexed by strip - 1; Strip0dE and Strip17dE the two unsegmented
   /// strips. A strip's deposit is left + right, computed on read, and never
   /// stored.
-  UShort_t leftdE[16], rightdE[16], strip0dE, strip17dE;
+  UShort_t leftdE[16];
+  UShort_t rightdE[16];
+  UShort_t strip0dE;
+  UShort_t strip17dE;
   UShort_t hits_arr[36];
   /// 14-bit ADC (<=16383), so Short_t holds every value with room to spare
   /// while preserving Cathode's -1 "no cathode hit" sentinel (Grid is
   /// non-negative but shares the type for symmetry). Anode values are
   /// non-negative, hence the UShort_t above.
-  Short_t cathode, grid;
+  Short_t cathode;
+  Short_t grid;
   UInt_t flags_or;
   ULong64_t seed_ts;
+};
 
+// The build's configuration, resolved once from the dataset.
+struct BuildConfig {
+  Bool_t ref_mode;
+  Int_t ref_slot;
+  ULong64_t window_ps;
+  DedupStrategy dedup_strat;
+  Bool_t holdoff_on;
+  Double_t holdoff_ratio;
+  ULong64_t holdoff_ps;
+};
+
+// The event currently being built: its state, the per-slot detail, the
+// reference stamp and window end, the seed's energy, whether it is open,
+// and the hits queued for it.
+struct OpenEvent {
+  EventState event;
+  PerChannelData per_channel;
+  PerChannelData *pc;
+  ULong64_t ref_ts;
+  ULong64_t window_end;
+  UShort_t seed_energy;
+  Bool_t have;
+  std::vector<PendingHit> pending;
+};
+
+// What the build writes into: the tree and its branch variables, the
+// summary histograms, the counters, the sampled traces, and the event
+// index.
+struct EventSink {
+  TTree *tree;
+  EventBranches *br;
+  SummaryHistograms *hSum;
+  EventCounters *cnt;
+  std::vector<TGraph *> *sample_traces;
+  Long64_t sample_stride;
+  Int_t n_sampled;
+  Long64_t event_idx;
+};
+
+// The run's summary counters: the reference hits and their first and last
+// stamps, the rejections, the cathode total, and the seed holdoff tallies.
+struct BuildTallies {
+  Int_t n_ref;
+  ULong64_t first_ref_ts;
+  ULong64_t last_ref_ts;
+  Int_t empty_channel_map_events;
+  Long64_t cathode_hits_total;
+  Long64_t dropped_outside_window;
+  Long64_t seeds_pretrigger;
+  Long64_t seeds_merged;
+  Long64_t seeds_close_pair;
+  Long64_t seeds_close_empty;
+  Long64_t seeds_close_anodes;
+};
+
+// A pre-trigger has no anodes pending: the strips fire after the real grid
+// trigger. Size alone cannot tell it from a first particle read low.
+static const Int_t kPreTriggerMaxPending = 2;
+
+// The events tree, its branches over `br`'s variables, and the large
+// baskets with auto-flush disabled so ZSTD compresses in big chunks
+// instead of many small basket flushes during Fill().
+static TTree *BookEventBranches(EventBranches &br) {
   TTree *output_tree = new TTree("events", "MUSIC events");
-  output_tree->Branch("LeftdE", leftdE, "LeftdE[16]/s");
-  output_tree->Branch("RightdE", rightdE, "RightdE[16]/s");
-  output_tree->Branch("Strip0dE", &strip0dE, "Strip0dE/s");
-  output_tree->Branch("Strip17dE", &strip17dE, "Strip17dE/s");
-  output_tree->Branch("Hits", hits_arr, "Hits[36]/s");
-  output_tree->Branch("Cathode", &cathode, "Cathode/S");
-  output_tree->Branch("Grid", &grid, "Grid/S");
-  output_tree->Branch("FlagsOR", &flags_or, "FlagsOR/i");
-  output_tree->Branch("SeedTs", &seed_ts, "SeedTs/l");
+  output_tree->Branch("LeftdE", br.leftdE, "LeftdE[16]/s");
+  output_tree->Branch("RightdE", br.rightdE, "RightdE[16]/s");
+  output_tree->Branch("Strip0dE", &br.strip0dE, "Strip0dE/s");
+  output_tree->Branch("Strip17dE", &br.strip17dE, "Strip17dE/s");
+  output_tree->Branch("Hits", br.hits_arr, "Hits[36]/s");
+  output_tree->Branch("Cathode", &br.cathode, "Cathode/S");
+  output_tree->Branch("Grid", &br.grid, "Grid/S");
+  output_tree->Branch("FlagsOR", &br.flags_or, "FlagsOR/i");
+  output_tree->Branch("SeedTs", &br.seed_ts, "SeedTs/l");
 
-  // Large baskets + disable auto-flush so ZSTD compresses in big chunks
-  // instead of many small basket flushes during Fill().
   output_tree->SetAutoFlush(0);
   for (Int_t b = 0; b < output_tree->GetListOfBranches()->GetEntries(); b++) {
     TBranch *branch =
         static_cast<TBranch *>(output_tree->GetListOfBranches()->At(b));
     branch->SetBasketSize(128 * 1024 * 1024);
   }
+  return output_tree;
+}
 
+// The summary histograms, ranged for the active dataset.
+static void ConfigureSummaryHistograms(SummaryHistograms &hSum) {
   SummaryHistConfig cfg;
   cfg.unit_label = "ADC";
   cfg.strip_e_min = Constants::ActiveStripEMinAdc();
@@ -359,82 +430,58 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   cfg.grid_max = Constants::ActiveGridMaxAdc();
   cfg.strip0_max = Constants::ActiveStrip0MaxAdc();
   cfg.music_energy_bins = 2000;
-
-  SummaryHistograms hSum;
   CreateSummaryHistograms(hSum, cfg);
+}
 
-  // Sample traces for overlay plot
-  std::vector<TGraph *> sample_traces;
+// The summary histograms' deletion, in the order the allocation made.
+static void DeleteSummaryHistograms(SummaryHistograms &hSum) {
+  for (Int_t s = 1; s <= 16; s++)
+    delete hSum.h2_long_vs_short[s - 1];
+  delete hSum.h_music;
+  delete hSum.h_mult;
+  delete hSum.h1_cathode;
+  delete hSum.h1_strip17;
+  delete hSum.h2_strip0_vs_grid;
+  delete hSum.h1_strip0;
+  delete hSum.h1_grid;
+}
+
+// The sample-trace stride in event units: a rough event estimate from the
+// hit count, each complete event having ~20 hits (18 strips + cathode +
+// grid).
+static Long64_t SampleTraceStride(Long64_t n_hits) {
   Long64_t sample_stride = 0;
-  Int_t n_sampled = 0;
   if (Constants::cfg.SAVE_SAMPLE_TRACES > 0) {
-    // Rough estimate of event count: each complete event has ~20 hits
-    // (18 strips + cathode + grid). Stride is in event units, not hit units.
-    Long64_t est_events = Long64_t(hits.size()) / 20;
+    Long64_t est_events = n_hits / 20;
     sample_stride = est_events / Long64_t(Constants::cfg.SAVE_SAMPLE_TRACES);
     if (sample_stride < 1)
       sample_stride = 1;
   }
+  return sample_stride;
+}
 
-  // Determine operating mode: reference-channel or blind time-window.
-  Bool_t ref_mode = Constants::ActiveReferenceChannel() != "NONE";
-
-  // Resolve reference channel name to slot ID by scanning active channel map.
+// The reference channel's slot, the active channel map scanned for its
+// name; -1 when not found.
+static Int_t ResolveReferenceSlot(const EventBuilder::SlotMap &slot_map) {
   Int_t ref_slot = -1;
-  if (ref_mode) {
-    for (std::map<std::pair<Int_t, Int_t>, TString>::const_iterator it =
-             Constants::ActiveChannelMap().begin();
-         it != Constants::ActiveChannelMap().end(); ++it) {
-      if (it->second == Constants::ActiveReferenceChannel()) {
-        Int_t board = it->first.first;
-        Int_t channel = it->first.second;
-        if (board >= 0 && board < Constants::ActiveNBoards() && channel >= 0 &&
-            channel < Constants::ActiveNChannels()) {
-          ref_slot = slot_map[board * Constants::ActiveNChannels() + channel];
-          break;
-        }
+  for (std::map<std::pair<Int_t, Int_t>, TString>::const_iterator it =
+           Constants::ActiveChannelMap().begin();
+       it != Constants::ActiveChannelMap().end(); ++it) {
+    if (it->second == Constants::ActiveReferenceChannel()) {
+      Int_t board = it->first.first;
+      Int_t channel = it->first.second;
+      if (board >= 0 && board < Constants::ActiveNBoards() && channel >= 0 &&
+          channel < Constants::ActiveNChannels()) {
+        ref_slot = slot_map[board * Constants::ActiveNChannels() + channel];
+        break;
       }
     }
-    if (ref_slot < 0) {
-      std::cerr << "FATAL: reference channel '"
-                << Constants::ActiveReferenceChannel()
-                << "' not found in channel map. Cannot build events."
-                << std::endl;
-      output_file->Close();
-      delete output_file;
-      for (Int_t s = 1; s <= 16; s++)
-        delete hSum.h2_long_vs_short[s - 1];
-      delete hSum.h_music;
-      delete hSum.h_mult;
-      delete hSum.h1_cathode;
-      delete hSum.h1_strip17;
-      delete hSum.h2_strip0_vs_grid;
-      delete hSum.h1_strip0;
-      delete hSum.h1_grid;
-      for (Int_t i = 0; i < Int_t(sample_traces.size()); i++)
-        delete sample_traces[i];
-      return kFALSE;
-    }
   }
+  return ref_slot;
+}
 
-  Long64_t n_entries = Long64_t(hits.size());
-
-  struct PendingHit {
-    Int_t slot;
-    UShort_t energy;
-    ULong64_t timestamp;
-    UInt_t flags;
-  };
-
-  EventState cur_event;
-  PerChannelData cur_per_channel;
-  ULong64_t cur_ref_ts = 0;
-  Bool_t have_cur = kFALSE;
-
-  std::vector<PendingHit> pending;
-  pending.reserve(4096);
-
-  EventCounters cnt;
+// The event counters, zeroed.
+static void ZeroEventCounters(EventCounters &cnt) {
   cnt.total_events = 0;
   cnt.complete_events = 0;
   cnt.complete_with_fake = 0;
@@ -454,308 +501,215 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     cnt.miss_long[s] = 0;
   cnt.miss_strip0 = 0;
   cnt.miss_strip17 = 0;
+}
 
-  Int_t n_ref = 0;
-  ULong64_t first_ref_ts = 0;
-  ULong64_t last_ref_ts = 0;
-  Int_t emptyChannelMapEvents = 0;
-  Long64_t cathode_hits_total = 0;
-  Long64_t dropped_outside_window = 0;
-  Long64_t event_idx = 0;
-  // Seed holdoff (SEED_HOLDOFF_US); off, the candidates are still counted in
-  // a 10 us window so the summary says what turning it on would do.
-  const Double_t holdoff_us = Constants::ActiveSeedHoldoffUs();
-  const Double_t holdoff_ratio = Constants::ActiveSeedHoldoffMaxRatio();
-  const Bool_t holdoff_on = holdoff_us > 0.0;
-  const ULong64_t holdoff_ps =
-      ULong64_t((holdoff_on ? holdoff_us : 10.0) * 1.0e6);
-  Long64_t seeds_pretrigger = 0;
-  Long64_t seeds_merged = 0;
-  Long64_t seeds_close_pair = 0;
-  // A pre-trigger has no anodes pending: the strips fire after the real grid
-  // trigger. Size alone cannot tell it from a first particle read low.
-  const Int_t kPreTriggerMaxPending = 2;
-  Long64_t seeds_close_empty = 0;
-  Long64_t seeds_close_anodes = 0;
-  ULong64_t cur_window_end = 0;
-  UShort_t cur_seed_energy = 0;
+// A new event, seeded by `h` on `slot`: the state reset, the reference
+// stamp, and in reference mode the window end and the seed's energy.
+static inline void OpenNewEvent(OpenEvent &oe, const RawHit &h, Int_t slot,
+                                const BuildConfig &cfg, Bool_t is_ref) {
+  EventBuilder::ResetEventState(oe.event);
+  EventBuilder::ResetPerChannelData(oe.per_channel);
+  oe.ref_ts = h.timestamp;
+  oe.event.ref_ts = oe.ref_ts;
+  if (is_ref) {
+    oe.window_end = oe.ref_ts + cfg.window_ps;
+    oe.seed_energy = h.energy;
+  }
+  oe.have = kTRUE;
+  EventBuilder::AssignHit(oe.event, oe.pc, oe.ref_ts, slot, h.energy,
+                          h.timestamp, h.flags, cfg.dedup_strat);
+}
 
-  ULong64_t window_ps = ULong64_t(Constants::ActiveEventTimeWindowUs() * 1.0e6);
-  DedupStrategy dedup_strat = Constants::ActiveDedupStrategy();
-  PerChannelData *pc_cur = &cur_per_channel;
-
-  if (Constants::FileInSample())
-    std::cout << "[" << file_label << "] Streaming pass over " << n_entries
-              << " sorted hits (reference: "
-              << Constants::ActiveReferenceChannel()
-              << ", window: " << Constants::ActiveEventTimeWindowUs() << " us)"
-              << std::endl;
-
-  for (Long64_t i = 0; i < n_entries; i++) {
-    const RawHit &h = hits[i];
-
-    if (h.board >= Constants::ActiveNBoards() ||
-        h.channel >= Constants::ActiveNChannels()) {
-      emptyChannelMapEvents++;
-      continue;
+// The queued hits assigned to the open event, the out-of-window ones
+// counted.
+static inline void FlushPending(OpenEvent &oe, const BuildConfig &cfg,
+                                Long64_t &dropped_outside_window) {
+  for (Int_t p = 0; p < Int_t(oe.pending.size()); p++) {
+    if (oe.pending[p].timestamp <= oe.window_end) {
+      EventBuilder::AssignHit(oe.event, oe.pc, oe.ref_ts, oe.pending[p].slot,
+                              oe.pending[p].energy, oe.pending[p].timestamp,
+                              oe.pending[p].flags, cfg.dedup_strat);
+    } else {
+      dropped_outside_window++;
     }
-    Int_t slot = slot_map[h.board * Constants::ActiveNChannels() + h.channel];
-    if (slot < 0) {
-      emptyChannelMapEvents++;
-      continue;
-    }
+  }
+  oe.pending.clear();
+}
 
-    if (slot == Constants::ARR_SLOT_CATHODE)
-      cathode_hits_total++;
+// The open event finalized into the sink; the event index advances.
+static inline void CloseEvent(const OpenEvent &oe, EventSink &sink) {
+  FinalizeEvent(oe.event, sink.tree, sink.br->leftdE, sink.br->rightdE,
+                sink.br->strip0dE, sink.br->strip17dE, sink.br->hits_arr,
+                sink.br->cathode, sink.br->grid, sink.br->flags_or,
+                sink.br->seed_ts, *sink.hSum, *sink.cnt, sink.event_idx,
+                sink.sample_traces, sink.sample_stride, &sink.n_sampled);
+  sink.event_idx++;
+}
 
-    if (ref_mode) {
-      // --- Reference-channel mode --- a reference hit seeds a new event;
-      // non-reference hits queue until the next reference hit (or stream end).
-      if (slot == ref_slot) {
-        // Grid ADC window filter: skip reference hits outside the accepted
-        // range so they don't seed an event.
-        if (Double_t(h.energy) < Constants::ActiveReferenceChannelMinAdc() ||
-            Double_t(h.energy) > Constants::ActiveReferenceChannelMaxAdc()) {
-          continue;
-        }
-        if (n_ref == 0)
-          first_ref_ts = h.timestamp;
-        last_ref_ts = h.timestamp;
-        n_ref++;
-
-        // Seed holdoff: the pulse behind a pre-trigger re-seeds the open event
-        // rather than opening a second one that splits the anodes.
-        if (have_cur && h.timestamp - cur_ref_ts <= holdoff_ps) {
-          const Bool_t empty = Int_t(pending.size()) <= kPreTriggerMaxPending;
-          if (empty)
-            seeds_close_empty++;
-          else
-            seeds_close_anodes++;
-          if (empty &&
-              Double_t(cur_seed_energy) < holdoff_ratio * Double_t(h.energy)) {
-            seeds_pretrigger++;
-            if (holdoff_on) {
-              seeds_merged++;
-              cur_ref_ts = h.timestamp;
-              cur_event.ref_ts = cur_ref_ts;
-              cur_window_end = cur_ref_ts + window_ps;
-              // The larger energy is the real pulse; the stamp is the later
-              // hit.
-              const UShort_t keep_e = std::max(cur_seed_energy, h.energy);
-              cur_seed_energy = keep_e;
-              cur_event.hits[ref_slot] = 0;
-              AssignHit(cur_event, pc_cur, cur_ref_ts, ref_slot, keep_e,
-                        h.timestamp, h.flags, dedup_strat);
-              continue;
-            }
-          } else {
-            seeds_close_pair++;
-          }
-        }
-
-        if (have_cur) {
-          // Flush pending hits that fall within the current window.
-          for (Int_t p = 0; p < Int_t(pending.size()); p++) {
-            if (pending[p].timestamp <= cur_window_end) {
-              AssignHit(cur_event, pc_cur, cur_ref_ts, pending[p].slot,
-                        pending[p].energy, pending[p].timestamp,
-                        pending[p].flags, dedup_strat);
-            } else {
-              dropped_outside_window++;
-            }
-          }
-          pending.clear();
-
-          // Finalize the completed event.
-          FinalizeEvent(cur_event, output_tree, leftdE, rightdE, strip0dE,
-                        strip17dE, hits_arr, cathode, grid, flags_or, seed_ts,
-                        hSum, cnt, event_idx, &sample_traces, sample_stride,
-                        &n_sampled);
-          event_idx++;
-        }
-
-        // This hit seeds the new event, keeping its energy; the outgoing
-        // event gets a different ion's amplitude, uncorrelated with its anodes.
-        ResetEventState(cur_event);
-        ResetPerChannelData(cur_per_channel);
-        cur_ref_ts = h.timestamp;
-        cur_event.ref_ts = cur_ref_ts;
-        cur_window_end = cur_ref_ts + window_ps;
-        cur_seed_energy = h.energy;
-        have_cur = kTRUE;
-        AssignHit(cur_event, pc_cur, cur_ref_ts, ref_slot, h.energy,
-                  h.timestamp, h.flags, dedup_strat);
-      } else {
-        if (have_cur && h.timestamp <= cur_window_end) {
-          PendingHit ph;
-          ph.slot = slot;
-          ph.energy = h.energy;
-          ph.timestamp = h.timestamp;
-          ph.flags = h.flags;
-          pending.push_back(ph);
-        } else if (have_cur) {
-          dropped_outside_window++;
-        }
+// The seed holdoff: the pulse behind a pre-trigger re-seeds the open event
+// rather than opening a second one that splits the anodes. The close-pair
+// tallies count before the merge decision. kTRUE when the hit was consumed
+// and the caller skips it.
+static inline Bool_t MergePreTriggerSeed(const RawHit &h, Int_t ref_slot,
+                                         OpenEvent &oe, const BuildConfig &cfg,
+                                         BuildTallies &t) {
+  if (oe.have && h.timestamp - oe.ref_ts <= cfg.holdoff_ps) {
+    const Bool_t empty = Int_t(oe.pending.size()) <= kPreTriggerMaxPending;
+    if (empty)
+      t.seeds_close_empty++;
+    else
+      t.seeds_close_anodes++;
+    if (empty &&
+        Double_t(oe.seed_energy) < cfg.holdoff_ratio * Double_t(h.energy)) {
+      t.seeds_pretrigger++;
+      if (cfg.holdoff_on) {
+        t.seeds_merged++;
+        oe.ref_ts = h.timestamp;
+        oe.event.ref_ts = oe.ref_ts;
+        oe.window_end = oe.ref_ts + cfg.window_ps;
+        // The larger energy is the real pulse; the stamp is the later hit.
+        const UShort_t keep_e = std::max(oe.seed_energy, h.energy);
+        oe.seed_energy = keep_e;
+        oe.event.hits[ref_slot] = 0;
+        EventBuilder::AssignHit(oe.event, oe.pc, oe.ref_ts, ref_slot, keep_e,
+                                h.timestamp, h.flags, cfg.dedup_strat);
+        return kTRUE;
       }
     } else {
-      // --- Time-window mode (REFERENCE_CHANNEL == "NONE") --- first hit
-      // opens a window, hits in window_ps join; dedup applies, ref_ts = anchor.
-      if (!have_cur) {
-        ResetEventState(cur_event);
-        ResetPerChannelData(cur_per_channel);
-        cur_ref_ts = h.timestamp;
-        cur_event.ref_ts = cur_ref_ts;
-        have_cur = kTRUE;
-        AssignHit(cur_event, pc_cur, cur_ref_ts, slot, h.energy, h.timestamp,
-                  h.flags, dedup_strat);
-      } else if (h.timestamp - cur_ref_ts <= window_ps) {
-        AssignHit(cur_event, pc_cur, cur_ref_ts, slot, h.energy, h.timestamp,
-                  h.flags, dedup_strat);
-      } else {
-        // Window exceeded — finalize and start new window.
-        FinalizeEvent(cur_event, output_tree, leftdE, rightdE, strip0dE,
-                      strip17dE, hits_arr, cathode, grid, flags_or, seed_ts,
-                      hSum, cnt, event_idx, &sample_traces, sample_stride,
-                      &n_sampled);
-        event_idx++;
-        ResetEventState(cur_event);
-        ResetPerChannelData(cur_per_channel);
-        cur_ref_ts = h.timestamp;
-        cur_event.ref_ts = cur_ref_ts;
-        AssignHit(cur_event, pc_cur, cur_ref_ts, slot, h.energy, h.timestamp,
-                  h.flags, dedup_strat);
-      }
-    }
-
-#if MUSIC_HOT_PATH_LOGGING
-    if (i % 10000000 == 0)
-      std::cout << "  Stream progress: " << i << "/" << n_entries << std::endl;
-#endif
-  }
-
-  // Finalize the last event.
-  if (have_cur) {
-    if (ref_mode) {
-      for (Int_t p = 0; p < Int_t(pending.size()); p++) {
-        if (pending[p].timestamp <= cur_window_end) {
-          AssignHit(cur_event, pc_cur, cur_ref_ts, pending[p].slot,
-                    pending[p].energy, pending[p].timestamp, pending[p].flags,
-                    dedup_strat);
-        } else {
-          dropped_outside_window++;
-        }
-      }
-      pending.clear();
-    }
-    FinalizeEvent(cur_event, output_tree, leftdE, rightdE, strip0dE, strip17dE,
-                  hits_arr, cathode, grid, flags_or, seed_ts, hSum, cnt,
-                  event_idx, &sample_traces, sample_stride, &n_sampled);
-    event_idx++;
-  }
-
-  if (Constants::FileInSample())
-    std::cout << "Found " << n_ref << " " << Constants::ActiveReferenceChannel()
-              << " hits." << std::endl;
-
-  if (ref_mode && n_ref == 0) {
-    std::cerr << "No " << Constants::ActiveReferenceChannel()
-              << " hits in file, skipping." << std::endl;
-    output_file->Close();
-    delete output_file;
-    for (Int_t s = 1; s <= 16; s++)
-      delete hSum.h2_long_vs_short[s - 1];
-    delete hSum.h_music;
-    delete hSum.h_mult;
-    delete hSum.h1_cathode;
-    delete hSum.h1_strip17;
-    delete hSum.h2_strip0_vs_grid;
-    delete hSum.h1_strip0;
-    delete hSum.h1_grid;
-    return kFALSE;
-  }
-
-  Double_t span_s = (last_ref_ts > first_ref_ts)
-                        ? Double_t(last_ref_ts - first_ref_ts) / 1e12
-                        : 0.0;
-  Double_t ref_rate_hz = (span_s > 0.0) ? Double_t(n_ref) / span_s : 0.0;
-
-  output_file->cd();
-  TParameter<Double_t>("grid_rate_hz", ref_rate_hz).Write();
-  output_tree->Write("events", TObject::kOverwrite);
-  hSum.h_mult->Write("", TObject::kOverwrite);
-
-  {
-    std::lock_guard<std::mutex> lock(g_plot_mutex);
-    TString subdir = "events_summary/" + file_label;
-    SaveAndDeleteSummaryHistograms(hSum, output_file, subdir, "");
-
-    // Sample traces overlay
-    if (!sample_traces.empty()) {
-      EventsSummary::SaveSampleTraces(sample_traces, "sample_traces", subdir,
-                                      0.0, Constants::ActiveStripEMaxAdc(),
-                                      "Energy [ADC]");
+      t.seeds_close_pair++;
     }
   }
+  return kFALSE;
+}
 
-  output_file->Close();
-  delete output_file;
+// Reference-channel mode: a reference hit seeds a new event, the
+// non-reference hits queue until the next reference hit (or the stream
+// end). kTRUE when the hit was skipped, which skips the hot-path print
+// with it.
+static inline Bool_t ReferenceModeHit(const RawHit &h, Int_t slot,
+                                      const BuildConfig &cfg, OpenEvent &oe,
+                                      EventSink &sink, BuildTallies &t) {
+  if (slot == cfg.ref_slot) {
+    // Grid ADC window filter: skip reference hits outside the accepted
+    // range so they don't seed an event.
+    if (Double_t(h.energy) < Constants::ActiveReferenceChannelMinAdc() ||
+        Double_t(h.energy) > Constants::ActiveReferenceChannelMaxAdc()) {
+      return kTRUE;
+    }
+    if (t.n_ref == 0)
+      t.first_ref_ts = h.timestamp;
+    t.last_ref_ts = h.timestamp;
+    t.n_ref++;
 
-  // Outside the per-file sample one line says what the build did; the full
-  // block below is for the sample files.
-  if (!Constants::FileInSample()) {
-    // One string, one write: workers share the stream and a line built
-    // piecewise interleaves with another worker's.
-    const TString line = Form(
-        "[events] %s: %lld events, %lld complete (%.1f%%), %lld %s hits at "
-        "%.0f Hz, %lld outside window, dedup dropped %lld anode",
-        file_label.Data(), Long64_t(cnt.total_events),
-        Long64_t(cnt.complete_events),
-        cnt.total_events > 0 ? 100.0 * cnt.complete_events / cnt.total_events
-                             : 0.0,
-        Long64_t(n_ref), Constants::ActiveReferenceChannel().Data(),
-        ref_rate_hz, Long64_t(dropped_outside_window),
-        Long64_t(cnt.dropped_anode_hits_total));
-    std::cout << line << std::endl;
-    return kTRUE;
+    if (MergePreTriggerSeed(h, cfg.ref_slot, oe, cfg, t))
+      return kTRUE;
+
+    if (oe.have) {
+      // Flush pending hits that fall within the current window.
+      FlushPending(oe, cfg, t.dropped_outside_window);
+
+      // Finalize the completed event.
+      CloseEvent(oe, sink);
+    }
+
+    // This hit seeds the new event, keeping its energy; the outgoing event
+    // gets a different ion's amplitude, uncorrelated with its anodes.
+    OpenNewEvent(oe, h, cfg.ref_slot, cfg, kTRUE);
+  } else {
+    if (oe.have && h.timestamp <= oe.window_end) {
+      PendingHit ph;
+      ph.slot = slot;
+      ph.energy = h.energy;
+      ph.timestamp = h.timestamp;
+      ph.flags = h.flags;
+      oe.pending.push_back(ph);
+    } else if (oe.have) {
+      t.dropped_outside_window++;
+    }
   }
-  if (emptyChannelMapEvents != 0)
-    std::cout << "Observed " << emptyChannelMapEvents
+  return kFALSE;
+}
+
+// Time-window mode (REFERENCE_CHANNEL == "NONE"): the first hit opens a
+// window, the hits in window_ps join it, and the window's passing closes
+// the event and opens the next.
+static inline void WindowModeHit(const RawHit &h, Int_t slot,
+                                 const BuildConfig &cfg, OpenEvent &oe,
+                                 EventSink &sink) {
+  if (!oe.have) {
+    OpenNewEvent(oe, h, slot, cfg, kFALSE);
+  } else if (h.timestamp - oe.ref_ts <= cfg.window_ps) {
+    EventBuilder::AssignHit(oe.event, oe.pc, oe.ref_ts, slot, h.energy,
+                            h.timestamp, h.flags, cfg.dedup_strat);
+  } else {
+    // Window exceeded — finalize and start new window.
+    CloseEvent(oe, sink);
+    OpenNewEvent(oe, h, slot, cfg, kFALSE);
+  }
+}
+
+// The one-line summary outside the per-file sample: what the build did.
+static void PrintBuildOneLiner(const TString &file_label,
+                               const EventCounters &cnt, Int_t n_ref,
+                               Double_t ref_rate_hz,
+                               Long64_t dropped_outside_window) {
+  // One string, one write: workers share the stream and a line built
+  // piecewise interleaves with another worker's.
+  const TString line = Form(
+      "[events] %s: %lld events, %lld complete (%.1f%%), %lld %s hits at "
+      "%.0f Hz, %lld outside window, dedup dropped %lld anode",
+      file_label.Data(), Long64_t(cnt.total_events),
+      Long64_t(cnt.complete_events),
+      cnt.total_events > 0 ? 100.0 * cnt.complete_events / cnt.total_events
+                           : 0.0,
+      Long64_t(n_ref), Constants::ActiveReferenceChannel().Data(), ref_rate_hz,
+      Long64_t(dropped_outside_window), Long64_t(cnt.dropped_anode_hits_total));
+  std::cout << line << std::endl;
+}
+
+// The full summary block, for the sample files.
+static void PrintBuildSummary(const BuildConfig &cfg, const BuildTallies &t,
+                              const EventCounters &cnt, Double_t span_s,
+                              Double_t ref_rate_hz, Double_t holdoff_us,
+                              const TString &output_filepath) {
+  if (t.empty_channel_map_events != 0)
+    std::cout << "Observed " << t.empty_channel_map_events
               << " hits with empty entry in channel map." << std::endl;
 
-  if (dropped_outside_window > 0)
-    std::cout << "Dropped " << dropped_outside_window
+  if (t.dropped_outside_window > 0)
+    std::cout << "Dropped " << t.dropped_outside_window
               << " hits outside coincidence window." << std::endl;
-  if (ref_mode && n_ref > 0) {
+  if (cfg.ref_mode && t.n_ref > 0) {
     // What the seed holdoff did, or would do.
-    const Double_t pct = 100.0 / Double_t(n_ref);
-    std::cout << "Seed holdoff " << (holdoff_on ? "ON" : "off") << " ("
-              << (holdoff_on ? holdoff_us : 10.0) << " us"
-              << (holdoff_on ? "" : " diagnostic") << ", guard ratio "
-              << holdoff_ratio << "x): close seed pairs "
-              << seeds_close_empty + seeds_close_anodes << " ("
-              << Form("%.2f",
-                      pct * Double_t(seeds_close_empty + seeds_close_anodes))
-              << "% of seeds): " << seeds_close_empty
+    const Double_t pct = 100.0 / Double_t(t.n_ref);
+    std::cout << "Seed holdoff " << (cfg.holdoff_on ? "ON" : "off") << " ("
+              << (cfg.holdoff_on ? holdoff_us : 10.0) << " us"
+              << (cfg.holdoff_on ? "" : " diagnostic") << ", guard ratio "
+              << cfg.holdoff_ratio << "x): close seed pairs "
+              << t.seeds_close_empty + t.seeds_close_anodes << " ("
+              << Form("%.2f", pct * Double_t(t.seeds_close_empty +
+                                             t.seeds_close_anodes))
+              << "% of seeds): " << t.seeds_close_empty
               << " with no anodes pending ("
-              << Form("%.2f", pct * Double_t(seeds_close_empty)) << "%), "
-              << seeds_close_anodes << " with anodes pending ("
-              << Form("%.2f", pct * Double_t(seeds_close_anodes))
+              << Form("%.2f", pct * Double_t(t.seeds_close_empty)) << "%), "
+              << t.seeds_close_anodes << " with anodes pending ("
+              << Form("%.2f", pct * Double_t(t.seeds_close_anodes))
               << "%). Pre-triggers (no anodes, current seed under the guard): "
-              << seeds_pretrigger << " ("
-              << Form("%.2f", pct * Double_t(seeds_pretrigger)) << "%), "
-              << seeds_merged << " merged; " << seeds_close_pair
+              << t.seeds_pretrigger << " ("
+              << Form("%.2f", pct * Double_t(t.seeds_pretrigger)) << "%), "
+              << t.seeds_merged << " merged; " << t.seeds_close_pair
               << " kept apart." << std::endl;
   }
 
-  std::cout << Constants::ActiveReferenceChannel() << " hits total: " << n_ref
+  std::cout << Constants::ActiveReferenceChannel() << " hits total: " << t.n_ref
             << std::endl;
   std::cout << Constants::ActiveReferenceChannel()
             << " trigger rate: " << ref_rate_hz << " Hz over " << span_s << " s"
             << std::endl;
-  std::cout << "Cathode hits total: " << cathode_hits_total << " (cathode/"
+  std::cout << "Cathode hits total: " << t.cathode_hits_total << " (cathode/"
             << Constants::ActiveReferenceChannel() << " = "
-            << (n_ref > 0 ? Double_t(cathode_hits_total) / n_ref : 0.0) << ")"
-            << std::endl;
+            << (t.n_ref > 0 ? Double_t(t.cathode_hits_total) / t.n_ref : 0.0)
+            << ")" << std::endl;
   std::cout << "Total events: " << cnt.total_events << std::endl;
   if (cnt.total_events > 0) {
     std::cout << "Events with cathode hit: " << cnt.events_with_cathode << " ("
@@ -835,5 +789,183 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   }
 
   std::cout << "Events saved to: " << output_filepath << std::endl;
+}
+
+Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
+                                               const SlotMap &slot_map,
+                                               const TString &output_name,
+                                               const TString &file_label) {
+  TString output_filepath = output_name + ".root";
+  TFile *output_file = IO::OpenForWriting(output_filepath);
+  if (!output_file || output_file->IsZombie()) {
+    std::cerr << "Error opening output: " << output_filepath << std::endl;
+    return kFALSE;
+  }
+
+  EventBranches br;
+  TTree *output_tree = BookEventBranches(br);
+
+  SummaryHistograms hSum;
+  ConfigureSummaryHistograms(hSum);
+
+  // Sample traces for overlay plot
+  std::vector<TGraph *> sample_traces;
+  Long64_t sample_stride = SampleTraceStride(Long64_t(hits.size()));
+  Int_t n_sampled = 0;
+
+  BuildConfig cfg;
+  // Determine operating mode: reference-channel or blind time-window.
+  cfg.ref_mode = Constants::ActiveReferenceChannel() != "NONE";
+  // Resolve reference channel name to slot ID by scanning active channel map.
+  cfg.ref_slot = cfg.ref_mode ? ResolveReferenceSlot(slot_map) : -1;
+  if (cfg.ref_mode && cfg.ref_slot < 0) {
+    std::cerr << "FATAL: reference channel '"
+              << Constants::ActiveReferenceChannel()
+              << "' not found in channel map. Cannot build events."
+              << std::endl;
+    output_file->Close();
+    delete output_file;
+    DeleteSummaryHistograms(hSum);
+    for (Int_t i = 0; i < Int_t(sample_traces.size()); i++)
+      delete sample_traces[i];
+    return kFALSE;
+  }
+  cfg.window_ps = ULong64_t(Constants::ActiveEventTimeWindowUs() * 1.0e6);
+  cfg.dedup_strat = Constants::ActiveDedupStrategy();
+  // Seed holdoff (SEED_HOLDOFF_US); off, the candidates are still counted in
+  // a 10 us window so the summary says what turning it on would do.
+  const Double_t holdoff_us = Constants::ActiveSeedHoldoffUs();
+  cfg.holdoff_ratio = Constants::ActiveSeedHoldoffMaxRatio();
+  cfg.holdoff_on = holdoff_us > 0.0;
+  cfg.holdoff_ps = ULong64_t((cfg.holdoff_on ? holdoff_us : 10.0) * 1.0e6);
+
+  Long64_t n_entries = Long64_t(hits.size());
+
+  OpenEvent oe;
+  oe.pc = &oe.per_channel;
+  oe.ref_ts = 0;
+  oe.window_end = 0;
+  oe.seed_energy = 0;
+  oe.have = kFALSE;
+  oe.pending.reserve(4096);
+
+  EventCounters cnt;
+  ZeroEventCounters(cnt);
+
+  BuildTallies t;
+  t.n_ref = 0;
+  t.first_ref_ts = 0;
+  t.last_ref_ts = 0;
+  t.empty_channel_map_events = 0;
+  t.cathode_hits_total = 0;
+  t.dropped_outside_window = 0;
+  t.seeds_pretrigger = 0;
+  t.seeds_merged = 0;
+  t.seeds_close_pair = 0;
+  t.seeds_close_empty = 0;
+  t.seeds_close_anodes = 0;
+
+  EventSink sink;
+  sink.tree = output_tree;
+  sink.br = &br;
+  sink.hSum = &hSum;
+  sink.cnt = &cnt;
+  sink.sample_traces = &sample_traces;
+  sink.sample_stride = sample_stride;
+  sink.n_sampled = n_sampled;
+  sink.event_idx = 0;
+
+  if (Constants::FileInSample())
+    std::cout << "[" << file_label << "] Streaming pass over " << n_entries
+              << " sorted hits (reference: "
+              << Constants::ActiveReferenceChannel()
+              << ", window: " << Constants::ActiveEventTimeWindowUs() << " us)"
+              << std::endl;
+
+  for (Long64_t i = 0; i < n_entries; i++) {
+    const RawHit &h = hits[i];
+
+    if (h.board >= Constants::ActiveNBoards() ||
+        h.channel >= Constants::ActiveNChannels()) {
+      t.empty_channel_map_events++;
+      continue;
+    }
+    Int_t slot = slot_map[h.board * Constants::ActiveNChannels() + h.channel];
+    if (slot < 0) {
+      t.empty_channel_map_events++;
+      continue;
+    }
+
+    if (slot == Constants::ARR_SLOT_CATHODE)
+      t.cathode_hits_total++;
+
+    if (cfg.ref_mode) {
+      if (ReferenceModeHit(h, slot, cfg, oe, sink, t))
+        continue;
+    } else {
+      WindowModeHit(h, slot, cfg, oe, sink);
+    }
+
+#if MUSIC_HOT_PATH_LOGGING
+    if (i % 10000000 == 0)
+      std::cout << "  Stream progress: " << i << "/" << n_entries << std::endl;
+#endif
+  }
+
+  // Finalize the last event.
+  if (oe.have) {
+    if (cfg.ref_mode)
+      FlushPending(oe, cfg, t.dropped_outside_window);
+    CloseEvent(oe, sink);
+  }
+
+  if (Constants::FileInSample())
+    std::cout << "Found " << t.n_ref << " "
+              << Constants::ActiveReferenceChannel() << " hits." << std::endl;
+
+  if (cfg.ref_mode && t.n_ref == 0) {
+    std::cerr << "No " << Constants::ActiveReferenceChannel()
+              << " hits in file, skipping." << std::endl;
+    output_file->Close();
+    delete output_file;
+    DeleteSummaryHistograms(hSum);
+    return kFALSE;
+  }
+
+  Double_t span_s = (t.last_ref_ts > t.first_ref_ts)
+                        ? Double_t(t.last_ref_ts - t.first_ref_ts) / 1e12
+                        : 0.0;
+  Double_t ref_rate_hz = (span_s > 0.0) ? Double_t(t.n_ref) / span_s : 0.0;
+
+  output_file->cd();
+  TParameter<Double_t>("grid_rate_hz", ref_rate_hz).Write();
+  output_tree->Write("events", TObject::kOverwrite);
+  hSum.h_mult->Write("", TObject::kOverwrite);
+
+  {
+    std::lock_guard<std::mutex> lock(g_plot_mutex);
+    TString subdir = "events_summary/" + file_label;
+    SaveAndDeleteSummaryHistograms(hSum, output_file, subdir, "");
+
+    // Sample traces overlay
+    if (!sample_traces.empty()) {
+      EventsSummary::SaveSampleTraces(sample_traces, "sample_traces", subdir,
+                                      0.0, Constants::ActiveStripEMaxAdc(),
+                                      "Energy [ADC]");
+    }
+  }
+
+  output_file->Close();
+  delete output_file;
+
+  // Outside the per-file sample one line says what the build did; the full
+  // block below is for the sample files.
+  if (!Constants::FileInSample()) {
+    PrintBuildOneLiner(file_label, cnt, t.n_ref, ref_rate_hz,
+                       t.dropped_outside_window);
+    return kTRUE;
+  }
+  PrintBuildSummary(cfg, t, cnt, span_s, ref_rate_hz, holdoff_us,
+                    output_filepath);
   return kTRUE;
 }
