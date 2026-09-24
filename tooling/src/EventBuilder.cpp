@@ -526,7 +526,7 @@ static inline void FlushPending(OpenEvent &oe, const BuildConfig &cfg,
 }
 
 // The open event finalized into the sink; the event index advances.
-static inline void CloseEvent(const OpenEvent &oe, EventSink &sink) {
+static inline void CloseEvent(OpenEvent &oe, EventSink &sink) {
   FinalizeEvent(oe.event, sink.tree, sink.br->leftdE, sink.br->rightdE,
                 sink.br->strip0dE, sink.br->strip17dE, sink.br->hits_arr,
                 sink.br->cathode, sink.br->grid, sink.br->flags_or,

@@ -208,7 +208,7 @@ void InitDatasetConfig() {
   RunEpoch early = MakeEpoch("early", RunRange(30, 40));
   early.split_chunk_seconds = 15;
 
-  RunEpoch late = MakeEpoch("late", RunRange(97, 97));
+  RunEpoch late = MakeEpoch("late", RunRange(97, 137));
   late.pulse_history.long_left.tau_us = 25;
   late.pulse_history.long_right.tau_us = 10;
   late.pulse_history.short_left.tau_us = 25;

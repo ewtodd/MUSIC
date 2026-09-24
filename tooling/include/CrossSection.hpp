@@ -31,7 +31,7 @@
  */
 
 #include <Rtypes.h>
-#include <TMatrix.h>
+#include <TMatrixD.h>
 #include <TString.h>
 #include <map>
 #include <utility>

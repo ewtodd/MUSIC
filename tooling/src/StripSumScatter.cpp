@@ -2484,11 +2484,10 @@ static void FillTraceEvt(TraceEvt &e, const EnergyView &ev, ULong64_t seed_ts,
   e.beam_flat = beam;
 }
 
-EventLevelVerdict StripSumScatter::JudgeEventLevel(const BeamGate1D &gate,
-                                                   const EnergyView &ev,
-                                                   Int_t gate_strip,
-                                                   Double_t step_z,
-                                                   const TagThresholds &T) {
+StripSumScatter::EventLevelVerdict
+StripSumScatter::JudgeEventLevel(const BeamGate1D &gate, const EnergyView &ev,
+                                 Int_t gate_strip, Double_t step_z,
+                                 const TagThresholds &T) {
   EventLevelVerdict v;
   v.gate = PassesGate(gate, ev, gate_strip, T.gate_nsigma);
   v.pileup = IsPileup(ev, T.pileup_nsigma);
