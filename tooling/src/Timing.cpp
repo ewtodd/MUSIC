@@ -472,30 +472,17 @@ std::vector<TGraph *> Timing::ExtractAllChannelsTimingStructureFromHits(
   return graphs;
 }
 
-TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
-    const std::vector<RawHit> &hits, const TString &file_label,
-    UShort_t ref_board, const std::vector<UShort_t> &board_channels,
-    Double_t min_energy, Double_t max_energy, Double_t overlap_margin_s,
-    Double_t thresh_dt_us) {
+// The file's time span in seconds and the overlap window inside it.
+struct FileSpan {
+  Double_t tmin_s;
+  Double_t tmax_s;
+  Double_t overlap_tmin_s;
+  Double_t overlap_tmax_s;
+};
 
-  TimeShiftResult result;
-  result.board_shifts.assign(Constants::ActiveNBoards(), 0);
-
-  // Board sync disabled (e.g. 87Rb): skip the extract/scan/extreme-events
-  // pipeline; ApplyShifts then adds a zero shift to every hit.
-  if (!Constants::ActiveDoBoardSync()) {
-    std::cout << "Board sync disabled for this dataset; skipping timeshift "
-                 "calculation (all board shifts = 0)."
-              << std::endl;
-    return result;
-  }
-
-  if (hits.empty()) {
-    std::cerr << "CalcTimeShiftsBeamMethodFromHits: empty hits vector"
-              << std::endl;
-    return result;
-  }
-
+// The file's time span from the hit timestamps, the margins trimmed.
+static FileSpan MeasureFileSpan(const std::vector<RawHit> &hits,
+                                Double_t overlap_margin_s) {
   ULong64_t ts_min = hits[0].timestamp;
   ULong64_t ts_max = hits[0].timestamp;
   for (Int_t i = 1; i < Int_t(hits.size()); i++) {
@@ -504,38 +491,39 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
     if (hits[i].timestamp > ts_max)
       ts_max = hits[i].timestamp;
   }
-  Double_t file_tmin_s = ts_min / 1e12;
-  Double_t file_tmax_s = ts_max / 1e12;
-  Double_t overlap_tmin_s = file_tmin_s + overlap_margin_s;
-  Double_t overlap_tmax_s = file_tmax_s - overlap_margin_s;
-  std::cout << "File span [" << file_tmin_s << ", " << file_tmax_s
-            << "] s, using overlap [" << overlap_tmin_s << ", "
-            << overlap_tmax_s << "] s" << std::endl;
+  FileSpan span;
+  span.tmin_s = ts_min / 1e12;
+  span.tmax_s = ts_max / 1e12;
+  span.overlap_tmin_s = span.tmin_s + overlap_margin_s;
+  span.overlap_tmax_s = span.tmax_s - overlap_margin_s;
+  std::cout << "File span [" << span.tmin_s << ", " << span.tmax_s
+            << "] s, using overlap [" << span.overlap_tmin_s << ", "
+            << span.overlap_tmax_s << "] s" << std::endl;
+  return span;
+}
 
-  std::vector<LongChan> long_channels = BuildLongChannelList();
-  std::vector<TGraph *> long_graphs = ExtractAllChannelsTimingStructureFromHits(
-      hits, long_channels, min_energy, max_energy, overlap_tmin_s,
-      overlap_tmax_s, thresh_dt_us);
-
+// Each board's ref channel's index in the long-channel list, where it is
+// present.
+static std::map<UShort_t, Int_t>
+RefIndexPerBoard(const std::vector<LongChan> &long_channels,
+                 const std::vector<UShort_t> &board_channels) {
   std::map<UShort_t, Int_t> board_to_ref_idx;
   for (Int_t i = 0; i < Int_t(long_channels.size()); i++) {
     if (long_channels[i].channel == board_channels[long_channels[i].board])
       board_to_ref_idx[long_channels[i].board] = i;
   }
+  return board_to_ref_idx;
+}
 
-  std::map<UShort_t, Int_t>::const_iterator ref_it =
-      board_to_ref_idx.find(ref_board);
-  if (ref_it == board_to_ref_idx.end()) {
-    std::cerr << "Reference board " << ref_board
-              << " ref channel is not in long-channel list" << std::endl;
-    for (Int_t k = 0; k < Int_t(long_graphs.size()); k++)
-      delete long_graphs[k];
-    return result;
-  }
-  TGraph *ref_graph = long_graphs[ref_it->second];
-
-  std::vector<Double_t> board_shifts_s(Constants::ActiveNBoards(), 0.0);
-
+// One shift per board against the ref board's ref channel: the shift in
+// seconds and the ps result, WARNINGs and continues where a board has no
+// data.
+static void MeasureBoardShifts(
+    const std::map<UShort_t, Int_t> &board_to_ref_idx,
+    const std::vector<TGraph *> &long_graphs, TGraph *ref_graph,
+    UShort_t ref_board, const std::vector<UShort_t> &board_channels,
+    const FileSpan &span, Double_t thresh_dt_us, const TString &file_label,
+    std::vector<Double_t> &board_shifts_s, TimeShiftResult &result) {
   for (UShort_t board = 0; board < Constants::ActiveNBoards(); board++) {
     if (board == ref_board)
       continue;
@@ -557,11 +545,11 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
     std::cout << "Processing Board " << board << " Channel "
               << board_channels[board] << std::endl;
 
-    Double_t shift_s =
-        FindShiftBeam(ref_graph, board_graph,
-                      overlap_tmin_s + 0.1 * (overlap_tmax_s - overlap_tmin_s),
-                      overlap_tmax_s - 0.1 * (overlap_tmax_s - overlap_tmin_s),
-                      thresh_dt_us, ref_board, board, file_label);
+    Double_t shift_s = Timing::FindShiftBeam(
+        ref_graph, board_graph,
+        span.overlap_tmin_s + 0.1 * (span.overlap_tmax_s - span.overlap_tmin_s),
+        span.overlap_tmax_s - 0.1 * (span.overlap_tmax_s - span.overlap_tmin_s),
+        thresh_dt_us, ref_board, board, file_label);
 
     board_shifts_s[board] = shift_s;
     Long64_t shift_ps = static_cast<Long64_t>(shift_s * 1e12);
@@ -570,24 +558,15 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
     std::cout << "Board " << ref_board << "-" << board << " shift: " << shift_s
               << " s (" << shift_ps << " ps)" << std::endl;
   }
+}
 
-  Int_t time_bins = TMath::Min(
-      500,
-      TMath::Max(100, static_cast<Int_t>((file_tmax_s - file_tmin_s) * 50.0)));
-  Int_t n_y = static_cast<Int_t>(long_channels.size());
-
-  TH2F *h_extreme_before =
-      new TH2F("hExtremeBefore", ";Time [s];", time_bins, file_tmin_s,
-               file_tmax_s, n_y, -0.5, n_y - 0.5);
-
-  TH2F *h_extreme_after =
-      new TH2F("hExtremeAfter", ";Time [s];", time_bins, file_tmin_s,
-               file_tmax_s, n_y, -0.5, n_y - 0.5);
-
-  std::vector<Double_t> extreme_times_after;
-
-  extreme_times_after.reserve(10000);
-
+// One point of each channel into the full-range extreme hists, the after
+// times collected for the dense-window search.
+static void FillExtremeHistograms(TH2F *h_extreme_before, TH2F *h_extreme_after,
+                                  const std::vector<TGraph *> &long_graphs,
+                                  const std::vector<LongChan> &long_channels,
+                                  const std::vector<Double_t> &board_shifts_s,
+                                  std::vector<Double_t> &extreme_times_after) {
   for (Int_t c = 0; c < Int_t(long_channels.size()); c++) {
     TGraph *g = long_graphs[c];
     Double_t shift_s = board_shifts_s[long_channels[c].board];
@@ -605,37 +584,14 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
       extreme_times_after.push_back(x_after_s);
     }
   }
+}
 
-  const Double_t zoom_width_us = 1000.0;
-  const Double_t zoom_width_s = zoom_width_us * 1e-6;
-
-  // About 1 us/bin. Increase this if you want sub-us binning.
-  Int_t zoom_bins =
-      TMath::Min(2000, TMath::Max(100, static_cast<Int_t>(zoom_width_us)));
-
-  // Choose a dense after-correction window, then use the same absolute window
-  // for before and after. This makes before/after directly comparable.
-  Double_t after_zoom_t0_s = FindDensestTimeWindowStartS(
-      extreme_times_after, zoom_width_s, file_tmin_s);
-
-  Double_t before_zoom_t0_s = after_zoom_t0_s;
-
-  std::cout << "Zoom window before: [" << before_zoom_t0_s << ", "
-            << before_zoom_t0_s + zoom_width_s << "] s" << std::endl;
-
-  std::cout << "Zoom window after : [" << after_zoom_t0_s << ", "
-            << after_zoom_t0_s + zoom_width_s << "] s" << std::endl;
-
-  TH2F *h_extreme_before_zoom =
-      new TH2F("hExtremeBeforeZoom", ";Time [#mus];", zoom_bins, 0.0,
-               zoom_width_us, n_y, -0.5, n_y - 0.5);
-
-  TH2F *h_extreme_after_zoom =
-      new TH2F("hExtremeAfterZoom", ";Time [#mus];", zoom_bins, 0.0,
-               zoom_width_us, n_y, -0.5, n_y - 0.5);
-
-  // Restore Y-axis labels for all four plots.
-  for (Int_t b = 0; b < n_y; b++) {
+// The "B<board> <name>" Y-axis label on all four extreme-event plots.
+static void LabelChannelAxes(TH2F *h_extreme_before, TH2F *h_extreme_after,
+                             TH2F *h_extreme_before_zoom,
+                             TH2F *h_extreme_after_zoom,
+                             const std::vector<LongChan> &long_channels) {
+  for (Int_t b = 0; b < Int_t(long_channels.size()); b++) {
     TString label =
         Form("B%d %s", long_channels[b].board, long_channels[b].name.Data());
 
@@ -645,12 +601,18 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
     h_extreme_before_zoom->GetYaxis()->SetBinLabel(b + 1, label);
     h_extreme_after_zoom->GetYaxis()->SetBinLabel(b + 1, label);
   }
+}
 
-  // Second pass:
-  // Fill only the zoom-window histograms, in microseconds relative to t0.
-  Int_t n_zoom_before = 0;
-  Int_t n_zoom_after = 0;
-
+// The second pass: the zoom-window hists only, in microseconds relative to
+// the window's start, with the entry counts.
+static void FillZoomHistograms(TH2F *h_extreme_before_zoom,
+                               TH2F *h_extreme_after_zoom,
+                               const std::vector<TGraph *> &long_graphs,
+                               const std::vector<LongChan> &long_channels,
+                               const std::vector<Double_t> &board_shifts_s,
+                               Double_t before_zoom_t0_s,
+                               Double_t after_zoom_t0_s, Double_t zoom_width_us,
+                               Int_t &n_zoom_before, Int_t &n_zoom_after) {
   for (Int_t c = 0; c < Int_t(long_channels.size()); c++) {
     TGraph *g = long_graphs[c];
     Double_t shift_s = board_shifts_s[long_channels[c].board];
@@ -676,6 +638,129 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
       }
     }
   }
+}
+
+// The RESULTS block: each board's shift in seconds against the ref.
+static void PrintBoardShifts(const TimeShiftResult &result,
+                             UShort_t ref_board) {
+  std::cout << "RESULTS (ref board = " << ref_board << ")" << std::endl;
+  for (UShort_t board = 0; board < Constants::ActiveNBoards(); board++) {
+    if (board == ref_board)
+      continue;
+    std::cout << "  Board " << ref_board << "-" << board << ": "
+              << result.board_shifts[board] * 1e-12 << " s" << std::endl;
+  }
+}
+
+TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
+    const std::vector<RawHit> &hits, const TString &file_label,
+    UShort_t ref_board, const std::vector<UShort_t> &board_channels,
+    Double_t min_energy, Double_t max_energy, Double_t overlap_margin_s,
+    Double_t thresh_dt_us) {
+
+  TimeShiftResult result;
+  result.board_shifts.assign(Constants::ActiveNBoards(), 0);
+
+  // Board sync disabled (e.g. 87Rb): skip the extract/scan/extreme-events
+  // pipeline; ApplyShifts then adds a zero shift to every hit.
+  if (!Constants::ActiveDoBoardSync()) {
+    std::cout << "Board sync disabled for this dataset; skipping timeshift "
+                 "calculation (all board shifts = 0)."
+              << std::endl;
+    return result;
+  }
+
+  if (hits.empty()) {
+    std::cerr << "CalcTimeShiftsBeamMethodFromHits: empty hits vector"
+              << std::endl;
+    return result;
+  }
+
+  const FileSpan span = MeasureFileSpan(hits, overlap_margin_s);
+
+  std::vector<LongChan> long_channels = BuildLongChannelList();
+  std::vector<TGraph *> long_graphs = ExtractAllChannelsTimingStructureFromHits(
+      hits, long_channels, min_energy, max_energy, span.overlap_tmin_s,
+      span.overlap_tmax_s, thresh_dt_us);
+
+  const std::map<UShort_t, Int_t> board_to_ref_idx =
+      RefIndexPerBoard(long_channels, board_channels);
+
+  std::map<UShort_t, Int_t>::const_iterator ref_it =
+      board_to_ref_idx.find(ref_board);
+  if (ref_it == board_to_ref_idx.end()) {
+    std::cerr << "Reference board " << ref_board
+              << " ref channel is not in long-channel list" << std::endl;
+    for (Int_t k = 0; k < Int_t(long_graphs.size()); k++)
+      delete long_graphs[k];
+    return result;
+  }
+  TGraph *ref_graph = long_graphs[ref_it->second];
+
+  std::vector<Double_t> board_shifts_s(Constants::ActiveNBoards(), 0.0);
+  MeasureBoardShifts(board_to_ref_idx, long_graphs, ref_graph, ref_board,
+                     board_channels, span, thresh_dt_us, file_label,
+                     board_shifts_s, result);
+
+  Int_t time_bins = TMath::Min(
+      500,
+      TMath::Max(100, static_cast<Int_t>((span.tmax_s - span.tmin_s) * 50.0)));
+  Int_t n_y = static_cast<Int_t>(long_channels.size());
+
+  TH2F *h_extreme_before =
+      new TH2F("hExtremeBefore", ";Time [s];", time_bins, span.tmin_s,
+               span.tmax_s, n_y, -0.5, n_y - 0.5);
+
+  TH2F *h_extreme_after =
+      new TH2F("hExtremeAfter", ";Time [s];", time_bins, span.tmin_s,
+               span.tmax_s, n_y, -0.5, n_y - 0.5);
+
+  std::vector<Double_t> extreme_times_after;
+
+  extreme_times_after.reserve(10000);
+  FillExtremeHistograms(h_extreme_before, h_extreme_after, long_graphs,
+                        long_channels, board_shifts_s, extreme_times_after);
+
+  const Double_t zoom_width_us = 1000.0;
+  const Double_t zoom_width_s = zoom_width_us * 1e-6;
+
+  // About 1 us/bin. Increase this if you want sub-us binning.
+  Int_t zoom_bins =
+      TMath::Min(2000, TMath::Max(100, static_cast<Int_t>(zoom_width_us)));
+
+  // Choose a dense after-correction window, then use the same absolute window
+  // for before and after. This makes before/after directly comparable.
+  Double_t after_zoom_t0_s = FindDensestTimeWindowStartS(
+      extreme_times_after, zoom_width_s, span.tmin_s);
+
+  Double_t before_zoom_t0_s = after_zoom_t0_s;
+
+  std::cout << "Zoom window before: [" << before_zoom_t0_s << ", "
+            << before_zoom_t0_s + zoom_width_s << "] s" << std::endl;
+
+  std::cout << "Zoom window after : [" << after_zoom_t0_s << ", "
+            << after_zoom_t0_s + zoom_width_s << "] s" << std::endl;
+
+  TH2F *h_extreme_before_zoom =
+      new TH2F("hExtremeBeforeZoom", ";Time [#mus];", zoom_bins, 0.0,
+               zoom_width_us, n_y, -0.5, n_y - 0.5);
+
+  TH2F *h_extreme_after_zoom =
+      new TH2F("hExtremeAfterZoom", ";Time [#mus];", zoom_bins, 0.0,
+               zoom_width_us, n_y, -0.5, n_y - 0.5);
+
+  // Restore Y-axis labels for all four plots.
+  LabelChannelAxes(h_extreme_before, h_extreme_after, h_extreme_before_zoom,
+                   h_extreme_after_zoom, long_channels);
+
+  // Second pass:
+  // Fill only the zoom-window histograms, in microseconds relative to t0.
+  Int_t n_zoom_before = 0;
+  Int_t n_zoom_after = 0;
+  FillZoomHistograms(h_extreme_before_zoom, h_extreme_after_zoom, long_graphs,
+                     long_channels, board_shifts_s, before_zoom_t0_s,
+                     after_zoom_t0_s, zoom_width_us, n_zoom_before,
+                     n_zoom_after);
 
   std::cout << "Zoom plot entries before correction: " << n_zoom_before
             << std::endl;
@@ -684,13 +769,7 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
 
   PlotExtremeEvents2D(h_extreme_before, h_extreme_after, h_extreme_before_zoom,
                       h_extreme_after_zoom, file_label);
-  std::cout << "RESULTS (ref board = " << ref_board << ")" << std::endl;
-  for (UShort_t board = 0; board < Constants::ActiveNBoards(); board++) {
-    if (board == ref_board)
-      continue;
-    std::cout << "  Board " << ref_board << "-" << board << ": "
-              << result.board_shifts[board] * 1e-12 << " s" << std::endl;
-  }
+  PrintBoardShifts(result, ref_board);
 
   delete h_extreme_before;
   delete h_extreme_after;
