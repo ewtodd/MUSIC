@@ -52,6 +52,19 @@ public:
                             Double_t n);
 
   /**
+   * @brief Draw the @p n-sigma contour of a fitted spot on the current pad.
+   *
+   * The correlated 2-D Gaussian's TEllipse rotated per the covariance
+   * eigen-decomposition, so the drawn contour is the InEllipseXY() gate
+   * (chi2 < n^2).
+   *
+   * @param b Fitted spot; `ok` must be true.
+   * @param n Level, in sigma.
+   * @param color Line colour of the contour.
+   */
+  static void DrawEllipse(const BeamFit2D &b, Double_t n, Color_t color);
+
+  /**
    * @brief Second moments of a histogram region above a threshold.
    * @param h      Histogram to measure. Must not be null.
    * @param lo_bx  First x bin, inclusive.
@@ -86,6 +99,43 @@ public:
   static Moments2D
   ClippedMoments(const std::vector<std::pair<Float_t, Float_t>> &pts,
                  const Moments2D &seed, Double_t clip = 3.0);
+
+  /**
+   * @brief Second moments of a coarse spot histogram's seed window: the
+   *        maximum bin, ± @p seed_half_bins around it, over the bins at or
+   *        above 0.3 of the peak.
+   * @param h Coarse histogram of the spot, already filled.
+   * @param seed_half_bins Half-width of the seed window, in bins of @p h.
+   * @return The moments; `weight <= 0` when no bin clears the threshold.
+   */
+  static Moments2D SeedSpotMoments(TH2F *h, Int_t seed_half_bins);
+
+  /**
+   * @brief Result of a beam spot fit: the spot to use, and whether the
+   *        Gaussian fit (rather than the clipped-moments fallback) made it.
+   */
+  struct SpotFit {
+    BeamFit2D fit;            ///< The spot to use; ok when usable.
+    Double_t chi2_ndf = -1.0; ///< The fit's reduced chi2; -1 when it did not
+                              ///< run.
+    Bool_t fit_used = kFALSE; ///< kTRUE when #fit is the fit, not the fallback.
+  };
+
+  /**
+   * @brief A beam spot from a coarse histogram and the same events unbinned:
+   *        the sample's sigma-clipped moments seeded from @p seed, then a
+   *        correlated Gaussian on a flat pedestal over a fine histogram
+   *        re-binned around the clip — the inner 2 sigma fitted, the rest
+   *        judged.
+   * @param h  Coarse histogram; names the fine one and supplies the fallback
+   *           amplitude.
+   * @param pts The spot's events unbinned (up to a cap); consumed.
+   * @param seed Seed moments, e.g. SeedSpotMoments(); weight must be > 0.
+   * @return The spot: the fit when it holds, the clipped moments otherwise.
+   */
+  static SpotFit
+  FitSpotFromPoints(TH2F *h, std::vector<std::pair<Float_t, Float_t>> &pts,
+                    const Moments2D &seed);
 
   /**
    * @brief Fit a correlated 2-D Gaussian on a flat pedestal to @p h: ROOT's

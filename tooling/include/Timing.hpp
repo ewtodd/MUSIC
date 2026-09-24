@@ -117,14 +117,10 @@ public:
    * @param h_before_zoom     Zoomed view before alignment.
    * @param h_after_zoom      And after.
    * @param file_label        Subfile label, used in the plot names.
-   * @param before_zoom_t0_s  Zoom window start before alignment, in seconds.
-   * @param after_zoom_t0_s   And after.
    */
   static void PlotExtremeEvents2D(TH2F *h_before, TH2F *h_after,
                                   TH2F *h_before_zoom, TH2F *h_after_zoom,
-                                  const TString &file_label,
-                                  Double_t before_zoom_t0_s,
-                                  Double_t after_zoom_t0_s);
+                                  const TString &file_label);
   /**
    * @brief Save the shift-search cost landscape for one board pair.
    *

@@ -172,5 +172,3 @@ void EnergyView::Decode() {
           strip17 * Double_t(strip_factor[17]) + Double_t(strip_offset[17]);
   }
 }
-
-const char *EnergyView::Unit() const { return is_normed ? "a.u." : "ADC"; }

@@ -173,13 +173,13 @@ struct EventCounters {
   Long64_t miss_strip17;
 };
 
-void FinalizeEvent(EventState &e, PerChannelData *pc, TTree *output_tree,
-                   UShort_t *leftdE_branch, UShort_t *rightdE_branch,
-                   UShort_t &strip0_branch, UShort_t &strip17_branch,
-                   UShort_t *hits_branch, Short_t &cathode_branch,
-                   Short_t &grid_branch, UInt_t &flags_or_branch,
-                   ULong64_t &seed_ts_branch, SummaryHistograms &hSum,
-                   EventCounters &c, Long64_t event_idx = -1,
+void FinalizeEvent(EventState &e, TTree *output_tree, UShort_t *leftdE_branch,
+                   UShort_t *rightdE_branch, UShort_t &strip0_branch,
+                   UShort_t &strip17_branch, UShort_t *hits_branch,
+                   Short_t &cathode_branch, Short_t &grid_branch,
+                   UInt_t &flags_or_branch, ULong64_t &seed_ts_branch,
+                   SummaryHistograms &hSum, EventCounters &c,
+                   Long64_t event_idx = -1,
                    std::vector<TGraph *> *sample_traces = nullptr,
                    Long64_t sample_stride = 0, Int_t *n_sampled = nullptr) {
   // Collect sample traces for overlay plot
@@ -356,7 +356,6 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
   cfg.right_odd_max = Constants::ActiveRightOddMaxAdc();
   cfg.right_even_max = Constants::ActiveRightEvenMaxAdc();
   cfg.cathode_max = Constants::ActiveCathodeMaxAdc();
-  cfg.strip17_max = Constants::ActiveStrip17MaxAdc();
   cfg.grid_max = Constants::ActiveGridMaxAdc();
   cfg.strip0_max = Constants::ActiveStrip0MaxAdc();
   cfg.music_energy_bins = 2000;
@@ -455,21 +454,6 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     cnt.miss_long[s] = 0;
   cnt.miss_strip0 = 0;
   cnt.miss_strip17 = 0;
-  Int_t &total_events = cnt.total_events;
-  Int_t &complete_events = cnt.complete_events;
-  Int_t &complete_with_fake = cnt.complete_with_fake;
-  Int_t &complete_with_saturation = cnt.complete_with_saturation;
-  Int_t &complete_with_pileup = cnt.complete_with_pileup;
-  Int_t &complete_rejected = cnt.complete_rejected;
-  Int_t &incomplete_events = cnt.incomplete_events;
-  Int_t &incomplete_with_fake = cnt.incomplete_with_fake;
-  Int_t &incomplete_with_saturation = cnt.incomplete_with_saturation;
-  Int_t &incomplete_with_pileup = cnt.incomplete_with_pileup;
-  Long64_t &events_with_cathode = cnt.events_with_cathode;
-  Long64_t &events_with_multi_cathode = cnt.events_with_multi_cathode;
-  Long64_t &events_with_multi_anode_hit = cnt.events_with_multi_anode_hit;
-  Long64_t &dropped_anode_hits_total = cnt.dropped_anode_hits_total;
-  Long64_t &dropped_cathode_hits_total = cnt.dropped_cathode_hits_total;
 
   Int_t n_ref = 0;
   ULong64_t first_ref_ts = 0;
@@ -583,10 +567,10 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
           pending.clear();
 
           // Finalize the completed event.
-          FinalizeEvent(cur_event, pc_cur, output_tree, leftdE, rightdE,
-                        strip0dE, strip17dE, hits_arr, cathode, grid, flags_or,
-                        seed_ts, hSum, cnt, event_idx, &sample_traces,
-                        sample_stride, &n_sampled);
+          FinalizeEvent(cur_event, output_tree, leftdE, rightdE, strip0dE,
+                        strip17dE, hits_arr, cathode, grid, flags_or, seed_ts,
+                        hSum, cnt, event_idx, &sample_traces, sample_stride,
+                        &n_sampled);
           event_idx++;
         }
 
@@ -629,7 +613,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
                   h.flags, dedup_strat);
       } else {
         // Window exceeded — finalize and start new window.
-        FinalizeEvent(cur_event, pc_cur, output_tree, leftdE, rightdE, strip0dE,
+        FinalizeEvent(cur_event, output_tree, leftdE, rightdE, strip0dE,
                       strip17dE, hits_arr, cathode, grid, flags_or, seed_ts,
                       hSum, cnt, event_idx, &sample_traces, sample_stride,
                       &n_sampled);
@@ -663,9 +647,9 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
       }
       pending.clear();
     }
-    FinalizeEvent(cur_event, pc_cur, output_tree, leftdE, rightdE, strip0dE,
-                  strip17dE, hits_arr, cathode, grid, flags_or, seed_ts, hSum,
-                  cnt, event_idx, &sample_traces, sample_stride, &n_sampled);
+    FinalizeEvent(cur_event, output_tree, leftdE, rightdE, strip0dE, strip17dE,
+                  hits_arr, cathode, grid, flags_or, seed_ts, hSum, cnt,
+                  event_idx, &sample_traces, sample_stride, &n_sampled);
     event_idx++;
   }
 
@@ -724,11 +708,13 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     const TString line = Form(
         "[events] %s: %lld events, %lld complete (%.1f%%), %lld %s hits at "
         "%.0f Hz, %lld outside window, dedup dropped %lld anode\n",
-        file_label.Data(), Long64_t(total_events), Long64_t(complete_events),
-        total_events > 0 ? 100.0 * complete_events / total_events : 0.0,
+        file_label.Data(), Long64_t(cnt.total_events),
+        Long64_t(cnt.complete_events),
+        cnt.total_events > 0 ? 100.0 * cnt.complete_events / cnt.total_events
+                             : 0.0,
         Long64_t(n_ref), Constants::ActiveReferenceChannel().Data(),
         ref_rate_hz, Long64_t(dropped_outside_window),
-        Long64_t(dropped_anode_hits_total));
+        Long64_t(cnt.dropped_anode_hits_total));
     std::cout << line << std::flush;
     return kTRUE;
   }
@@ -770,77 +756,82 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
             << Constants::ActiveReferenceChannel() << " = "
             << (n_ref > 0 ? Double_t(cathode_hits_total) / n_ref : 0.0) << ")"
             << std::endl;
-  std::cout << "Total events: " << total_events << std::endl;
-  if (total_events > 0) {
-    std::cout << "Events with cathode hit: " << events_with_cathode << " ("
-              << (100.0 * events_with_cathode / total_events) << "%)"
+  std::cout << "Total events: " << cnt.total_events << std::endl;
+  if (cnt.total_events > 0) {
+    std::cout << "Events with cathode hit: " << cnt.events_with_cathode << " ("
+              << (100.0 * cnt.events_with_cathode / cnt.total_events) << "%)"
               << std::endl;
     std::cout << "Events with multiple cathode hits: "
-              << events_with_multi_cathode << " ("
-              << (100.0 * events_with_multi_cathode / total_events)
+              << cnt.events_with_multi_cathode << " ("
+              << (100.0 * cnt.events_with_multi_cathode / cnt.total_events)
               << "% of all, "
-              << (events_with_cathode > 0
-                      ? 100.0 * events_with_multi_cathode / events_with_cathode
+              << (cnt.events_with_cathode > 0
+                      ? 100.0 * cnt.events_with_multi_cathode /
+                            cnt.events_with_cathode
                       : 0.0)
               << "% of cathode events)" << std::endl;
     std::cout << "Events with multi-hit on any anode: "
-              << events_with_multi_anode_hit << " ("
-              << (100.0 * events_with_multi_anode_hit / total_events) << "%)"
-              << std::endl;
+              << cnt.events_with_multi_anode_hit << " ("
+              << (100.0 * cnt.events_with_multi_anode_hit / cnt.total_events)
+              << "%)" << std::endl;
     std::cout << "Dropped hits (dedup strategy): anode="
-              << dropped_anode_hits_total
-              << ", cathode=" << dropped_cathode_hits_total << std::endl;
+              << cnt.dropped_anode_hits_total
+              << ", cathode=" << cnt.dropped_cathode_hits_total << std::endl;
   }
-  std::cout << "Complete events: " << complete_events << " ("
-            << (100.0 * complete_events / total_events) << "%)" << std::endl;
-  std::cout << "Incomplete events: " << incomplete_events << " ("
-            << (100.0 * incomplete_events / total_events) << "%)" << std::endl;
-  if (total_events > 0) {
+  std::cout << "Complete events: " << cnt.complete_events << " ("
+            << (100.0 * cnt.complete_events / cnt.total_events) << "%)"
+            << std::endl;
+  std::cout << "Incomplete events: " << cnt.incomplete_events << " ("
+            << (100.0 * cnt.incomplete_events / cnt.total_events) << "%)"
+            << std::endl;
+  if (cnt.total_events > 0) {
     std::cout << "Per-channel miss rate (% of all events where the "
                  "completeness-required channel was zero):"
               << std::endl;
-    std::cout << "  Strip0=" << (100.0 * cnt.miss_strip0 / total_events)
-              << "%   Strip17=" << (100.0 * cnt.miss_strip17 / total_events)
+    std::cout << "  Strip0=" << (100.0 * cnt.miss_strip0 / cnt.total_events)
+              << "%   Strip17=" << (100.0 * cnt.miss_strip17 / cnt.total_events)
               << "%" << std::endl;
     for (Int_t s = 1; s <= 16; s++) {
       const Char_t *side = (s % 2 == 1) ? "L" : "R";
       std::cout << "  " << side << s << "="
-                << (100.0 * cnt.miss_long[s] / total_events) << "%";
+                << (100.0 * cnt.miss_long[s] / cnt.total_events) << "%";
       if (s % 4 == 0)
         std::cout << std::endl;
     }
   }
   if (Constants::cfg.REJECT_FLAGGED_EVENTS) {
-    Int_t stored = complete_events - complete_rejected;
+    Int_t stored = cnt.complete_events - cnt.complete_rejected;
     std::cout << "Stored events (REJECT_FLAGGED_EVENTS=true): " << stored
               << " ("
-              << (complete_events > 0 ? 100.0 * stored / complete_events : 0.0)
-              << "% of complete; " << complete_rejected << " rejected)"
+              << (cnt.complete_events > 0 ? 100.0 * stored / cnt.complete_events
+                                          : 0.0)
+              << "% of complete; " << cnt.complete_rejected << " rejected)"
               << std::endl;
   }
-  if (complete_events > 0) {
+  if (cnt.complete_events > 0) {
     std::cout << "Complete events with rejection-quality flags:" << std::endl;
-    std::cout << "  Fake events: " << complete_with_fake << " ("
-              << (100.0 * complete_with_fake / complete_events) << "%)"
+    std::cout << "  Fake events: " << cnt.complete_with_fake << " ("
+              << (100.0 * cnt.complete_with_fake / cnt.complete_events) << "%)"
               << std::endl;
-    std::cout << "  Saturated: " << complete_with_saturation << " ("
-              << (100.0 * complete_with_saturation / complete_events) << "%)"
-              << std::endl;
-    std::cout << "  Pileup: " << complete_with_pileup << " ("
-              << (100.0 * complete_with_pileup / complete_events) << "%)"
-              << std::endl;
-  }
-  if (incomplete_events > 0) {
-    std::cout << "Incomplete events with rejection-quality flags:" << std::endl;
-    std::cout << "  Fake events: " << incomplete_with_fake << " ("
-              << (100.0 * incomplete_with_fake / incomplete_events) << "%)"
-              << std::endl;
-    std::cout << "  Saturated: " << incomplete_with_saturation << " ("
-              << (100.0 * incomplete_with_saturation / incomplete_events)
+    std::cout << "  Saturated: " << cnt.complete_with_saturation << " ("
+              << (100.0 * cnt.complete_with_saturation / cnt.complete_events)
               << "%)" << std::endl;
-    std::cout << "  Pileup: " << incomplete_with_pileup << " ("
-              << (100.0 * incomplete_with_pileup / incomplete_events) << "%)"
-              << std::endl;
+    std::cout << "  Pileup: " << cnt.complete_with_pileup << " ("
+              << (100.0 * cnt.complete_with_pileup / cnt.complete_events)
+              << "%)" << std::endl;
+  }
+  if (cnt.incomplete_events > 0) {
+    std::cout << "Incomplete events with rejection-quality flags:" << std::endl;
+    std::cout << "  Fake events: " << cnt.incomplete_with_fake << " ("
+              << (100.0 * cnt.incomplete_with_fake / cnt.incomplete_events)
+              << "%)" << std::endl;
+    std::cout << "  Saturated: " << cnt.incomplete_with_saturation << " ("
+              << (100.0 * cnt.incomplete_with_saturation /
+                  cnt.incomplete_events)
+              << "%)" << std::endl;
+    std::cout << "  Pileup: " << cnt.incomplete_with_pileup << " ("
+              << (100.0 * cnt.incomplete_with_pileup / cnt.incomplete_events)
+              << "%)" << std::endl;
   }
 
   std::cout << "Events saved to: " << output_filepath << std::endl;

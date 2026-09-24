@@ -15,7 +15,6 @@
 #include <TCanvas.h>
 #include <TChain.h>
 #include <TCutG.h>
-#include <TEllipse.h>
 #include <TFile.h>
 #include <TGraph.h>
 #include <TGraphErrors.h>
@@ -586,25 +585,14 @@ private:
   static void SaveRegionCuts(Int_t reac, TCutG *cut_an, TCutG *cut_aa);
   static TCutG *LoadRegionCut(const char *name, Int_t reac);
 
-  static void SmoothTrace(const Double_t *in, Double_t *out, Int_t width);
-
   /// Savitzky-Golay smoothing: 3rd-degree polynomial, half-window of 2
   /// (5-point convolution). Uses standard SG coefficients [-3,12,17,12,-3]/35.
   /// At edges, the window shrinks and coefficients are renormalised.
   static void SavitzkyGolay(const Double_t *in, Double_t *out);
 
-  /// CFD-style trigger finder: locate the first strip whose beam-subtracted
-  /// signal (td[s]-1) exceeds both a fraction of the trace peak and a multiple
-  /// of the beam sigma. Returns the strip index, or -1 if no trigger fires.
-  static Int_t FindTrigger(const Double_t *td, const Double_t *base,
-                           Double_t beam_sigma);
-
   // Build a TGraph from Savitzky-Golay-smoothed per-strip totals. Input is
   // the raw normed array; smoothing is applied internally before graph build.
   static TGraph *SmoothedTraceFromTotal(const Double_t *total);
-
-  void ClusterVarHists(Int_t reac, TCutG *cut_aa, TCutG *cut_an,
-                       const TString &subdir);
 
   static TString
   SimFingerprint(const std::vector<RemixSim::SimFileSpec> &specs);
@@ -614,38 +602,15 @@ private:
 
 public:
   /**
-   * @brief Whether an event is tagged as a reaction at a given strip.
+   * @brief Which condition of the tag an event fails first at a strip.
    *
    * The per-strip conditions only: the event-level cuts (PreCut, every strip
    * fired among them) are applied once per event by the fill, before any
    * strip is asked about, and are assumed here.
    *
-   * @param ev   Decoded event.
-   * @param reac Reaction strip index.
-   * @return `kTRUE` if the event is tagged there.
-   */
-  static Bool_t PassesReaction(const EnergyView &ev, Int_t reac);
-  /**
-   * @brief The tail-shape part of the tag, applied inside PassesReaction.
-   *
-   * The conditions the published 87Rb per-strip macros put on the strips
-   * downstream of the reaction: a monotonically falling tail, no return to
-   * the beam and persistence of the excess (their smoothness condition is
-   * event level here, IsSmooth()). Each is off unless its
-   * `StripSumScatterConfig` value is set, so a dataset that sets none of
-   * them tags exactly as before.
-   *
    * @param ev    Decoded event.
    * @param reac  Reaction strip index.
-   * @return `kTRUE` if the tail passes every enabled condition.
-   */
-  static Bool_t PassesTail(const EnergyView &ev, Int_t reac);
-  /**
-   * @brief Which condition of the tag an event fails first at a strip.
-   * @param ev    Decoded event.
-   * @param reac  Reaction strip index.
-   * @return `kTagPass` if tagged, else the first failing TagCut. PassesReaction
-   *         is exactly `RejectReason(ev, reac) == kTagPass`.
+   * @return `kTagPass` if tagged, else the first failing TagCut.
    */
   /// @brief The one strip an event is tagged at, among those whose tag
   ///        passed (`pass[ReacIndex]`), per TAG_RESOLVE; -1 when none.
@@ -662,8 +627,7 @@ public:
   static TagCut RejectReason(const EnergyView &ev, Int_t reac,
                              const TagThresholds &T);
   /// @brief The tail-shape part of RejectReason: `kTagPass` or the first
-  ///        failing tail condition.
-  static TagCut TailReason(const EnergyView &ev, Int_t reac);
+  ///        failing tail condition, under an explicit threshold set.
   static TagCut TailReason(const EnergyView &ev, Int_t reac,
                            const TagThresholds &T);
   /// @brief The event-level pileup and noise cuts (PILEUP_* / NOISE_*), in

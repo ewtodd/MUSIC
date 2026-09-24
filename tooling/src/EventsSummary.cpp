@@ -281,7 +281,6 @@ void EventsSummary::BuildNormedSummaryHistograms(const TString &input_filename,
   cfg.right_odd_max = strip_e_max;
   cfg.right_even_max = strip_e_max;
   cfg.cathode_max = 1.0;
-  cfg.strip17_max = strip_e_max;
   // The grid reads 1.0 for a beam event once it has an anchor (GainGrid), so
   // it takes the strip range rather than the full-scale fraction it once was.
   cfg.grid_max = strip_e_max;

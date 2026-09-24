@@ -69,7 +69,6 @@ struct SummaryHistConfig {
   Double_t right_odd_max;  ///< Right-side ceiling, odd strips.
   Double_t right_even_max; ///< Right-side ceiling, even strips.
   Double_t cathode_max;    ///< Cathode axis maximum.
-  Double_t strip17_max;    ///< Strip 17 axis maximum.
   Double_t grid_max;       ///< Grid axis maximum.
   Double_t strip0_max;     ///< Strip 0 axis maximum.
   Int_t music_energy_bins; ///< Bins on the energy axis of

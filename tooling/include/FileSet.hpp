@@ -91,12 +91,6 @@ public:
    */
   static std::vector<FileSpec> BuildRawOrProcessedFileSpecs();
 
-  /// @brief Filename of the raw converted ROOT file for a subfile.
-  static TString RawRootName(const FileSpec &s);
-
-  /// @brief Filename of the timing-shift friend tree for a subfile.
-  static TString ShiftFriendName(const FileSpec &s);
-
   /// @brief Filename of the built-events ROOT file for a subfile.
   static TString EventsName(const FileSpec &s);
 
@@ -119,25 +113,14 @@ public:
   static FileSpec ResolveFileSpec(const TString &file_label);
 
   /**
-   * @brief Chain every run's events files, grouped by run.
-   *
-   * @param[out] run_order Run numbers in the order they should be processed.
-   *
-   * @return One `TChain` per run, keyed by run number. **The caller owns every
-   *         chain** and must delete them.
-   */
-  static std::map<Int_t, TChain *>
-  GroupEventsByRun(std::vector<Int_t> &run_order);
-
-  /**
    * @brief The events files grouped into the units the beam gates are fitted
    * on.
    *
    * SOLARIS: one group per run, its chunks chained together, keyed by run
-   * number and labelled `run<N>` -- unchanged from GroupEventsByRun(). CoMPASS:
-   * one group per subfile, keyed by a unique id and labelled by the file
-   * (FileLabel()), so a dataset of two runs in hundreds of subfiles gates and
-   * fills one file per task instead of one run per task.
+   * number and labelled `run<N>`. CoMPASS: one group per subfile, keyed by a
+   * unique id and labelled by the file (FileLabel()), so a dataset of two runs
+   * in hundreds of subfiles gates and fills one file per task instead of one
+   * run per task.
    */
   struct GateGroups {
     std::vector<Int_t> order;        ///< Group keys in processing order.

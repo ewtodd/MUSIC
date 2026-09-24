@@ -37,7 +37,12 @@ These operate on the pipeline's output ROOT files, and are all in
   `plots/strip_sum_scatter/selection.{dot,mmd}` (and `.png`/`.pdf` when
   Graphviz's `dot` is on the PATH, as it is in the dev shells); `compute-regions`
   writes the same in the all-tagged mode.
-- **`split-sol`**, **`preprocess-sol`** — the SOL-processing tools.
+- **`preprocess-sol`** — the SOL-processing tool: splits `.sol` files into
+  time chunks and decodes them to raw-hit ROOT files.
+- **`cross-section`** — the absolute cross section per reaction strip from the
+  tagged counts and the region cut, with the cross-section figures.
+- **`talys-xs`** — runs TALYS for each configured model over the strips'
+  energies and writes the residual channels to `root_files/talys/`.
 
 ## Where output goes
 

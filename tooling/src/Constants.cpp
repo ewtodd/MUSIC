@@ -109,13 +109,7 @@ void StripSumScatterConfig::SetDefaults() {
   BOTH_MULT_MAX = -1;      // disabled by default
   BOTH_MULT_COUNT_TO = 16; // whole trace unless narrowed
 
-  TRIGGER_NSIGMA = 5.0;
-  TRIGGER_CFD_FRAC = 0.30;
-  PLATEAU_POST = 3;
-  CLUSTER_SMOOTH_WINDOW = 1;
   SEED_HALF_BINS = 40;
-
-  SAVGOL_HALF = 2;
 
   TRACES_PER_CLASS = 40;
 
@@ -214,24 +208,16 @@ DatasetConfig::DatasetConfig() {
   USE_GPU_ACCELERATION = kTRUE;
   MAX_GPU_CONCURRENT_SORTS = 20;
 
-  STRIP_DE_OVERVIEW_MIN_NORMED = 0.8;
-  STRIP_DE_OVERVIEW_MAX_NORMED = 5;
   BEAM_GATE_NSIGMA = 3.0;
   STRIP_DE_MIN_NORMED = 0.8;
   STRIP_DE_MAX_NORMED = 1.3;
-  CATHODE_E_MAX_NORMED = 300;
-  TOTAL_E_MIN_NORMED = 10.0;
-  TOTAL_E_MAX_NORMED = 400.0;
 
   STRIP_SUM_SCATTER_CONFIG.SetDefaults();
   CROSS_SECTION_CONFIG.SetDefaults();
 
   STRIP_E_MIN_ADC = 0.0;
   STRIP_E_MAX_ADC = 4096.0;
-  TOTAL_E_MIN_ADC = 0.0;
-  TOTAL_E_MAX_ADC = 60000.0;
 
-  GRID_MIN_ADC = 0.0;
   GRID_MAX_ADC = 16384.0;
 
   REFERENCE_CHANNEL_MIN_ADC = 0.0;
@@ -471,7 +457,7 @@ const PulseHistoryGroups &ActivePulseHistoryGroups() {
   return gActiveEpoch ? gActiveEpoch->pulse_history : cfg.PULSE_HISTORY_GROUPS;
 }
 
-const RunEpoch *AnalysisEpoch() {
+static const RunEpoch *AnalysisEpoch() {
   const std::vector<TString> &want = cfg.CROSS_SECTION_CONFIG.EPOCHS;
   const RunEpoch *found = nullptr;
   Int_t n = 0;

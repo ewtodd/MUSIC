@@ -289,14 +289,6 @@ std::vector<FileSpec> FileSet::BuildRawOrProcessedFileSpecs() {
   return specs;
 }
 
-TString FileSet::RawRootName(const FileSpec &s) {
-  return Form("DataR_run_%d%s.root", s.run, s.suffix.Data());
-}
-
-TString FileSet::ShiftFriendName(const FileSpec &s) {
-  return Form("DataR_run_%d%s.shift.root", s.run, s.suffix.Data());
-}
-
 TString FileSet::EventsName(const FileSpec &s) {
   const TString &tag = Constants::ActiveFileTag();
   if (tag.Length() > 0)
@@ -309,26 +301,6 @@ TString FileSet::FileLabel(const FileSpec &s) {
   if (tag.Length() > 0)
     return Form("%s_run%d%s", tag.Data(), s.run, s.suffix.Data());
   return Form("run%d%s", s.run, s.suffix.Data());
-}
-
-std::map<Int_t, TChain *>
-FileSet::GroupEventsByRun(std::vector<Int_t> &run_order) {
-  std::map<Int_t, TChain *> chain_by_run;
-  std::vector<FileSpec> all_specs = BuildProcessedFileSpecs();
-  for (Int_t i = 0; i < Int_t(all_specs.size()); i++) {
-    const FileSpec &s = all_specs[i];
-    TString full = IO::GetRootFilesBaseDir() + "/" + EventsName(s) + ".root";
-    if (gSystem->AccessPathName(full)) {
-      std::cerr << "Missing events file: " << full << std::endl;
-      continue;
-    }
-    if (chain_by_run.find(s.run) == chain_by_run.end()) {
-      chain_by_run[s.run] = new TChain("events");
-      run_order.push_back(s.run);
-    }
-    chain_by_run[s.run]->Add(full);
-  }
-  return chain_by_run;
 }
 
 FileSet::GateGroups FileSet::GroupEventsForGating() {

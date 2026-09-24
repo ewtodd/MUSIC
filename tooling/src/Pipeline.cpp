@@ -135,16 +135,8 @@ Bool_t RunFusedPipelineForFile(FileSpec spec, UShort_t run_header,
       }
       // Reserve an estimate to avoid repeated reallocation (~1M blocks typical)
       hits.reserve(1048576);
-      while (sol_reader.ReadEvent()) {
-        const SOLData &sol = sol_reader.GetCurrentEvent();
-        RawHit raw;
-        raw.board = 0;
-        raw.channel = sol.channel;
-        raw.energy = sol.energy;
-        raw.timestamp = sol.timestamp * 1000;
-        raw.flags = MapSOLFlagsToCoMPASS(sol.flags_high, sol.flags_low);
-        hits.push_back(raw);
-      }
+      while (sol_reader.ReadEvent())
+        hits.push_back(SOLHitToRawHit(sol_reader.GetCurrentEvent()));
       sol_reader.Close();
     } else {
       // CoMPASS: direct conversion to RawHit

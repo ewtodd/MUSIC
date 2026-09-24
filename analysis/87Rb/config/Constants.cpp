@@ -45,7 +45,6 @@ void InitDatasetConfig() {
       {{3, 15}, "Strip17"}};
 
   gInstance.STRIP_E_MAX_ADC = 12000;
-  gInstance.TOTAL_E_MAX_ADC = 15 * gInstance.STRIP_E_MAX_ADC;
   gInstance.STRIP_DE_MIN_NORMED = 0;
   gInstance.STRIP_DE_MAX_NORMED = 4;
 

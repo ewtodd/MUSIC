@@ -12,7 +12,7 @@
  * Binds to an events tree or chain, then decodes each entry: per-channel gains
  * are applied, then per-strip alignment factors. Whether the result is in
  * arbitrary calibrated units or still raw ADC depends on whether a calibration
- * tree was found — see #is_normed and Unit().
+ * tree was found — see #is_normed.
  *
  * The layout follows the detector: strips 1-16 are segmented and read at a
  * left and a right end, held in arrays of 16 indexed by `strip - 1`; strips 0
@@ -146,25 +146,12 @@ struct EnergyView {
   Double_t Axis(Int_t axis) const {
     return axis == GATE_AXIS_GRID ? grid : Total(axis);
   }
-  /// @brief A strip's raw ADC deposit, summed the same way.
-  /// @param strip Anode strip, 0 to 17.
-  Double_t TotalAdc(Int_t strip) const {
-    if (strip <= 0)
-      return Double_t(strip0_adc);
-    if (strip >= 17)
-      return Double_t(strip17_adc);
-    return Double_t(leftdE_adc[strip - 1]) + Double_t(rightdE_adc[strip - 1]);
-  }
   /// @brief Every strip's deposit at once, for code that wants an array.
   /// @param[out] out 18 values, one per strip.
   void Totals(Double_t *out) const {
     for (Int_t s = 0; s < 18; s++)
       out[s] = Total(s);
   }
-
-  /// @brief Unit label for the decoded values, for axis titles.
-  /// @return Arbitrary units when #is_normed, otherwise an ADC label.
-  const char *Unit() const;
 };
 
 #endif

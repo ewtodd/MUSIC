@@ -1,4 +1,5 @@
 #include "BeamFit2D.hpp"
+#include <TEllipse.h>
 #include <TF1.h>
 #include <TF2.h>
 #include <TFitResult.h>
@@ -18,6 +19,24 @@ Bool_t BeamFitUtils::InEllipseXY(const BeamFit2D &b, Double_t x, Double_t y,
   Double_t chi2 =
       (dx_s * dx_s + dy_s * dy_s - 2.0 * rho * dx_s * dy_s) / (1.0 - r2);
   return chi2 < n * n;
+}
+
+void BeamFitUtils::DrawEllipse(const BeamFit2D &b, Double_t n, Color_t color) {
+  Double_t sxx = b.sigma_x * b.sigma_x;
+  Double_t syy = b.sigma_y * b.sigma_y;
+  Double_t sxy = b.rho * b.sigma_x * b.sigma_y;
+  Double_t sum = sxx + syy;
+  Double_t diff = sxx - syy;
+  Double_t det = TMath::Sqrt(diff * diff + 4.0 * sxy * sxy);
+  Double_t lambda1 = 0.5 * (sum + det);
+  Double_t lambda2 = 0.5 * (sum - det);
+  Double_t theta = 0.5 * TMath::ATan2(2.0 * sxy, diff) * 180.0 / TMath::Pi();
+  TEllipse *e = new TEllipse(b.mu_x, b.mu_y, n * TMath::Sqrt(lambda1),
+                             n * TMath::Sqrt(lambda2), 0, 360, theta);
+  e->SetFillStyle(0);
+  e->SetLineColor(color);
+  e->SetLineWidth(2);
+  e->Draw();
 }
 
 Moments2D BeamFitUtils::ComputeMoments(TH2F *h, Int_t lo_bx, Int_t hi_bx,
@@ -124,6 +143,68 @@ Moments2D BeamFitUtils::ClippedMoments(
       break;
   }
   return m;
+}
+
+Moments2D BeamFitUtils::SeedSpotMoments(TH2F *h, Int_t seed_half_bins) {
+  // The seed threshold: a fraction of the peak bin.
+  const Double_t kSeedFrac = 0.3;
+  const Double_t bw_x = h->GetXaxis()->GetBinWidth(1);
+  const Double_t bw_y = h->GetYaxis()->GetBinWidth(1);
+  Int_t bx, by, bz;
+  h->GetMaximumBin(bx, by, bz);
+  const Double_t peak_val = h->GetBinContent(bx, by);
+  Int_t lo_bx = std::max(1, bx - seed_half_bins);
+  Int_t hi_bx = std::min(h->GetNbinsX(), bx + seed_half_bins);
+  Int_t lo_by = std::max(1, by - seed_half_bins);
+  Int_t hi_by = std::min(h->GetNbinsY(), by + seed_half_bins);
+  return ComputeMoments(h, lo_bx, hi_bx, lo_by, hi_by, kSeedFrac * peak_val,
+                        bw_x, bw_y);
+}
+
+BeamFitUtils::SpotFit
+BeamFitUtils::FitSpotFromPoints(TH2F *h,
+                                std::vector<std::pair<Float_t, Float_t>> &pts,
+                                const Moments2D &seed) {
+  // The core moments only seed the clip; the clip seeds the fit and is the
+  // fallback.
+  Moments2D m = ClippedMoments(pts, seed);
+
+  // The width the fit reports is a fitted sigma: the same events, finely
+  // binned around the seed, fitted with a correlated Gaussian on a pedestal.
+  // Only the inner kFitWindow is fitted, narrow so the ~2x pileup blob and
+  // any reaction shoulder stay out of the width; the rest of the histogram is
+  // what the goodness check reads.
+  const Double_t kSpotWindow = 4.0;
+  const Double_t kFitWindow = 2.0;
+  const Int_t kSpotBins = 160;
+  TH2F *hf = new TH2F(Form("%s_fit", h->GetName()), "", kSpotBins,
+                      m.mu_x - kSpotWindow * m.sigma_x,
+                      m.mu_x + kSpotWindow * m.sigma_x, kSpotBins,
+                      m.mu_y - kSpotWindow * m.sigma_y,
+                      m.mu_y + kSpotWindow * m.sigma_y);
+  hf->SetDirectory(nullptr);
+  for (size_t k = 0; k < pts.size(); k++)
+    hf->Fill(pts[k].first, pts[k].second);
+  std::vector<std::pair<Float_t, Float_t>>().swap(pts);
+  SpotFit out;
+  BeamFit2D fit = FitSpot(hf, m, kFitWindow, &out.chi2_ndf);
+  delete hf;
+  if (fit.ok) {
+    out.fit = fit;
+    out.fit_used = kTRUE;
+    return out;
+  }
+  // A fit that ran away is dropped for the clipped moments.
+  Int_t bx, by, bz;
+  h->GetMaximumBin(bx, by, bz);
+  out.fit.amp = h->GetBinContent(bx, by);
+  out.fit.mu_x = m.mu_x;
+  out.fit.mu_y = m.mu_y;
+  out.fit.sigma_x = m.sigma_x;
+  out.fit.sigma_y = m.sigma_y;
+  out.fit.rho = m.rho;
+  out.fit.ok = kTRUE;
+  return out;
 }
 
 BeamFit2D BeamFitUtils::FitSpot(TH2F *h, const Moments2D &seed,

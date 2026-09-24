@@ -122,39 +122,16 @@ inline UInt_t MapSOLFlagsToCoMPASS(UShort_t sol_flags_high,
 }
 
 /**
- * @brief Recover the SOLARIS low-priority word from a packed value.
- * @param mapped Word from MapSOLFlagsToCoMPASS().
- * @return `flags_low`, bits 0-10.
- * @note Use this rather than open-coding the shift, so the layout stays defined
- *       in one place.
- */
-inline UShort_t SOLFlagsLowFrom(UInt_t mapped) {
-  return UShort_t((mapped >> SOLPack::LOW_SHIFT) & SOLPack::LOW_MASK);
-}
-
-/**
- * @brief Recover the SOLARIS high-priority word from a packed value.
- * @param mapped Word from MapSOLFlagsToCoMPASS().
- * @return `flags_high` bits 2-6, in their original positions.
- * @note Bit 0, pileup, is not carried here — read `CoMPASSData::PILEUP`
- *       instead. Bits 1 and 7 are undefined by the format.
- */
-inline UShort_t SOLFlagsHighFrom(UInt_t mapped) {
-  return UShort_t(((mapped >> SOLPack::HIGH_SHIFT) & SOLPack::HIGH_MASK)
-                  << SOLPack::HIGH_SKIP);
-}
-
-/**
  * @brief Adapt one SOLARIS hit into the pipeline's `RawHit`.
  *
- * @param sol Hit to convert.
+ * @param sol Block to convert.
  * @return The adapted hit.
  *
  * @note Board is always `0`: the SOLARIS digitiser presents a flat channel
  *       space with no board dimension. Timestamps are scaled from nanoseconds
  *       to the picoseconds the pipeline works in.
  */
-inline RawHit SOLHitToRawHit(const SOLHit &sol) {
+inline RawHit SOLHitToRawHit(const SOLData &sol) {
   RawHit raw;
   raw.board = 0;
   raw.channel = sol.channel;
@@ -162,19 +139,6 @@ inline RawHit SOLHitToRawHit(const SOLHit &sol) {
   raw.timestamp = sol.timestamp * 1000;
   raw.flags = MapSOLFlagsToCoMPASS(sol.flags_high, sol.flags_low);
   return raw;
-}
-
-/// @brief Adapt a whole run's SOLARIS hits.
-/// @param sol_hits Hits to convert.
-/// @return The adapted hits, in the same order.
-inline std::vector<RawHit>
-SOLHitsToRawHits(const std::vector<SOLHit> &sol_hits) {
-  std::vector<RawHit> raw_hits;
-  raw_hits.reserve(sol_hits.size());
-  for (Int_t i = 0; i < Int_t(sol_hits.size()); i++) {
-    raw_hits.push_back(SOLHitToRawHit(sol_hits[i]));
-  }
-  return raw_hits;
 }
 
 #endif

@@ -1,5 +1,6 @@
 #include "CalibrateBeam.hpp"
 #include <Rtypes.h>
+#include <TH2D.h>
 #include <utility>
 
 const Int_t kMaxChannels = 36;
@@ -67,24 +68,10 @@ std::vector<ChannelCal> CalibrateBeam::BuildChannels() {
 
 Char_t LongSide(Int_t strip) { return (strip % 2 == 0) ? 'R' : 'L'; }
 
-Bool_t IsBeamdEChannel(const ChannelCal &c) {
-  if (c.side == 'S')
-    return kTRUE;
-  if (c.side != 'L' && c.side != 'R')
-    return kFALSE;
-  if (c.strip < 1 || c.strip > 16)
-    return kFALSE;
-  return c.side == LongSide(c.strip);
-}
-
 Bool_t IsCalibrated(const ChannelCal &c) { return c.fit_adc > 0; }
 
 Double_t Gain(const ChannelCal &c) {
   return c.gain >= 0.0 ? c.gain : 1.0 / c.fit_adc;
-}
-
-inline Double_t ApplyCal(const ChannelCal &c, Double_t adc) {
-  return Gain(c) * adc;
 }
 
 /// The beam gate for one strip: a 2D Gaussian on the (strip sx, strip sy) raw
@@ -158,24 +145,11 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
     return out;
   }
 
-  const Double_t kSeedFrac = 0.30;
   /// With 1024 bins instead of 256, scale from 10→40 to keep the ADC seed
   /// window roughly 640 ADC (10 bins × 16384/256 = 640; 40 bins × 16384/1024 =
   /// 640).
   const Int_t kSeedHalfBins = 40;
-  const Int_t kMomentRefineIters = 4;
-  const Double_t kMomentRefineNSigma = 2.5;
-  Double_t bw_x = h->GetXaxis()->GetBinWidth(1);
-  Double_t bw_y = h->GetYaxis()->GetBinWidth(1);
-  Int_t bx, by, bz;
-  h->GetMaximumBin(bx, by, bz);
-  Double_t peak_val = h->GetBinContent(bx, by);
-  Int_t lo_bx = std::max(1, bx - kSeedHalfBins);
-  Int_t hi_bx = std::min(h->GetNbinsX(), bx + kSeedHalfBins);
-  Int_t lo_by = std::max(1, by - kSeedHalfBins);
-  Int_t hi_by = std::min(h->GetNbinsY(), by + kSeedHalfBins);
-  Moments2D m = BeamFitUtils::ComputeMoments(h, lo_bx, hi_bx, lo_by, hi_by,
-                                             kSeedFrac * peak_val, bw_x, bw_y);
+  Moments2D m = BeamFitUtils::SeedSpotMoments(h, kSeedHalfBins);
   if (m.weight <= 0) {
     Constants::DetailErr() << "  " << run_label
                            << ": no bins above beam seed threshold"
@@ -185,6 +159,13 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
   }
   // Re-center iteratively (moments inside ±2.5σ of the centroid); at high
   // rate (run84: 45 kHz) the ~2x-beam pileup blob passes the seed cut.
+  const Int_t kMomentRefineIters = 4;
+  const Double_t kMomentRefineNSigma = 2.5;
+  const Double_t bw_x = h->GetXaxis()->GetBinWidth(1);
+  const Double_t bw_y = h->GetYaxis()->GetBinWidth(1);
+  Int_t bx, by, bz;
+  h->GetMaximumBin(bx, by, bz);
+  const Double_t peak_val = h->GetBinContent(bx, by);
   for (Int_t iter = 0; iter < kMomentRefineIters; iter++) {
     Int_t wlo_bx = std::max(
         1, h->GetXaxis()->FindBin(m.mu_x - kMomentRefineNSigma * m.sigma_x));
@@ -197,79 +178,31 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
         h->GetNbinsY(),
         h->GetYaxis()->FindBin(m.mu_y + kMomentRefineNSigma * m.sigma_y));
     Moments2D m_ref = BeamFitUtils::ComputeMoments(
-        h, wlo_bx, whi_bx, wlo_by, whi_by, kSeedFrac * peak_val, bw_x, bw_y);
+        h, wlo_bx, whi_bx, wlo_by, whi_by, 0.30 * peak_val, bw_x, bw_y);
     if (m_ref.weight <= 0)
       break;
     m = m_ref;
   }
-  // The core moments only seed the clip; the clip seeds the fit and is the
-  // fallback.
-  m = BeamFitUtils::ClippedMoments(pts, m);
-
-  // The width BEAM_GATE_NSIGMA is in is a fitted sigma: the same events,
+  // The width BEAM_GATE_NSIGMA is in is a fitted sigma: the spot events,
   // finely binned around the seed, fitted with a correlated Gaussian on a
   // pedestal. Fine binning matters — over the full ADC range the spot is a
   // few bins wide and the fit would be fitting the binning.
-  // Only the inner kFitWindow is fitted, narrow so the ~2x pileup blob and any
-  // reaction shoulder stay out of the width; the rest of the histogram is what
-  // the goodness check reads.
-  const Double_t kSpotWindow = 4.0;
-  const Double_t kFitWindow = 2.0;
-  const Int_t kSpotBins = 160;
-  TH2F *hf = new TH2F(Form("%s_fit", h->GetName()), "", kSpotBins,
-                      m.mu_x - kSpotWindow * m.sigma_x,
-                      m.mu_x + kSpotWindow * m.sigma_x, kSpotBins,
-                      m.mu_y - kSpotWindow * m.sigma_y,
-                      m.mu_y + kSpotWindow * m.sigma_y);
-  hf->SetDirectory(nullptr);
-  for (size_t k = 0; k < pts.size(); k++)
-    hf->Fill(pts[k].first, pts[k].second);
-  std::vector<std::pair<Float_t, Float_t>>().swap(pts);
-  Double_t chi2_ndf = -1.0;
-  BeamFit2D fit = BeamFitUtils::FitSpot(hf, m, kFitWindow, &chi2_ndf);
-  delete hf;
-
-  if (fit.ok) {
-    out = fit;
-  } else {
-    // A fit that ran away is dropped for the clipped moments.
-    out.amp = peak_val;
-    out.mu_x = m.mu_x;
-    out.mu_y = m.mu_y;
-    out.sigma_x = m.sigma_x;
-    out.sigma_y = m.sigma_y;
-    out.rho = m.rho;
-    out.ok = kTRUE;
-  }
+  BeamFitUtils::SpotFit spot = BeamFitUtils::FitSpotFromPoints(h, pts, m);
+  out = spot.fit;
   Constants::Detail() << "  beam gate strip " << sy << " (strips " << sx
                       << " vs " << sy << "): "
-                      << (fit.ok ? "fit" : "CLIPPED MOMENTS (fit failed)")
+                      << (spot.fit_used ? "fit"
+                                        : "CLIPPED MOMENTS (fit failed)")
                       << " mu=(" << out.mu_x << "," << out.mu_y << ") sigma=("
                       << out.sigma_x << "," << out.sigma_y
-                      << ") rho=" << out.rho << " chi2/ndf=" << chi2_ndf
+                      << ") rho=" << out.rho << " chi2/ndf=" << spot.chi2_ndf
                       << std::endl;
 
   if (save_plot) {
     TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
     PlottingUtils::ConfigureAndDraw2DHistogram(h, cv);
-    // Correlated 2D Gaussian ellipse: TEllipse rotates per the covariance
-    // eigen-decomposition, so the drawn contour = the InEllipseXY gate (χ²<n²).
-    Double_t sxx = out.sigma_x * out.sigma_x;
-    Double_t syy = out.sigma_y * out.sigma_y;
-    Double_t sxy = out.rho * out.sigma_x * out.sigma_y;
-    Double_t sum = sxx + syy;
-    Double_t diff = sxx - syy;
-    Double_t det = TMath::Sqrt(diff * diff + 4.0 * sxy * sxy);
-    Double_t lambda1 = 0.5 * (sum + det);
-    Double_t lambda2 = 0.5 * (sum - det);
-    Double_t theta = 0.5 * TMath::ATan2(2.0 * sxy, diff) * 180.0 / TMath::Pi();
-    const Double_t n = Constants::cfg.BEAM_GATE_NSIGMA;
-    TEllipse *e = new TEllipse(out.mu_x, out.mu_y, n * TMath::Sqrt(lambda1),
-                               n * TMath::Sqrt(lambda2), 0, 360, theta);
-    e->SetFillStyle(0);
-    e->SetLineColor(kViolet + 2);
-    e->SetLineWidth(2);
-    e->Draw();
+    BeamFitUtils::DrawEllipse(out, Constants::cfg.BEAM_GATE_NSIGMA,
+                              kViolet + 2);
     if (Constants::SavePlots())
       PlottingUtils::SaveFigure(cv, Form("beam_gate_s%02d", sy),
                                 plot_subdir + "/beam_gate",
@@ -280,7 +213,9 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
   return out;
 }
 
-inline Double_t Median(std::vector<Float_t> &v) {
+// Median by partial sort; v need not be sorted, but is only partially
+// ordered afterwards, so a sort is still needed for other order statistics.
+template <class T> inline Double_t Median(std::vector<T> &v) {
   if (v.empty())
     return 0.0;
   Int_t n = Int_t(v.size());
@@ -291,21 +226,6 @@ inline Double_t Median(std::vector<Float_t> &v) {
     med = 0.5 * (med + Double_t(v[n / 2 - 1]));
   }
   return med;
-}
-
-// IQR = Q3 - Q1; divide by 1.349 outside this helper for the Gaussian-sigma
-// approximation when needed.
-inline Double_t InterquartileRange(std::vector<Float_t> &v) {
-  if (v.size() < 4)
-    return 0.0;
-  Int_t n = Int_t(v.size());
-  Int_t i1 = n / 4;
-  Int_t i3 = (3 * n) / 4;
-  std::nth_element(v.begin(), v.begin() + i1, v.end());
-  Double_t q1 = Double_t(v[i1]);
-  std::nth_element(v.begin(), v.begin() + i3, v.end());
-  Double_t q3 = Double_t(v[i3]);
-  return q3 - q1;
 }
 
 /// Robust peak/width estimate used to seed the beam-peak Gaussian fit, and as
@@ -348,40 +268,6 @@ void RobustPeakSeed(const std::vector<Float_t> &v, Double_t &mode,
   mode = h.GetBinCenter(h.GetMaximumBin());
   if (!(mode > 0.0))
     mode = med;
-}
-
-/// Fit a Gaussian to the bucket and return (mu, sigma). Falls back to
-/// (median, IQR/1.349) on fit failure. Sim per-channel deposits are
-/// well-approximated by a Gaussian, so a direct fit gives a cleaner
-/// (mu, sigma) than median/IQR estimators.
-Bool_t FitGaussianMuSigma(const std::vector<Float_t> &v, const TString &fname,
-                          Double_t &mu, Double_t &sigma) {
-  if (v.size() < 50)
-    return kFALSE;
-  Float_t lo = v[0], hi = v[0];
-  for (Int_t j = 1; j < Int_t(v.size()); j++) {
-    if (v[j] < lo)
-      lo = v[j];
-    if (v[j] > hi)
-      hi = v[j];
-  }
-  Double_t pad = 0.05 * (Double_t(hi) - Double_t(lo));
-  if (pad < 1e-6)
-    pad = 1e-6;
-  const Int_t nbins = 75;
-  TH1F h(fname + "_h", "", nbins, Double_t(lo) - pad, Double_t(hi) + pad);
-  h.SetDirectory(nullptr);
-  for (Int_t j = 0; j < Int_t(v.size()); j++)
-    h.Fill(Double_t(v[j]));
-  TF1 fg(fname, "gaus", Double_t(lo) - pad, Double_t(hi) + pad);
-  Int_t pb = h.GetMaximumBin();
-  fg.SetParameters(h.GetBinContent(pb), h.GetBinCenter(pb), h.GetRMS());
-  TFitResultPtr r = h.Fit(&fg, "QSRN");
-  if (!r.Get() || !r->IsValid())
-    return kFALSE;
-  mu = fg.GetParameter(1);
-  sigma = std::fabs(fg.GetParameter(2));
-  return mu > 0 && sigma > 0;
 }
 
 /// Paired (L, R) raw-ADC samples for one strip, collected UNGATED from events
@@ -652,18 +538,12 @@ Bool_t TheilSenLine(const std::vector<Double_t> &x,
     }
   if (slopes.empty())
     return kFALSE;
-  std::sort(slopes.begin(), slopes.end());
-  const Int_t m = Int_t(slopes.size());
-  slope =
-      (m % 2 == 1) ? slopes[m / 2] : 0.5 * (slopes[m / 2 - 1] + slopes[m / 2]);
+  slope = Median(slopes);
   std::vector<Double_t> resid;
   resid.reserve(n);
   for (Int_t i = 0; i < n; i++)
     resid.push_back(y[i] - slope * x[i]);
-  std::sort(resid.begin(), resid.end());
-  const Int_t r = Int_t(resid.size());
-  intercept =
-      (r % 2 == 1) ? resid[r / 2] : 0.5 * (resid[r / 2 - 1] + resid[r / 2]);
+  intercept = Median(resid);
   return kTRUE;
 }
 
@@ -678,19 +558,15 @@ Bool_t TheilSenLine(const std::vector<Double_t> &x,
 Double_t RidgeShortAnchor(const std::vector<Float_t> &v_short,
                           const std::vector<Float_t> &v_long, Double_t c_long,
                           Double_t &slope_out, Double_t &intercept_out,
-                          RidgeFit *dbg = nullptr) {
+                          RidgeFit &dbg) {
   slope_out = 0.0;
   intercept_out = 0.0;
-  if (dbg) {
-    dbg->c_long = c_long;
-    dbg->n_gated = Long64_t(v_short.size());
-  }
+  dbg.c_long = c_long;
+  dbg.n_gated = Long64_t(v_short.size());
   if (c_long <= 0 || v_short.size() != v_long.size() || v_short.size() < 500) {
-    if (dbg)
-      dbg->fail = c_long <= 0 ? "c_long<=0"
-                  : v_short.size() != v_long.size()
-                      ? "size mismatch"
-                      : "fewer than 500 gated pairs";
+    dbg.fail = c_long <= 0                       ? "c_long<=0"
+               : v_short.size() != v_long.size() ? "size mismatch"
+                                                 : "fewer than 500 gated pairs";
     return 0.0;
   }
   const Double_t hi = kRidgeShortMaxFrac * c_long;
@@ -702,12 +578,10 @@ Double_t RidgeShortAnchor(const std::vector<Float_t> &v_short,
     Double_t sh = Double_t(v_short[j]), lg = Double_t(v_long[j]);
     if (sh < lo || sh >= hi)
       continue;
-    if (dbg)
-      dbg->n_short_window++;
+    dbg.n_short_window++;
     if (lg <= kRidgeBandLo * c_long || lg >= kRidgeBandHi * c_long)
       continue;
-    if (dbg)
-      dbg->n_long_band++;
+    dbg.n_long_band++;
     in_window.push_back(std::make_pair(sh, lg));
   }
   // Slice count from the population: kRidgeMinPerSlice per slice on average,
@@ -733,55 +607,48 @@ Double_t RidgeShortAnchor(const std::vector<Float_t> &v_short,
         if (Long64_t(slice[b].size()) < min_per_slice)
           continue;
         std::sort(slice[b].begin(), slice[b].end());
-        Double_t med = slice[b][slice[b].size() / 2];
-        Double_t iqr =
-            slice[b][slice[b].size() * 3 / 4] - slice[b][slice[b].size() / 4];
+        const Int_t nb = Int_t(slice[b].size());
+        // The IQR reads the sorted slice, so it comes before the median,
+        // which only partially orders it.
+        const Double_t iqr = slice[b][nb * 3 / 4] - slice[b][nb / 4];
+        const Double_t med = Median(slice[b]);
         x.push_back(lo + (b + 0.5) * (hi - lo) / n_slices);
         y.push_back(med);
-        ey.push_back(1.253 * (iqr / 1.349) /
-                     TMath::Sqrt(Double_t(slice[b].size())));
+        ey.push_back(1.253 * (iqr / 1.349) / TMath::Sqrt(Double_t(nb)));
       }
       if (Int_t(x.size()) >= kRidgeMinPts || min_per_slice <= kRidgeNoiseFloor)
         break;
       // Halve the floor and retry.
       min_per_slice = TMath::Max(kRidgeNoiseFloor, min_per_slice / 2);
     }
-    if (dbg)
-      dbg->min_per_slice = min_per_slice;
+    dbg.min_per_slice = min_per_slice;
   }
-  if (dbg) {
-    dbg->x = x;
-    dbg->y = y;
-    dbg->ey = ey;
-    dbg->lo = lo;
-    dbg->hi = hi;
-    dbg->n_slices = Int_t(x.size());
-  }
+  dbg.x = x;
+  dbg.y = y;
+  dbg.ey = ey;
+  dbg.lo = lo;
+  dbg.hi = hi;
+  dbg.n_slices = Int_t(x.size());
   if (Int_t(x.size()) < kRidgeMinPts) {
-    if (dbg)
-      dbg->fail = "fewer than kRidgeMinPts filled slices";
+    dbg.fail = "fewer than kRidgeMinPts filled slices";
     return 0.0;
   }
   // TheilSen: median of pairwise slopes; outlying slice medians (2/3-particle
   // bands, low-long background) can't bend the slope as a chi-square pol1.
   Double_t slope = 0.0, inter = 0.0;
   if (!TheilSenLine(x, y, slope, inter)) {
-    if (dbg)
-      dbg->fail = "degenerate slice set (TheilSenLine)";
+    dbg.fail = "degenerate slice set (TheilSenLine)";
     return 0.0;
   }
   slope_out = slope;
   intercept_out = inter;
-  if (dbg) {
-    dbg->slope = slope;
-    dbg->intercept = inter;
-    dbg->fitted = kTRUE;
-    if (slope < 0)
-      dbg->c_short = -inter / slope;
-  }
+  dbg.slope = slope;
+  dbg.intercept = inter;
+  dbg.fitted = kTRUE;
+  if (slope < 0)
+    dbg.c_short = -inter / slope;
   if (slope >= 0) {
-    if (dbg)
-      dbg->fail = "slope >= 0";
+    dbg.fail = "slope >= 0";
     return 0.0;
   }
   // Line must cross the long axis near the modal seed: above it by the
@@ -789,8 +656,7 @@ Double_t RidgeShortAnchor(const std::vector<Float_t> &v_short,
   // see ComputeLRGainMatch); a large departure means the band selection
   // missed the single-particle ridge; window loose.
   if (inter < 0.80 * c_long || inter > 1.35 * c_long) {
-    if (dbg)
-      dbg->fail = "intercept outside [0.80, 1.35]*C_long";
+    dbg.fail = "intercept outside [0.80, 1.35]*C_long";
     return 0.0;
   }
   // The line's short-axis crossing, as the "measurable" flag; the caller
@@ -1012,19 +878,11 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
     all_ratios.insert(all_ratios.end(), v.begin(), v.end());
     if (v.size() < 2)
       continue;
-    std::sort(v.begin(), v.end());
-    Int_t m = Int_t(v.size());
-    median_ratio[par] =
-        (m % 2 == 1) ? v[m / 2] : 0.5 * (v[m / 2 - 1] + v[m / 2]);
+    median_ratio[par] = Median(v);
   }
   Double_t global_ratio = 0.0;
-  if (!all_ratios.empty()) {
-    std::sort(all_ratios.begin(), all_ratios.end());
-    Int_t m = Int_t(all_ratios.size());
-    global_ratio = (m % 2 == 1)
-                       ? all_ratios[m / 2]
-                       : 0.5 * (all_ratios[m / 2 - 1] + all_ratios[m / 2]);
-  }
+  if (!all_ratios.empty())
+    global_ratio = Median(all_ratios);
   Constants::Detail() << "  ridge ratio medians: odd="
                       << Form("%.3f", median_ratio[1])
                       << " even=" << Form("%.3f", median_ratio[0])
@@ -1036,10 +894,7 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
     std::vector<Double_t> &v = offsets_found[par];
     if (v.size() < 2)
       continue;
-    std::sort(v.begin(), v.end());
-    Int_t m = Int_t(v.size());
-    median_offset[par] =
-        (m % 2 == 1) ? v[m / 2] : 0.5 * (v[m / 2 - 1] + v[m / 2]);
+    median_offset[par] = Median(v);
   }
   Constants::Detail() << "  ridge offset medians (x C_long): odd="
                       << Form("%.3f", median_offset[1])
@@ -1300,9 +1155,7 @@ void WriteCalibrationToEvents(const FileSpec &spec,
 
 // Per-channel calibrated overlay for one subfile, via AttachCalSidecar (the
 // same path downstream macros use). The sidecar must already be on disk.
-void SaveDynamicRangeOverlay(const FileSpec &spec,
-                             const std::vector<ChannelCal> &chans,
-                             const TString &plot_subdir,
+void SaveDynamicRangeOverlay(const FileSpec &spec, const TString &plot_subdir,
                              const TString &file_label) {
   const Int_t kNStrips = 18;
   const Double_t emin = Constants::cfg.STRIP_DE_MIN_NORMED;
@@ -1719,7 +1572,7 @@ void CalibrateBeam::CalibrateBeamOneSubfile(
 
   {
     std::lock_guard<std::mutex> lock(g_plot_mutex);
-    SaveDynamicRangeOverlay(spec, chans, plot_subdir, file_label);
+    SaveDynamicRangeOverlay(spec, plot_subdir, file_label);
   }
 
   // One line per subfile whatever the sample: what was measured and what fell
@@ -1808,13 +1661,16 @@ void CalibrateBeam::AggregateRidgeRatiosForRun(
     std::sort(v.begin(), v.end());
     std::sort(vo.begin(), vo.end());
     Int_t m = Int_t(v.size());
-    med[s] = (m % 2 == 1) ? v[m / 2] : 0.5 * (v[m / 2 - 1] + v[m / 2]);
-    med_off[s] = (m % 2 == 1) ? vo[m / 2] : 0.5 * (vo[m / 2 - 1] + vo[m / 2]);
+    // The IQR reads the sorted vectors, so it comes before the medians,
+    // which only partially order them.
     Double_t lo = v[m / 4], hi = v[(3 * m) / 4];
+    Double_t lo_off = vo[m / 4], hi_off = vo[(3 * m) / 4];
+    med[s] = Median(v);
+    med_off[s] = Median(vo);
     std::cout << "  strip " << s << " ratio=" << Form("%.4f", med[s])
               << "  IQR " << Form("%.4f", lo) << "-" << Form("%.4f", hi)
               << "  offset=" << Form("%.4f", med_off[s]) << " x C_long  IQR "
-              << Form("%.4f", vo[m / 4]) << "-" << Form("%.4f", vo[(3 * m) / 4])
+              << Form("%.4f", lo_off) << "-" << Form("%.4f", hi_off)
               << "  from " << m << " subfiles" << std::endl;
   }
 

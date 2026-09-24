@@ -43,7 +43,6 @@ void InitDatasetConfig() {
   gInstance.LEFT_ODD_MAX_ADC = 8000;
   gInstance.LEFT_EVEN_MAX_ADC = 2500;
   gInstance.STRIP_E_MAX_ADC = 4096.0;
-  gInstance.TOTAL_E_MAX_ADC = 60000.0;
   gInstance.STRIP_DE_MIN_NORMED = 0;
   gInstance.STRIP_DE_MAX_NORMED = 4;
 

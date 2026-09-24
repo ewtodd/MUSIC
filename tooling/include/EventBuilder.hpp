@@ -9,10 +9,7 @@
 #include "SlotLayout.hpp"
 #include <Rtypes.h>
 #include <TBranch.h>
-#include <TCanvas.h>
 #include <TFile.h>
-#include <TH1F.h>
-#include <TH2F.h>
 #include <TObject.h>
 #include <TParameter.h>
 #include <TString.h>

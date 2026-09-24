@@ -180,9 +180,7 @@ std::vector<LongChan> Timing::BuildLongChannelList() {
 
 void Timing::PlotExtremeEvents2D(TH2F *h_before, TH2F *h_after,
                                  TH2F *h_before_zoom, TH2F *h_after_zoom,
-                                 const TString &file_label,
-                                 Double_t before_zoom_t0_s,
-                                 Double_t after_zoom_t0_s) {
+                                 const TString &file_label) {
   std::lock_guard<std::mutex> lock(g_plot_mutex);
   TString subdir = "timing/" + file_label;
 
@@ -586,10 +584,8 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
       new TH2F("hExtremeAfter", ";Time [s];", time_bins, file_tmin_s,
                file_tmax_s, n_y, -0.5, n_y - 0.5);
 
-  std::vector<Double_t> extreme_times_before;
   std::vector<Double_t> extreme_times_after;
 
-  extreme_times_before.reserve(10000);
   extreme_times_after.reserve(10000);
 
   for (Int_t c = 0; c < Int_t(long_channels.size()); c++) {
@@ -606,7 +602,6 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
       h_extreme_before->Fill(x_before_s, Double_t(c));
       h_extreme_after->Fill(x_after_s, Double_t(c));
 
-      extreme_times_before.push_back(x_before_s);
       extreme_times_after.push_back(x_after_s);
     }
   }
@@ -688,8 +683,7 @@ TimeShiftResult Timing::CalcTimeShiftsBeamMethodFromHits(
             << std::endl;
 
   PlotExtremeEvents2D(h_extreme_before, h_extreme_after, h_extreme_before_zoom,
-                      h_extreme_after_zoom, file_label, before_zoom_t0_s,
-                      after_zoom_t0_s);
+                      h_extreme_after_zoom, file_label);
   std::cout << "RESULTS (ref board = " << ref_board << ")" << std::endl;
   for (UShort_t board = 0; board < Constants::ActiveNBoards(); board++) {
     if (board == ref_board)

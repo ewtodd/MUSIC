@@ -37,28 +37,13 @@ TString Path(const char *name, Int_t reac);
 void Save(Int_t reac, TCutG *cut_an, TCutG *cut_aa,
           Double_t n_an_assigned = -1.0);
 /**
- * @brief Load a cut, from either storage generation.
- *
- * Tries the per-cut file first, then the pre-split combined `RegionCuts.root`,
- * so cuts drawn before the split keep working until they are next replaced.
+ * @brief Load a cut from its per-cut file.
  *
  * @param name Cut name.
  * @param reac Reaction strip index.
- * @return The cut, or null if neither file holds one. The caller owns it.
+ * @return The cut, or null if the file holds none. The caller owns it.
  */
 TCutG *Load(const char *name, Int_t reac);
-/**
- * @brief Load only a hand-drawn cut, never a fitted one.
- *
- * Sources are interactive `strip-sum-scatter` and the pre-split
- * `RegionCuts.root`. Used where a measurement must rest on a human's judgement
- * rather than on the mixture fit — the tag efficiency bootstrap, for instance.
- *
- * @param name Cut name.
- * @param reac Reaction strip index.
- * @return The cut, or null. The caller owns it.
- */
-TCutG *LoadDrawn(const char *name, Int_t reac);
 /// @brief The attributed count stored with a cut.
 /// @param name Cut name.
 /// @param reac Reaction strip index.
@@ -114,14 +99,6 @@ namespace RegionCutStore {
  * @param fit  Fit to store.
  */
 void SaveFit(Int_t reac, const RegionFit &fit);
-
-/**
- * @brief Read back a stored fit.
- * @param reac Reaction strip index.
- * @param[out] fit Set on success; untouched otherwise.
- * @return `kFALSE` when the store holds no fit for that strip.
- */
-Bool_t LoadFit(Int_t reac, RegionFit &fit);
 } // namespace RegionCutStore
 
 /**

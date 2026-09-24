@@ -229,13 +229,7 @@ struct StripSumScatterConfig {
   Int_t BOTH_MULT_MAX;
   Int_t BOTH_MULT_COUNT_TO;
 
-  Double_t TRIGGER_NSIGMA;
-  Double_t TRIGGER_CFD_FRAC;
-  Int_t PLATEAU_POST;
-  Int_t CLUSTER_SMOOTH_WINDOW;
   Int_t SEED_HALF_BINS;
-
-  Int_t SAVGOL_HALF;
 
   Int_t TRACES_PER_CLASS;
 
@@ -617,9 +611,6 @@ public:
   Bool_t USE_GPU_ACCELERATION;
   Int_t MAX_GPU_CONCURRENT_SORTS;
 
-  Double_t STRIP_DE_OVERVIEW_MIN_NORMED;
-  Double_t STRIP_DE_OVERVIEW_MAX_NORMED;
-
   /// n-sigma of the per-strip beam gate in the beam calibration: strip s is
   /// gated by the ellipse on the (strip s-1, strip s) raw totals, which is what
   /// defines that strip's beam sample. One level, in the fitted sigma: the two
@@ -630,19 +621,13 @@ public:
 
   Double_t STRIP_DE_MIN_NORMED;
   Double_t STRIP_DE_MAX_NORMED;
-  Double_t CATHODE_E_MAX_NORMED;
-  Double_t TOTAL_E_MIN_NORMED;
-  Double_t TOTAL_E_MAX_NORMED;
 
   StripSumScatterConfig STRIP_SUM_SCATTER_CONFIG;
   CrossSectionConfig CROSS_SECTION_CONFIG;
 
   Double_t STRIP_E_MIN_ADC;
   Double_t STRIP_E_MAX_ADC;
-  Double_t TOTAL_E_MIN_ADC;
-  Double_t TOTAL_E_MAX_ADC;
 
-  Double_t GRID_MIN_ADC;
   Double_t GRID_MAX_ADC;
 
   Double_t REFERENCE_CHANNEL_MIN_ADC;
@@ -786,11 +771,6 @@ const PulseHistoryGroups &ActivePulseHistoryGroups();
 ///        cross-section chain works on (AnalysisEpoch()), else the flat
 ///        `IGNORE_SHORT_STRIPS`.
 Bool_t ActiveIgnoreShortStrips();
-/// @brief The epoch a binary that runs with no active epoch is working on:
-///        the single epoch named in `CROSS_SECTION_CONFIG.EPOCHS`, or the
-///        only enabled one when that list is empty. Null when the chain
-///        spans several epochs, or none are declared.
-const RunEpoch *AnalysisEpoch();
 /// @brief Make AnalysisEpoch() the active epoch, so a binary of the
 ///        cross-section chain resolves the file tag, the channel map, the
 ///        ADC scales and the decode flags of the one epoch it works on. A

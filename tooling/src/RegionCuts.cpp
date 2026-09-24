@@ -33,10 +33,6 @@ TString Path(const char *name, Int_t reac) {
   return Dir() + "/" + Key(name, reac) + ".root";
 }
 
-static TString LegacyPath() {
-  return Paths::ResultsDir() + "/root_files/RegionCuts.root";
-}
-
 static void WriteOne(const char *name, Int_t reac, TCutG *cut,
                      Double_t n_assigned) {
   if (!cut)
@@ -99,36 +95,6 @@ void SaveFit(Int_t reac, const RegionFit &fit) {
   f.Close();
 }
 
-Bool_t LoadFit(Int_t reac, RegionFit &fit) {
-  TString path = Path("region_an", reac);
-  if (gSystem->AccessPathName(path))
-    return kFALSE;
-  TFile f(path, "READ");
-  if (f.IsZombie())
-    return kFALSE;
-  Double_t v[14];
-  for (Int_t k = 0; k < 14; k++) {
-    TParameter<Double_t> *p =
-        dynamic_cast<TParameter<Double_t> *>(f.Get(kFitKeys[k]));
-    if (!p)
-      return kFALSE;
-    v[k] = p->GetVal();
-  }
-  Gauss2D *g[2] = {&fit.beam, &fit.reac};
-  for (Int_t k = 0; k < 2; k++) {
-    g[k]->amp = v[6 * k + 0];
-    g[k]->mx = v[6 * k + 1];
-    g[k]->sx = v[6 * k + 2];
-    g[k]->my = v[6 * k + 3];
-    g[k]->sy = v[6 * k + 4];
-    g[k]->rho = v[6 * k + 5];
-  }
-  fit.n_beam = v[12];
-  fit.n_reac = v[13];
-  fit.ok = kTRUE;
-  return kTRUE;
-}
-
 Double_t LoadAssigned(const char *name, Int_t reac) {
   TString path = Path(name, reac);
   if (gSystem->AccessPathName(path))
@@ -161,26 +127,7 @@ static TCutG *ReadFrom(const TString &path, const char *key, const char *name) {
 }
 
 TCutG *Load(const char *name, Int_t reac) {
-  TCutG *cut = ReadFrom(Path(name, reac), name, name);
-  if (cut)
-    return cut;
-  return ReadFrom(LegacyPath(), Key(name, reac), name);
-}
-
-/// Hand-drawn only. A per-cut file written by the interactive draw carries no
-/// n_assigned; one written by compute-regions does and is skipped. Then the
-/// pre-split RegionCuts.root, which only ever held drawn cuts.
-TCutG *LoadDrawn(const char *name, Int_t reac) {
-  TString path = Path(name, reac);
-  if (!gSystem->AccessPathName(path)) {
-    TFile f(path, "READ");
-    const Bool_t fitted = !f.IsZombie() && f.Get("n_assigned") != nullptr;
-    f.Close();
-    if (!fitted)
-      if (TCutG *cut = ReadFrom(path, name, name))
-        return cut;
-  }
-  return ReadFrom(LegacyPath(), Key(name, reac), name);
+  return ReadFrom(Path(name, reac), name, name);
 }
 
 } // namespace RegionCutStore
