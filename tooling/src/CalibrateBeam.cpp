@@ -765,11 +765,24 @@ Double_t GmFindPeak(const std::vector<Float_t> &v, Double_t lo, Double_t hi,
   return lo + (bmax + 0.5) * bw;
 }
 
-void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
-                        const StripPairSamples pairs[18],
-                        const TString &plot_subdir) {
-  RidgeFit ridge_dbg[18];
-  Int_t idx_l[18], idx_r[18];
+// The L/R gain match state per strip: the anchors and short offset, the
+// measured flags, and the found and median ratios and offsets.
+struct GainMatchState {
+  Bool_t matched[18] = {kFALSE};
+  Bool_t ridge_ok[18] = {kFALSE};
+  Double_t long_anchor_adc[18] = {0};
+  Double_t short_anchor_adc[18] = {0};
+  Double_t short_offset_adc[18] = {0};
+  std::vector<Double_t> ratios_found[2];
+  std::vector<Double_t> offsets_found[2];
+  Double_t median_ratio[2] = {0.0, 0.0};
+  Double_t median_offset[2] = {0.0, 0.0};
+  Double_t global_ratio = 0.0;
+};
+
+// Each strip's L/R channel indices in the cal vector, -1 where absent.
+static void IndexStripEnds(const std::vector<ChannelCal> &chans,
+                           Int_t idx_l[18], Int_t idx_r[18]) {
   for (Int_t s = 0; s < 18; s++) {
     idx_l[s] = -1;
     idx_r[s] = -1;
@@ -782,18 +795,56 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
         idx_r[chans[i].strip] = i;
     }
   }
+}
 
-  // Pass 1: LONG anchor = modal peak (ReduceToAnchors); from the ridge line
-  // SHORT anchor = C_long/k and the short-end offset S0 = (a - C_long)/k.
-  // Unmeasurable: short = parity median ratio x long, S0 = parity median
-  // offset x long.
+// One strip's beam-gated ridge fit: the gate removes pile-up/junk while
+// keeping off-centre crossings; ungated's 2/3-particle bands steepen the
+// slope. The line is long = a - k short, so C_short = C_long/k and the
+// offset is the short reading at which the line reaches the long-only
+// peak; the detail line (or the error with its diagnostics) is printed.
+static void FitStripRidge(Int_t s, const StripPairSamples &p,
+                          const ChannelCal &c_long, RidgeFit &dbg,
+                          Double_t &peak_short, Double_t &peak_long,
+                          Double_t &offset) {
+  const std::vector<Float_t> &v_short = p.gated_short;
+  const std::vector<Float_t> &v_long = p.gated_long;
+  Double_t slope = 0.0, inter = 0.0;
+  const Double_t crossing =
+      RidgeShortAnchor(v_short, v_long, c_long.fit_adc, slope, inter, dbg);
+  if (crossing > 0) {
+    const Double_t k = -slope;
+    peak_long = c_long.fit_adc;
+    peak_short = peak_long / k;
+    offset = (inter - peak_long) / k;
+    Constants::Detail() << "  strip " << s
+                        << " ridge slope=" << Form("%.3f", slope)
+                        << " intercept=" << Form("%.1f", inter)
+                        << " ADC; long anchor=" << Form("%.1f", peak_long)
+                        << " (modal)  short anchor=" << Form("%.1f", peak_short)
+                        << " ADC  short offset=" << Form("%.1f", offset)
+                        << " ADC (" << Form("%.3f", offset / peak_long)
+                        << " x C_long)" << std::endl;
+  } else
+    Constants::DetailErr() << "  strip " << s << ": ridge not measurable "
+                           << "(slope=" << Form("%.3f", slope)
+                           << ", intercept=" << Form("%.1f", inter) << ")"
+                           << (dbg.fail[0] ? Form(" [%s]", dbg.fail) : "")
+                           << " gated=" << Form("%lld", dbg.n_gated)
+                           << " short_win=" << Form("%lld", dbg.n_short_window)
+                           << " long_band=" << Form("%lld", dbg.n_long_band)
+                           << " slices=" << dbg.n_slices
+                           << " min_per_slice=" << dbg.min_per_slice
+                           << std::endl;
+}
 
-  Bool_t matched[18] = {kFALSE};
-  Double_t long_anchor_adc[18] = {0};
-  Double_t short_anchor_adc[18] = {0};
-  Double_t short_offset_adc[18] = {0};
-  Bool_t ridge_ok[18] = {kFALSE};
-  std::vector<Double_t> ratios_found[2], offsets_found[2];
+// Pass 1: per strip, the LONG anchor = the modal peak (ReduceToAnchors),
+// from the ridge line the SHORT anchor = C_long/k and the short-end
+// offset S0 = (a - C_long)/k. Unmeasurable strips keep no anchor; the
+// parity-median fallback fills them in ApplyGainMatch.
+static void MeasureRidges(std::vector<ChannelCal> &chans,
+                          const StripPairSamples pairs[18],
+                          const Int_t idx_l[18], const Int_t idx_r[18],
+                          RidgeFit *ridge_dbg, GainMatchState &m) {
   for (Int_t s = 1; s <= 16; s++) {
     if (idx_l[s] < 0 || idx_r[s] < 0)
       continue;
@@ -807,43 +858,8 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
       continue;
     }
     Double_t peak_short = 0.0, peak_long = 0.0, offset = 0.0;
-
-    {
-      const StripPairSamples &p = pairs[s];
-      // Beam-gated ridge fit: the gate removes pile-up/junk while keeping
-      // off-centre crossings; ungated's 2/3-particle bands steepen the slope.
-      const std::vector<Float_t> &v_short = p.gated_short;
-      const std::vector<Float_t> &v_long = p.gated_long;
-      Double_t slope = 0.0, inter = 0.0;
-      const Double_t crossing = RidgeShortAnchor(
-          v_short, v_long, c_long.fit_adc, slope, inter, &ridge_dbg[s]);
-      if (crossing > 0) {
-        // The line: long = a - k short. C_short = C_long/k; the offset is
-        // the short reading at which the line reaches the long-only peak.
-        const Double_t k = -slope;
-        peak_long = c_long.fit_adc;
-        peak_short = peak_long / k;
-        offset = (inter - peak_long) / k;
-        Constants::Detail()
-            << "  strip " << s << " ridge slope=" << Form("%.3f", slope)
-            << " intercept=" << Form("%.1f", inter)
-            << " ADC; long anchor=" << Form("%.1f", peak_long)
-            << " (modal)  short anchor=" << Form("%.1f", peak_short)
-            << " ADC  short offset=" << Form("%.1f", offset) << " ADC ("
-            << Form("%.3f", offset / peak_long) << " x C_long)" << std::endl;
-      } else
-        Constants::DetailErr()
-            << "  strip " << s << ": ridge not measurable "
-            << "(slope=" << Form("%.3f", slope)
-            << ", intercept=" << Form("%.1f", inter) << ")"
-            << (ridge_dbg[s].fail[0] ? Form(" [%s]", ridge_dbg[s].fail) : "")
-            << " gated=" << Form("%lld", ridge_dbg[s].n_gated)
-            << " short_win=" << Form("%lld", ridge_dbg[s].n_short_window)
-            << " long_band=" << Form("%lld", ridge_dbg[s].n_long_band)
-            << " slices=" << ridge_dbg[s].n_slices
-            << " min_per_slice=" << ridge_dbg[s].min_per_slice << std::endl;
-    }
-
+    FitStripRidge(s, pairs[s], c_long, ridge_dbg[s], peak_short, peak_long,
+                  offset);
     if (peak_short <= 0 || peak_long <= 0)
       continue;
     // C_short/C_long = -1/slope is a preamp-gain ratio, so order unity.
@@ -857,50 +873,56 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
           << std::endl;
       continue;
     }
-    long_anchor_adc[s] = peak_long;
-    short_anchor_adc[s] = peak_short;
-    short_offset_adc[s] = offset;
-    ridge_ok[s] = kTRUE;
-    ratios_found[s % 2].push_back(ratio);
-    offsets_found[s % 2].push_back(offset / peak_long);
+    m.long_anchor_adc[s] = peak_long;
+    m.short_anchor_adc[s] = peak_short;
+    m.short_offset_adc[s] = offset;
+    m.ridge_ok[s] = kTRUE;
+    m.ratios_found[s % 2].push_back(ratio);
+    m.offsets_found[s % 2].push_back(offset / peak_long);
     c_short.ridge_ratio = ratio;
     c_short.ridge_offset = offset / peak_long;
   }
+}
 
-  SaveRidgeFitPlots(pairs, ridge_dbg, plot_subdir);
-
-  // Fall back on the median RATIO (preamp property, transfers across strips;
-  // ADC anchors don't), per parity: L/R preamps differ (odd ~1.2, even ~0.9).
-  Double_t median_ratio[2] = {0.0, 0.0};
+// The fallback medians, per parity (the L/R preamps differ, odd ~1.2 and
+// even ~0.9) and globally over the ratios; the parity guard is size >= 2
+// and the global guard a non-empty list.
+static void RidgeFallbackMedians(GainMatchState &m) {
+  // Fall back on the median RATIO (preamp property, transfers across
+  // strips; ADC anchors don't).
   std::vector<Double_t> all_ratios;
   for (Int_t par = 0; par < 2; par++) {
-    std::vector<Double_t> &v = ratios_found[par];
+    std::vector<Double_t> &v = m.ratios_found[par];
     all_ratios.insert(all_ratios.end(), v.begin(), v.end());
     if (v.size() < 2)
       continue;
-    median_ratio[par] = Median(v);
+    m.median_ratio[par] = Median(v);
   }
-  Double_t global_ratio = 0.0;
   if (!all_ratios.empty())
-    global_ratio = Median(all_ratios);
+    m.global_ratio = Median(all_ratios);
   Constants::Detail() << "  ridge ratio medians: odd="
-                      << Form("%.3f", median_ratio[1])
-                      << " even=" << Form("%.3f", median_ratio[0])
-                      << " all=" << Form("%.3f", global_ratio) << std::endl;
+                      << Form("%.3f", m.median_ratio[1])
+                      << " even=" << Form("%.3f", m.median_ratio[0])
+                      << " all=" << Form("%.3f", m.global_ratio) << std::endl;
   // The offset fallback, likewise per parity (it is a chain property), in
   // units of C_long; 0 where the parity measured none.
-  Double_t median_offset[2] = {0.0, 0.0};
   for (Int_t par = 0; par < 2; par++) {
-    std::vector<Double_t> &v = offsets_found[par];
+    std::vector<Double_t> &v = m.offsets_found[par];
     if (v.size() < 2)
       continue;
-    median_offset[par] = Median(v);
+    m.median_offset[par] = Median(v);
   }
   Constants::Detail() << "  ridge offset medians (x C_long): odd="
-                      << Form("%.3f", median_offset[1])
-                      << " even=" << Form("%.3f", median_offset[0])
+                      << Form("%.3f", m.median_offset[1])
+                      << " even=" << Form("%.3f", m.median_offset[0])
                       << std::endl;
+}
 
+// Apply the anchors: the parity-median fallback where the ridge was not
+// measurable, then the gains and the short offset, with the detail lines.
+static void ApplyGainMatch(std::vector<ChannelCal> &chans,
+                           const Int_t idx_l[18], const Int_t idx_r[18],
+                           GainMatchState &m) {
   for (Int_t s = 1; s <= 16; s++) {
     if (idx_l[s] < 0 || idx_r[s] < 0)
       continue;
@@ -909,10 +931,11 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
     ChannelCal &c_short = chans[l_is_long ? idx_r[s] : idx_l[s]];
     if (!IsCalibrated(c_long))
       continue;
-    if (short_anchor_adc[s] <= 0) {
+    if (m.short_anchor_adc[s] <= 0) {
       // No ridge: the modal peak is the best long anchor available.
-      long_anchor_adc[s] = c_long.fit_adc;
-      Double_t r = median_ratio[s % 2] > 0 ? median_ratio[s % 2] : global_ratio;
+      m.long_anchor_adc[s] = c_long.fit_adc;
+      Double_t r =
+          m.median_ratio[s % 2] > 0 ? m.median_ratio[s % 2] : m.global_ratio;
       if (r <= 0) {
         Constants::DetailErr() << "  strip " << s
                                << ": no ridge and no ratio fallback; keeping "
@@ -920,42 +943,45 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
                                << std::endl;
         continue;
       }
-      short_anchor_adc[s] = r * long_anchor_adc[s];
-      short_offset_adc[s] = median_offset[s % 2] * long_anchor_adc[s];
-      Constants::Detail() << "  strip " << s << " short_anchor=ratio fallback "
-                          << Form("%.3f", r)
-                          << " x C_long = " << Form("%.1f", short_anchor_adc[s])
-                          << " ADC"
-                          << (median_ratio[s % 2] > 0
-                                  ? ""
-                                  : " (global, parity had none)")
-                          << "  short offset=parity median "
-                          << Form("%.3f", median_offset[s % 2])
-                          << " x C_long = " << Form("%.1f", short_offset_adc[s])
-                          << " ADC" << std::endl;
+      m.short_anchor_adc[s] = r * m.long_anchor_adc[s];
+      m.short_offset_adc[s] = m.median_offset[s % 2] * m.long_anchor_adc[s];
+      Constants::Detail()
+          << "  strip " << s << " short_anchor=ratio fallback "
+          << Form("%.3f", r)
+          << " x C_long = " << Form("%.1f", m.short_anchor_adc[s]) << " ADC"
+          << (m.median_ratio[s % 2] > 0 ? "" : " (global, parity had none)")
+          << "  short offset=parity median "
+          << Form("%.3f", m.median_offset[s % 2])
+          << " x C_long = " << Form("%.1f", m.short_offset_adc[s]) << " ADC"
+          << std::endl;
     }
-    c_long.gain = 1.0 / long_anchor_adc[s];
-    c_short.gain = 1.0 / short_anchor_adc[s];
-    c_short.offset_adc = short_offset_adc[s];
-    matched[s] = kTRUE;
+    c_long.gain = 1.0 / m.long_anchor_adc[s];
+    c_short.gain = 1.0 / m.short_anchor_adc[s];
+    c_short.offset_adc = m.short_offset_adc[s];
+    m.matched[s] = kTRUE;
     Constants::Detail() << "  strip " << s << " L/R match: long anchor="
-                        << Form("%.1f", long_anchor_adc[s])
+                        << Form("%.1f", m.long_anchor_adc[s])
                         << " ADC  short anchor="
-                        << Form("%.1f", short_anchor_adc[s])
+                        << Form("%.1f", m.short_anchor_adc[s])
                         << " ADC  short offset="
-                        << Form("%.1f", short_offset_adc[s]) << " ADC"
-                        << (ridge_ok[s] ? "" : " (fallback)") << std::endl;
+                        << Form("%.1f", m.short_offset_adc[s]) << " ADC"
+                        << (m.ridge_ok[s] ? "" : " (fallback)") << std::endl;
   }
+}
 
-  // Pass 2: check, do not correct. On the pairs inside the ridge fit window
-  // (short between kRidgeShortMinFrac and kRidgeShortMaxFrac of the long
-  // anchor, so on the ridge and clear of the threshold blob) eSum, with the
-  // short offset removed, peaks at the long-only peak, 1.0 a.u., by
-  // construction; departures expose bad ridge fits or a poor fallback —
-  // rescaling would hide that failure.
+// Pass 2: check, do not correct. On the pairs inside the ridge fit window
+// (short between kRidgeShortMinFrac and kRidgeShortMaxFrac of the long
+// anchor, so on the ridge and clear of the threshold blob) eSum, with the
+// short offset removed, peaks at the long-only peak, 1.0 a.u., by
+// construction; departures expose bad ridge fits or a poor fallback —
+// rescaling would hide that failure.
+static void CheckSummedBeamPeaks(std::vector<ChannelCal> &chans,
+                                 const StripPairSamples pairs[18],
+                                 const Int_t idx_l[18], const Int_t idx_r[18],
+                                 const GainMatchState &m) {
   Double_t esum_peak[18] = {0};
   for (Int_t s = 1; s <= 16; s++) {
-    if (!matched[s])
+    if (!m.matched[s])
       continue;
     const StripPairSamples &p = pairs[s];
     Bool_t l_is_long = (LongSide(s) == 'L');
@@ -963,19 +989,19 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
     Double_t g_short = Gain(chans[l_is_long ? idx_r[s] : idx_l[s]]);
     std::vector<Float_t> esum;
     esum.reserve(p.gated_long.size());
-    const Double_t sh_lo = kRidgeShortMinFrac * long_anchor_adc[s];
-    const Double_t sh_hi = kRidgeShortMaxFrac * long_anchor_adc[s];
+    const Double_t sh_lo = kRidgeShortMinFrac * m.long_anchor_adc[s];
+    const Double_t sh_hi = kRidgeShortMaxFrac * m.long_anchor_adc[s];
     for (Int_t j = 0; j < Int_t(p.gated_long.size()); j++) {
       if (p.gated_short[j] < sh_lo || p.gated_short[j] >= sh_hi)
         continue;
       esum.push_back(Float_t(
           g_long * Double_t(p.gated_long[j]) +
-          g_short * (Double_t(p.gated_short[j]) - short_offset_adc[s])));
+          g_short * (Double_t(p.gated_short[j]) - m.short_offset_adc[s])));
     }
     esum_peak[s] = GmFindPeak(esum, kGmEsumLo, kGmEsumHi, 0.0);
   }
   for (Int_t s = 1; s <= 16; s++) {
-    if (!matched[s])
+    if (!m.matched[s])
       continue;
     if (esum_peak[s] <= 0) {
       Constants::DetailErr()
@@ -991,6 +1017,24 @@ void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
                                                    : "")
                         << std::endl;
   }
+}
+
+void ComputeLRGainMatch(std::vector<ChannelCal> &chans,
+                        const StripPairSamples pairs[18],
+                        const TString &plot_subdir) {
+  RidgeFit ridge_dbg[18];
+  Int_t idx_l[18], idx_r[18];
+  IndexStripEnds(chans, idx_l, idx_r);
+
+  GainMatchState m;
+  MeasureRidges(chans, pairs, idx_l, idx_r, ridge_dbg, m);
+
+  // Between measure and fallback: the detail lines keep their order.
+  SaveRidgeFitPlots(pairs, ridge_dbg, plot_subdir);
+
+  RidgeFallbackMedians(m);
+  ApplyGainMatch(chans, idx_l, idx_r, m);
+  CheckSummedBeamPeaks(chans, pairs, idx_l, idx_r, m);
 }
 
 /// Cathode uses median + IQR/1.349 (asymmetric tail, no clean peak). Every
