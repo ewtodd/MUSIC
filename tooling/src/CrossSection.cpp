@@ -797,40 +797,33 @@ void CrossSection::Draw(const std::vector<const ChannelResult *> &rs,
   for (Int_t k = 0; k < Int_t(drawn.size()); k++)
     leg->AddEntry(drawn[k].first, drawn[k].second, "l");
   leg->Draw();
-  // The stamp: red, bold, in the top-left corner of the plot area (just
-  // inside the frame's margins), drawn last so it sits over the frame.
-  if (Constants::cfg.CROSS_SECTION_CONFIG.PRELIMINARY) {
-    TLatex *stamp = new TLatex();
-    stamp->SetNDC();
-    stamp->SetTextAlign(13); // left, top
-    stamp->SetTextSize(0.05);
-    stamp->SetTextFont(62);
-    stamp->SetTextColor(kRed + 1);
-    stamp->DrawLatex(c->GetLeftMargin() + 0.02, 1.0 - c->GetTopMargin() - 0.02,
-                     "PRELIMINARY");
-  }
+  // The stamp, drawn last so it sits over the frame.
+  StampPreliminary(c);
   PlottingUtils::SaveFigure(c, name, "cross_section", PlotSaveOptions::kLOG);
   delete c;
 }
 
-/// The fit figure: the chosen model's per-exit curves and their sum, unscaled,
-/// then the sum with one free scale per exit fitted to this work's points by
-/// weighted linear least squares (each point weighted by its total error,
-/// the asymmetric sides averaged), with the 3-sigma band from the fit's
-/// covariance and a panel of the points' deviation from the scaled sum. An
-/// exit whose curve is zero at every point cannot be scaled and keeps 1.
-void CrossSection::DrawFit(const ChannelResult &r, const TString &name) const {
+void CrossSection::StampPreliminary(const TPad *pad) {
+  // The stamp: red, bold, in the top-left corner of the plot area (just
+  // inside the frame's margins).
+  if (!Constants::cfg.CROSS_SECTION_CONFIG.PRELIMINARY)
+    return;
+  TLatex *stamp = new TLatex();
+  stamp->SetNDC();
+  stamp->SetTextAlign(13); // left, top
+  stamp->SetTextSize(0.05);
+  stamp->SetTextFont(62);
+  stamp->SetTextColor(kRed + 1);
+  stamp->DrawLatex(pad->GetLeftMargin() + 0.02,
+                   1.0 - pad->GetTopMargin() - 0.02, "PRELIMINARY");
+}
+
+Bool_t
+CrossSection::CollectFitComponents(const ChannelResult &r, Int_t m,
+                                   std::vector<TGraph *> &comp,
+                                   std::vector<TString> &comp_label) const {
   const CrossSectionConfig &X = Constants::cfg.CROSS_SECTION_CONFIG;
   const CrossSectionChannel &ch = *r.ch;
-  const Int_t m = ch.fit_model;
-  if (m < 0 || m >= Int_t(talys_raw_.size())) {
-    std::cerr << "cross-section: channel " << ch.name << ": fit_model " << m
-              << " but " << talys_raw_.size() << " TALYS model(s) in the file"
-              << std::endl;
-    return;
-  }
-  std::vector<TGraph *> comp;
-  std::vector<TString> comp_label;
   for (Int_t k = 0; k < Int_t(ch.talys_exits.size()); k++) {
     Int_t z = 0, a = 0;
     ExitResidue(ch.talys_exits[k], X.BEAM_Z, X.BEAM_A, z, a);
@@ -845,26 +838,30 @@ void CrossSection::DrawFit(const ChannelResult &r, const TString &name) const {
     std::cerr << "cross-section: channel " << ch.name << ": "
               << talys_labels_[m] << " has none of the channel's exits"
               << std::endl;
-    return;
+    return kFALSE;
   }
+  return kTRUE;
+}
+
+void CrossSection::FitExitScales(const ChannelResult &r,
+                                 const std::vector<TGraph *> &comp,
+                                 ScaleFit &fs) const {
   const Int_t nc = Int_t(comp.size());
   const Int_t np = Int_t(r.points.size());
 
   // Weighted linear least squares for the scales, dropping exits that are
   // zero at every point (their scale is undetermined).
-  std::vector<Int_t> free_idx;
   for (Int_t k = 0; k < nc; k++) {
     Bool_t any = kFALSE;
     for (Int_t i = 0; i < np && !any; i++)
       any = Interpolated(comp[k], r.points[i].e_eff) > 0.0;
     if (any)
-      free_idx.push_back(k);
+      fs.free_idx.push_back(k);
   }
-  std::vector<Double_t> scale(nc, 1.0), scale_err(nc, 0.0);
-  std::vector<Int_t> pinned;
-  Int_t nf = Int_t(free_idx.size());
-  TMatrixD cov(nf, nf);
-  Double_t chi2 = 0.0;
+  fs.scale.assign(nc, 1.0);
+  fs.scale_err.assign(nc, 0.0);
+  Int_t nf = Int_t(fs.free_idx.size());
+  fs.cov.ResizeTo(nf, nf);
   while (nf > 0 && np >= nf) {
     TMatrixD mat(nf, nf);
     TVectorD rhs(nf);
@@ -875,71 +872,86 @@ void CrossSection::DrawFit(const ChannelResult &r, const TString &name) const {
         continue;
       const Double_t w = 1.0 / (err * err);
       for (Int_t a = 0; a < nf; a++) {
-        const Double_t ca = Interpolated(comp[free_idx[a]], pt.e_eff);
+        const Double_t ca = Interpolated(comp[fs.free_idx[a]], pt.e_eff);
         rhs[a] += w * ca * pt.sigma;
         for (Int_t b = 0; b < nf; b++)
-          mat[a][b] += w * ca * Interpolated(comp[free_idx[b]], pt.e_eff);
+          mat[a][b] += w * ca * Interpolated(comp[fs.free_idx[b]], pt.e_eff);
       }
     }
-    cov.ResizeTo(nf, nf);
-    cov = mat;
-    cov.Invert();
-    const TVectorD sol = cov * rhs;
+    fs.cov.ResizeTo(nf, nf);
+    fs.cov = mat;
+    fs.cov.Invert();
+    const TVectorD sol = fs.cov * rhs;
     Int_t worst = -1;
     for (Int_t a = 0; a < nf; a++)
       if (sol[a] < 0.0 && (worst < 0 || sol[a] < sol[worst]))
         worst = a;
     if (worst >= 0) {
-      pinned.push_back(free_idx[worst]);
-      scale[free_idx[worst]] = 0.0;
-      free_idx.erase(free_idx.begin() + worst);
+      fs.pinned.push_back(fs.free_idx[worst]);
+      fs.scale[fs.free_idx[worst]] = 0.0;
+      fs.free_idx.erase(fs.free_idx.begin() + worst);
       nf--;
       continue;
     }
     for (Int_t a = 0; a < nf; a++) {
-      scale[free_idx[a]] = sol[a];
-      scale_err[free_idx[a]] = std::sqrt(TMath::Max(0.0, cov[a][a]));
+      fs.scale[fs.free_idx[a]] = sol[a];
+      fs.scale_err[fs.free_idx[a]] = std::sqrt(TMath::Max(0.0, fs.cov[a][a]));
     }
     break;
   }
+  fs.nf = nf;
   for (Int_t i = 0; i < np; i++) {
     const Point &pt = r.points[i];
     const Double_t err = 0.5 * (pt.ErrLo() + pt.ErrHi());
     Double_t f = 0.0;
     for (Int_t k = 0; k < nc; k++)
-      f += scale[k] * Interpolated(comp[k], pt.e_eff);
+      f += fs.scale[k] * Interpolated(comp[k], pt.e_eff);
     if (err > 0.0)
-      chi2 += std::pow((pt.sigma - f) / err, 2);
+      fs.chi2 += std::pow((pt.sigma - f) / err, 2);
   }
+}
+
+void CrossSection::PrintScaleFit(const CrossSectionChannel &ch, Int_t m,
+                                 const std::vector<TString> &comp_label,
+                                 const ScaleFit &fs, Int_t np) const {
+  const Int_t nc = Int_t(comp_label.size());
   std::cout << std::endl
             << "  " << ch.name << " " << Label(ch) << ": " << talys_labels_[m]
             << " scaled to this work's points" << std::endl;
   for (Int_t k = 0; k < nc; k++) {
     const Bool_t is_pinned =
-        std::find(pinned.begin(), pinned.end(), k) != pinned.end();
+        std::find(fs.pinned.begin(), fs.pinned.end(), k) != fs.pinned.end();
     std::cout << Form("    %-10s scale %.4f +- %.4f%s", comp_label[k].Data(),
-                      scale[k], scale_err[k],
-                      is_pinned            ? "  (went negative: pinned at 0)"
-                      : scale_err[k] > 0.0 ? ""
-                                           : "  (zero at every point: fixed)")
+                      fs.scale[k], fs.scale_err[k],
+                      is_pinned ? "  (went negative: pinned at 0)"
+                      : fs.scale_err[k] > 0.0
+                          ? ""
+                          : "  (zero at every point: fixed)")
               << std::endl;
   }
-  for (Int_t a = 0; a < nf; a++)
-    for (Int_t b = a + 1; b < nf; b++)
+  for (Int_t a = 0; a < fs.nf; a++)
+    for (Int_t b = a + 1; b < fs.nf; b++)
       std::cout << Form("    correlation %s-%s %.3f",
-                        comp_label[free_idx[a]].Data(),
-                        comp_label[free_idx[b]].Data(),
-                        cov[a][b] / std::sqrt(cov[a][a] * cov[b][b]))
+                        comp_label[fs.free_idx[a]].Data(),
+                        comp_label[fs.free_idx[b]].Data(),
+                        fs.cov[a][b] / std::sqrt(fs.cov[a][a] * fs.cov[b][b]))
                 << std::endl;
-  std::cout << Form("    chi2 %.2f for %d points, %d free scale(s)", chi2, np,
-                    nf)
+  std::cout << Form("    chi2 %.2f for %d points, %d free scale(s)", fs.chi2,
+                    np, fs.nf)
             << std::endl;
   std::cout << "    strip   E_cm,eff   this work [mb]   scaled model [mb]   "
                "pull"
             << std::endl;
+}
 
-  // The scaled sum and its 3-sigma band on the model's grid, the unscaled
-  // sum, and the deviation of each point from the scaled sum.
+Bool_t CrossSection::BuildScaledCurves(const ChannelResult &r,
+                                       const std::vector<TGraph *> &comp,
+                                       const ScaleFit &fs, TGraph *&sum,
+                                       TGraph *&fit,
+                                       TGraphErrors *&band) const {
+  const Int_t nc = Int_t(comp.size());
+  // The scaled sum and its 3-sigma band on the model's grid, and the
+  // unscaled sum.
   std::vector<Double_t> gx, gsum, gfit, gband;
   for (Int_t p = 0; p < comp[0]->GetN(); p++) {
     const Double_t e = comp[0]->GetX()[p];
@@ -948,11 +960,11 @@ void CrossSection::DrawFit(const ChannelResult &r, const TString &name) const {
     for (Int_t k = 0; k < nc; k++) {
       c[k] = Interpolated(comp[k], e);
       s += c[k];
-      f += scale[k] * c[k];
+      f += fs.scale[k] * c[k];
     }
-    for (Int_t a = 0; a < nf; a++)
-      for (Int_t b = 0; b < nf; b++)
-        var += c[free_idx[a]] * c[free_idx[b]] * cov[a][b];
+    for (Int_t a = 0; a < fs.nf; a++)
+      for (Int_t b = 0; b < fs.nf; b++)
+        var += c[fs.free_idx[a]] * c[fs.free_idx[b]] * fs.cov[a][b];
     if (!(s > 0.0))
       continue;
     gx.push_back(e);
@@ -961,16 +973,23 @@ void CrossSection::DrawFit(const ChannelResult &r, const TString &name) const {
     gband.push_back(3.0 * std::sqrt(TMath::Max(0.0, var)));
   }
   if (gx.empty())
-    return;
-  TGraph *sum = new TGraph(Int_t(gx.size()), &gx[0], &gsum[0]);
-  TGraph *fit = new TGraph(Int_t(gx.size()), &gx[0], &gfit[0]);
+    return kFALSE;
+  sum = new TGraph(Int_t(gx.size()), &gx[0], &gsum[0]);
+  fit = new TGraph(Int_t(gx.size()), &gx[0], &gfit[0]);
   std::vector<Double_t> zero(gx.size(), 0.0);
-  TGraphErrors *band =
+  band =
       new TGraphErrors(Int_t(gx.size()), &gx[0], &gfit[0], &zero[0], &gband[0]);
+  return kTRUE;
+}
 
-  Double_t fx_lo = 1.0e9, fx_hi = -1.0e9, fy_lo = 1.0e9, fy_hi = -1.0e9;
+void CrossSection::BuildMeasuredGraphs(const ChannelResult &r, TGraph *fit,
+                                       TGraphAsymmErrors *&measured,
+                                       TGraphAsymmErrors *&deviation,
+                                       FitFrame &frame) const {
+  const Int_t np = Int_t(r.points.size());
+  // The measured points and the deviation of each point from the scaled
+  // sum, printed as a row.
   std::vector<Double_t> vx, vy, vexl, vexh, veyl, veyh, dy, deyl, deyh;
-  Double_t pull_max = 0.0;
   for (Int_t i = 0; i < np; i++) {
     const Point &pt = r.points[i];
     vx.push_back(pt.e_eff);
@@ -981,33 +1000,37 @@ void CrossSection::DrawFit(const ChannelResult &r, const TString &name) const {
                               pt.e_eff_hi - pt.e_eff));
     veyl.push_back(pt.ErrLo());
     veyh.push_back(pt.ErrHi());
-    fx_lo = TMath::Min(fx_lo, vx.back() - vexl.back());
-    fx_hi = TMath::Max(fx_hi, vx.back() + vexh.back());
-    fy_lo = TMath::Min(fy_lo, vy.back());
-    fy_hi = TMath::Max(fy_hi, vy.back());
+    frame.fx_lo = TMath::Min(frame.fx_lo, vx.back() - vexl.back());
+    frame.fx_hi = TMath::Max(frame.fx_hi, vx.back() + vexh.back());
+    frame.fy_lo = TMath::Min(frame.fy_lo, vy.back());
+    frame.fy_hi = TMath::Max(frame.fy_hi, vy.back());
     const Double_t f = Interpolated(fit, pt.e_eff);
     const Double_t err = pt.sigma > f ? pt.ErrLo() : pt.ErrHi();
     const Double_t pull = err > 0.0 ? (pt.sigma - f) / err : 0.0;
     dy.push_back(pull);
     deyl.push_back(1.0);
     deyh.push_back(1.0);
-    pull_max = TMath::Max(pull_max, std::abs(pull) + 1.0);
+    frame.pull_max = TMath::Max(frame.pull_max, std::abs(pull) + 1.0);
     std::cout << Form("     %2d     %6.2f      %8.2f          %8.2f          "
                       "%+6.2f",
                       pt.reac, pt.e_eff, pt.sigma, f, pull)
               << std::endl;
   }
-  TGraphAsymmErrors *measured = new TGraphAsymmErrors(
-      np, &vx[0], &vy[0], &vexl[0], &vexh[0], &veyl[0], &veyh[0]);
+  measured = new TGraphAsymmErrors(np, &vx[0], &vy[0], &vexl[0], &vexh[0],
+                                   &veyl[0], &veyh[0]);
   measured->SetMarkerStyle(kChannelMarker[0]);
   measured->SetMarkerColor(kChannelColor[0]);
   measured->SetLineColor(kChannelColor[0]);
-  TGraphAsymmErrors *deviation = new TGraphAsymmErrors(
-      np, &vx[0], &dy[0], &vexl[0], &vexh[0], &deyl[0], &deyh[0]);
+  deviation = new TGraphAsymmErrors(np, &vx[0], &dy[0], &vexl[0], &vexh[0],
+                                    &deyl[0], &deyh[0]);
   deviation->SetMarkerStyle(kChannelMarker[0]);
   deviation->SetMarkerColor(kChannelColor[0]);
   deviation->SetLineColor(kChannelColor[0]);
+}
 
+TGraphAsymmErrors *
+CrossSection::BuildPublishedGraph(const CrossSectionChannel &ch,
+                                  FitFrame &frame) const {
   TGraphAsymmErrors *published = nullptr;
   const std::vector<std::vector<Double_t>> &ref = ch.reference_xs;
   if (!ref.empty()) {
@@ -1018,10 +1041,10 @@ void CrossSection::DrawFit(const ChannelResult &r, const TString &name) const {
       rexl.push_back(ref[k][2]);
       ry.push_back(ref[k][3]);
       rey.push_back(ref[k][4]);
-      fx_lo = TMath::Min(fx_lo, ref[k][0]);
-      fx_hi = TMath::Max(fx_hi, ref[k][0]);
-      fy_lo = TMath::Min(fy_lo, ref[k][3]);
-      fy_hi = TMath::Max(fy_hi, ref[k][3]);
+      frame.fx_lo = TMath::Min(frame.fx_lo, ref[k][0]);
+      frame.fx_hi = TMath::Max(frame.fx_hi, ref[k][0]);
+      frame.fy_lo = TMath::Min(frame.fy_lo, ref[k][3]);
+      frame.fy_hi = TMath::Max(frame.fy_hi, ref[k][3]);
     }
     published = new TGraphAsymmErrors(Int_t(rx.size()), &rx[0], &ry[0],
                                       &rexl[0], &rexh[0], &rey[0], &rey[0]);
@@ -1029,47 +1052,65 @@ void CrossSection::DrawFit(const ChannelResult &r, const TString &name) const {
     published->SetMarkerColor(kRed + 1);
     published->SetLineColor(kRed + 1);
   }
-  const Double_t x_lo = fx_lo - 0.4, x_hi = fx_hi + 0.4;
+  return published;
+}
 
-  TString scale_text = "#times";
-  for (Int_t k = 0; k < nc; k++)
-    scale_text +=
-        Form("%s %.2f_{%s}", k ? " &" : "", scale[k], ch.talys_exits[k].Data());
+void CrossSection::FitLegendWidthPx(const ScaleFit &fs,
+                                    const CrossSectionChannel &ch,
+                                    const std::vector<TString> &comp_label,
+                                    const TString &model_label,
+                                    Bool_t has_published, TString &scale_text,
+                                    Double_t &legend_width_px) const {
+  scale_text = "#times";
+  for (Int_t k = 0; k < Int_t(comp_label.size()); k++)
+    scale_text += Form("%s %.2f_{%s}", k ? " &" : "", fs.scale[k],
+                       ch.talys_exits[k].Data());
   std::vector<TString> legend_labels;
   legend_labels.push_back("Present Work");
-  if (published)
+  if (has_published)
     legend_labels.push_back(ch.reference_label);
   legend_labels.push_back(Label(ch) + " scaled");
   legend_labels.push_back(scale_text);
   legend_labels.push_back(Label(ch));
-  if (nc > 1)
-    for (Int_t k = 0; k < nc; k++)
+  if (Int_t(comp_label.size()) > 1)
+    for (Int_t k = 0; k < Int_t(comp_label.size()); k++)
       legend_labels.push_back(comp_label[k]);
-  const Double_t legend_width_px =
-      PlottingUtils::LegendWidthPx(legend_labels, talys_labels_[m]);
-  const Double_t legend_gap_px = 40.0;
+  legend_width_px = PlottingUtils::LegendWidthPx(legend_labels, model_label);
+}
 
-  TPad *plot = nullptr;
-  TPad *side = nullptr;
+void CrossSection::DrawFitTopPanel(
+    const CrossSectionChannel &ch, const FitFrame &frame,
+    const TString &scale_text, Double_t legend_width_px, TGraph *sum,
+    TGraph *fit, TGraphErrors *band, const std::vector<TGraph *> &comp,
+    const std::vector<TString> &comp_label, TGraphAsymmErrors *published,
+    TGraphAsymmErrors *measured, FitPanels &pads) const {
+  const Double_t x_lo = frame.fx_lo - 0.4, x_hi = frame.fx_hi + 0.4;
+  const Int_t nc = Int_t(comp.size());
   const Int_t panel_height_px = 205;
   const Int_t plot_right_margin_px =
       TMath::Nint(1200.0 * gStyle->GetPadRightMargin());
+  const Double_t legend_gap_px = 40.0;
   const Int_t extra_width_px =
       TMath::Max(0, TMath::Nint(legend_width_px + 2.0 * legend_gap_px) -
                         plot_right_margin_px);
   TCanvas *c = PlottingUtils::GetConfiguredCanvasWithSideLegend(
-      plot, side, extra_width_px, 800 + panel_height_px, kTRUE);
+      pads.plot, pads.side, extra_width_px, 800 + panel_height_px, kTRUE);
   TPad *top = nullptr;
   TPad *bottom = nullptr;
-  PlottingUtils::SplitPadForPanel(plot, panel_height_px, top, bottom);
+  PlottingUtils::SplitPadForPanel(pads.plot, panel_height_px, top, bottom);
+  pads.c = c;
+  pads.top = top;
+  pads.bottom = bottom;
+  pads.plot_right_margin_px = plot_right_margin_px;
+  pads.extra_width_px = extra_width_px;
 
-  top->cd();
-  TH1F *frame = top->DrawFrame(x_lo, 0.5 * fy_lo, x_hi, 3.0 * fy_hi);
-  frame->SetTitle(";;#sigma [mb]");
-  frame->GetXaxis()->SetLabelSize(0);
-  frame->GetXaxis()->SetTitleSize(0);
+  pads.top->cd();
+  TH1F *frame_hist =
+      pads.top->DrawFrame(x_lo, 0.5 * frame.fy_lo, x_hi, 3.0 * frame.fy_hi);
+  frame_hist->SetTitle(";;#sigma [mb]");
+  frame_hist->GetXaxis()->SetLabelSize(0);
+  frame_hist->GetXaxis()->SetTitleSize(0);
 
-  std::vector<std::pair<TObject *, TString>> entries;
   {
     std::vector<Double_t> bx, by, bz, be;
     for (Int_t p = 0; p < band->GetN(); p++)
@@ -1090,13 +1131,13 @@ void CrossSection::DrawFit(const ChannelResult &r, const TString &name) const {
   if (TGraph *g = Clipped(fit, x_lo, x_hi)) {
     PlottingUtils::ConfigureGraph(g, kRed + 1);
     g->Draw("L SAME");
-    entries.push_back(std::make_pair(g, Label(ch) + " scaled"));
-    entries.push_back(std::make_pair((TObject *)nullptr, scale_text));
+    pads.entries.push_back(std::make_pair(g, Label(ch) + " scaled"));
+    pads.entries.push_back(std::make_pair((TObject *)nullptr, scale_text));
   }
   if (TGraph *g = Clipped(sum, x_lo, x_hi)) {
     PlottingUtils::ConfigureGraph(g, kBlack);
     g->Draw("L SAME");
-    entries.push_back(std::make_pair(g, Label(ch)));
+    pads.entries.push_back(std::make_pair(g, Label(ch)));
   }
   if (nc > 1)
     for (Int_t k = 0; k < nc; k++) {
@@ -1106,25 +1147,22 @@ void CrossSection::DrawFit(const ChannelResult &r, const TString &name) const {
       PlottingUtils::ConfigureGraph(g, kComponentColor[k % 4]);
       g->SetLineStyle(2);
       g->Draw("L SAME");
-      entries.push_back(std::make_pair(g, comp_label[k]));
+      pads.entries.push_back(std::make_pair(g, comp_label[k]));
     }
   if (published)
     published->Draw("P SAME");
   measured->Draw("P SAME");
-  if (X.PRELIMINARY) {
-    TLatex *stamp = new TLatex();
-    stamp->SetNDC();
-    stamp->SetTextAlign(13);
-    stamp->SetTextSize(0.05);
-    stamp->SetTextFont(62);
-    stamp->SetTextColor(kRed + 1);
-    stamp->DrawLatex(top->GetLeftMargin() + 0.02,
-                     1.0 - top->GetTopMargin() - 0.02, "PRELIMINARY");
-  }
+  StampPreliminary(pads.top);
+}
 
-  bottom->cd();
-  const Double_t d_lim = TMath::Max(5.0, 2.0 * std::ceil(0.6 * pull_max));
-  TH1F *dframe = bottom->DrawFrame(x_lo, -d_lim, x_hi, d_lim);
+void CrossSection::DrawPullPanel(const FitFrame &frame,
+                                 TGraphAsymmErrors *deviation,
+                                 FitPanels &pads) const {
+  const CrossSectionConfig &X = Constants::cfg.CROSS_SECTION_CONFIG;
+  const Double_t x_lo = frame.fx_lo - 0.4, x_hi = frame.fx_hi + 0.4;
+  pads.bottom->cd();
+  const Double_t d_lim = TMath::Max(5.0, 2.0 * std::ceil(0.6 * frame.pull_max));
+  TH1F *dframe = pads.bottom->DrawFrame(x_lo, -d_lim, x_hi, d_lim);
   dframe->SetTitle(Form(";%s [MeV];#delta/#sigma",
                         X.EFFECTIVE_ENERGY ? "E_{c.m.,eff}" : "E_{c.m.}"));
   dframe->GetYaxis()->SetNdivisions(-202);
@@ -1145,10 +1183,61 @@ void CrossSection::DrawFit(const ChannelResult &r, const TString &name) const {
   minus3_line->SetLineWidth(PlottingUtils::GetLineWidth());
   minus3_line->Draw("SAME");
   deviation->Draw("P SAME");
+}
 
-  side->cd();
-  const Int_t n_entries = 2 + (published ? 1 : 0) + Int_t(entries.size());
-  const Double_t side_width_px = plot_right_margin_px + extra_width_px;
+/// The fit figure: the chosen model's per-exit curves and their sum, unscaled,
+/// then the sum with one free scale per exit fitted to this work's points by
+/// weighted linear least squares (each point weighted by its total error,
+/// the asymmetric sides averaged), with the 3-sigma band from the fit's
+/// covariance and a panel of the points' deviation from the scaled sum. An
+/// exit whose curve is zero at every point cannot be scaled and keeps 1.
+void CrossSection::DrawFit(const ChannelResult &r, const TString &name) const {
+  const CrossSectionChannel &ch = *r.ch;
+  const Int_t m = ch.fit_model;
+  if (m < 0 || m >= Int_t(talys_raw_.size())) {
+    std::cerr << "cross-section: channel " << ch.name << ": fit_model " << m
+              << " but " << talys_raw_.size() << " TALYS model(s) in the file"
+              << std::endl;
+    return;
+  }
+  std::vector<TGraph *> comp;
+  std::vector<TString> comp_label;
+  if (!CollectFitComponents(r, m, comp, comp_label))
+    return;
+  const Int_t np = Int_t(r.points.size());
+
+  ScaleFit fs;
+  FitExitScales(r, comp, fs);
+  PrintScaleFit(ch, m, comp_label, fs, np);
+
+  TGraph *sum = nullptr;
+  TGraph *fit = nullptr;
+  TGraphErrors *band = nullptr;
+  if (!BuildScaledCurves(r, comp, fs, sum, fit, band))
+    return;
+
+  FitFrame frame;
+  TGraphAsymmErrors *measured = nullptr;
+  TGraphAsymmErrors *deviation = nullptr;
+  BuildMeasuredGraphs(r, fit, measured, deviation, frame);
+
+  // The published points extend the frame before x_lo/x_hi are formed.
+  TGraphAsymmErrors *published = BuildPublishedGraph(ch, frame);
+
+  TString scale_text;
+  Double_t legend_width_px = 0.0;
+  FitLegendWidthPx(fs, ch, comp_label, talys_labels_[m], published != nullptr,
+                   scale_text, legend_width_px);
+
+  FitPanels pads;
+  DrawFitTopPanel(ch, frame, scale_text, legend_width_px, sum, fit, band, comp,
+                  comp_label, published, measured, pads);
+  DrawPullPanel(frame, deviation, pads);
+
+  pads.side->cd();
+  const Int_t n_entries = 2 + (published ? 1 : 0) + Int_t(pads.entries.size());
+  const Double_t side_width_px =
+      pads.plot_right_margin_px + pads.extra_width_px;
   const Double_t side_gap_px = 0.5 * (side_width_px - legend_width_px);
   TLegend *leg = PlottingUtils::AddLegend(
       side_gap_px / side_width_px,
@@ -1158,16 +1247,17 @@ void CrossSection::DrawFit(const ChannelResult &r, const TString &name) const {
   leg->AddEntry(measured, "Present Work", "pe");
   if (published)
     leg->AddEntry(published, ch.reference_label, "pe");
-  for (Int_t k = 0; k < Int_t(entries.size()); k++)
-    leg->AddEntry(entries[k].first, entries[k].second,
-                  entries[k].first ? "l" : "");
+  for (Int_t k = 0; k < Int_t(pads.entries.size()); k++)
+    leg->AddEntry(pads.entries[k].first, pads.entries[k].second,
+                  pads.entries[k].first ? "l" : "");
 
-  PlottingUtils::ScaleFigure(plot);
+  PlottingUtils::ScaleFigure(pads.plot);
   PlottingUtils::DrawTitle(
-      top, Form("%s%s", Paths::DatasetName().Data(), Label(ch).Data()),
-      PlottingUtils::FigureScale(plot));
-  PlottingUtils::SaveFigure(c, name, "cross_section", PlotSaveOptions::kLOG);
-  delete c;
+      pads.top, Form("%s%s", Paths::DatasetName().Data(), Label(ch).Data()),
+      PlottingUtils::FigureScale(pads.plot));
+  PlottingUtils::SaveFigure(pads.c, name, "cross_section",
+                            PlotSaveOptions::kLOG);
+  delete pads.c;
 }
 
 Bool_t CrossSection::RunChannel(const CrossSectionChannel &ch,

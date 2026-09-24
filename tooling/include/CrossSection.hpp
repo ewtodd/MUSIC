@@ -31,6 +31,7 @@
  */
 
 #include <Rtypes.h>
+#include <TMatrix.h>
 #include <TString.h>
 #include <map>
 #include <utility>
@@ -40,6 +41,11 @@ class TCutG;
 class TFile;
 class TGraph;
 class TH2F;
+class TCanvas;
+class TPad;
+class TObject;
+class TGraphErrors;
+class TGraphAsymmErrors;
 struct CrossSectionChannel;
 
 /**
@@ -104,6 +110,36 @@ private:
     std::vector<TalysCurve> talys;
     std::vector<Point> points;
   };
+  /// The per-exit scale fit, post-pinning: the scales and their errors,
+  /// the free and pinned exit indices, the covariance of the free scales,
+  /// the chi2, and `nf`, the number of free scales.
+  struct ScaleFit {
+    std::vector<Double_t> scale;
+    std::vector<Double_t> scale_err;
+    std::vector<Int_t> free_idx;
+    std::vector<Int_t> pinned;
+    TMatrixD cov;
+    Double_t chi2 = 0.0;
+    Int_t nf = 0;
+  };
+  /// The fit figure's axis bounds (extended by the published points) and
+  /// the largest |pull| + 1.
+  struct FitFrame {
+    Double_t fx_lo = 1.0e9, fx_hi = -1.0e9, fy_lo = 1.0e9, fy_hi = -1.0e9;
+    Double_t pull_max = 0.0;
+  };
+  /// The fit figure's canvas and pads, the margins its side-legend geometry
+  /// is built from, and the legend's line entries in draw order.
+  struct FitPanels {
+    TCanvas *c = nullptr;
+    TPad *plot = nullptr;
+    TPad *side = nullptr;
+    TPad *top = nullptr;
+    TPad *bottom = nullptr;
+    Int_t plot_right_margin_px = 0;
+    Int_t extra_width_px = 0;
+    std::vector<std::pair<TObject *, TString>> entries;
+  };
 
   Bool_t LoadCache();
   Bool_t LoadBeam();
@@ -127,6 +163,58 @@ private:
   // The second figure: one model's sum and per-exit curves, the sum with a
   // scale per exit fitted to the points, and a deviation panel.
   void DrawFit(const ChannelResult &r, const TString &name) const;
+  // The model's per-exit curves for the fit figure, or kFALSE (with the
+  // reason printed) when it has none of the channel's exits.
+  Bool_t CollectFitComponents(const ChannelResult &r, Int_t m,
+                              std::vector<TGraph *> &comp,
+                              std::vector<TString> &comp_label) const;
+  // The weighted least-squares scale per exit, exits that go negative
+  // pinned at 0.
+  void FitExitScales(const ChannelResult &r, const std::vector<TGraph *> &comp,
+                     ScaleFit &fs) const;
+  // The "scaled to this work's points" block: the per-exit lines, the
+  // free-scale correlations, the chi2 line, and the pull table header.
+  void PrintScaleFit(const CrossSectionChannel &ch, Int_t m,
+                     const std::vector<TString> &comp_label, const ScaleFit &fs,
+                     Int_t np) const;
+  // The scaled sum and its 3-sigma band on the model's grid, and the
+  // unscaled sum; kFALSE (the caller returns) when the grid is empty.
+  Bool_t BuildScaledCurves(const ChannelResult &r,
+                           const std::vector<TGraph *> &comp,
+                           const ScaleFit &fs, TGraph *&sum, TGraph *&fit,
+                           TGraphErrors *&band) const;
+  // The measured and deviation graphs and each point's pull (printed as a
+  // row); extends the frame.
+  void BuildMeasuredGraphs(const ChannelResult &r, TGraph *fit,
+                           TGraphAsymmErrors *&measured,
+                           TGraphAsymmErrors *&deviation,
+                           FitFrame &frame) const;
+  // The published reference points, nullptr when the channel has none;
+  // extends the frame.
+  TGraphAsymmErrors *BuildPublishedGraph(const CrossSectionChannel &ch,
+                                         FitFrame &frame) const;
+  // The "#times" scale text and the legend's width in pixels from the
+  // full label list.
+  void FitLegendWidthPx(const ScaleFit &fs, const CrossSectionChannel &ch,
+                        const std::vector<TString> &comp_label,
+                        const TString &model_label, Bool_t has_published,
+                        TString &scale_text, Double_t &legend_width_px) const;
+  // The canvas with its side-legend pad and the top panel: the frame, the
+  // 3-sigma band, the scaled and unscaled sums, the per-exit components,
+  // the published and measured points, and the preliminary stamp.
+  void DrawFitTopPanel(const CrossSectionChannel &ch, const FitFrame &frame,
+                       const TString &scale_text, Double_t legend_width_px,
+                       TGraph *sum, TGraph *fit, TGraphErrors *band,
+                       const std::vector<TGraph *> &comp,
+                       const std::vector<TString> &comp_label,
+                       TGraphAsymmErrors *published,
+                       TGraphAsymmErrors *measured, FitPanels &pads) const;
+  // The pull panel: the zero and +-3 lines and the deviation points.
+  void DrawPullPanel(const FitFrame &frame, TGraphAsymmErrors *deviation,
+                     FitPanels &pads) const;
+  // The "PRELIMINARY" stamp: red, bold, in the top-left corner just inside
+  // the frame's margins; `pad` must be the current pad.
+  static void StampPreliminary(const TPad *pad);
 
   static Long64_t ReadCount(TFile &f, const char *name, Bool_t &ok);
   static TGraph *Clipped(TGraph *g, Double_t e_lo, Double_t e_hi);
