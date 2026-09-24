@@ -51,6 +51,23 @@ TString TagSuffix() {
   return tag.Length() > 0 ? "_" + tag : TString("");
 }
 
+// The curve's value at e, interpolated between the neighbouring grid points:
+// log-linear where both are positive (as the curve is drawn), else linear.
+Bool_t CurveAt(const TGraph *g, Double_t e, Double_t &v) {
+  for (Int_t p = 1; p < g->GetN(); p++) {
+    const Double_t x0 = g->GetX()[p - 1], x1 = g->GetX()[p];
+    if (!(x0 < e && e < x1))
+      continue;
+    const Double_t y0 = g->GetY()[p - 1], y1 = g->GetY()[p];
+    const Double_t t = (e - x0) / (x1 - x0);
+    v = (y0 > 0.0 && y1 > 0.0)
+            ? std::exp(std::log(y0) + t * (std::log(y1) - std::log(y0)))
+            : y0 + t * (y1 - y0);
+    return kTRUE;
+  }
+  return kFALSE;
+}
+
 // Marker styles and colours for the channels on a combined figure.
 const Int_t kChannelMarker[4] = {20, 21, 22, 23};
 const Int_t kChannelColor[4] = {kBlack, kGreen + 2, kMagenta + 2, kOrange + 7};
@@ -200,26 +217,11 @@ Double_t CrossSection::Interpolated(TGraph *g, Double_t e) {
 
 TGraph *CrossSection::Clipped(TGraph *g, Double_t e_lo, Double_t e_hi) {
   // The grid points inside the window, with the curve carried to the
-  // window's edges by interpolation between the neighbouring grid points
-  // (log-linear where both are positive, as the curve is drawn) so it
-  // reaches the frame rather than stopping a grid step short of it.
-  auto at = [&](Double_t e, Double_t &v) {
-    for (Int_t p = 1; p < g->GetN(); p++) {
-      const Double_t x0 = g->GetX()[p - 1], x1 = g->GetX()[p];
-      if (!(x0 < e && e < x1))
-        continue;
-      const Double_t y0 = g->GetY()[p - 1], y1 = g->GetY()[p];
-      const Double_t t = (e - x0) / (x1 - x0);
-      v = (y0 > 0.0 && y1 > 0.0)
-              ? std::exp(std::log(y0) + t * (std::log(y1) - std::log(y0)))
-              : y0 + t * (y1 - y0);
-      return kTRUE;
-    }
-    return kFALSE;
-  };
+  // window's edges by interpolation so it reaches the frame rather than
+  // stopping a grid step short of it.
   std::vector<Double_t> x, y;
   Double_t v = 0.0;
-  if (at(e_lo, v)) {
+  if (CurveAt(g, e_lo, v)) {
     x.push_back(e_lo);
     y.push_back(v);
   }
@@ -228,7 +230,7 @@ TGraph *CrossSection::Clipped(TGraph *g, Double_t e_lo, Double_t e_hi) {
       x.push_back(g->GetX()[p]);
       y.push_back(g->GetY()[p]);
     }
-  if (at(e_hi, v)) {
+  if (CurveAt(g, e_hi, v)) {
     x.push_back(e_hi);
     y.push_back(v);
   }
