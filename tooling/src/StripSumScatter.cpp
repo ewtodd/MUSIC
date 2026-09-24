@@ -379,6 +379,32 @@ Int_t StripSumScatter::ResolveTag(const EnergyView &ev,
   return best;
 }
 
+namespace {
+
+// One step of the selection description: the condition, what an event must
+// satisfy to go on, and the cut count it counts to.
+void AddSelectionStep(std::vector<SelectionStep> &out,
+                      SelectionStep::Stage stage, const char *id,
+                      const char *name, const TString &detail, Bool_t on,
+                      Int_t pre_cut, Int_t tag_cut) {
+  SelectionStep st;
+  st.stage = stage;
+  st.id = id;
+  st.name = name;
+  st.detail = detail;
+  st.on = on;
+  st.pre_cut = pre_cut;
+  st.tag_cut = tag_cut;
+  out.push_back(st);
+}
+
+// "fewer than 1" reads better as "none".
+TString FewerStrips(Int_t n) {
+  return n <= 1 ? TString("none") : TString(Form("fewer than %d", n));
+}
+
+} // namespace
+
 // The selection in words, one step per condition in the order RejectReason
 // and the fill apply them. Each detail states what an event must satisfy to
 // go on; "beam" is the strip's measured beam mean and "σ" its measured
@@ -392,31 +418,20 @@ std::vector<SelectionStep> StripSumScatter::DescribeSelection() {
   const Int_t last = ign17 ? 16 : 17;
   const Int_t end_strip = (ign17 || C.REQUIRE_STRIP_16_BELOW_BEAM) ? 16 : 17;
   std::vector<SelectionStep> out;
-  auto add = [&out](SelectionStep::Stage stage, const char *id,
-                    const char *name, const TString &detail, Bool_t on,
-                    Int_t pre_cut, Int_t tag_cut) {
-    SelectionStep st;
-    st.stage = stage;
-    st.id = id;
-    st.name = name;
-    st.detail = detail;
-    st.on = on;
-    st.pre_cut = pre_cut;
-    st.tag_cut = tag_cut;
-    out.push_back(st);
-  };
 
   Int_t ent_x = 0, ent_y = 1;
   EntranceAxes(ent_x, ent_y);
   const TString entrance = AxisName(ent_x) + " vs " + AxisName(ent_y);
   // Input: what the numbers below are measured against.
-  add(SelectionStep::kInput, "events", "calibrated events",
+  AddSelectionStep(
+      out, SelectionStep::kInput, "events", "calibrated events",
       Form("E(s) = strip total in beam units (beam = 1)%s; beam gates fitted "
            "per %s",
            Constants::ActiveIgnoreShortStrips() ? ", long ends only" : "",
            Constants::ActiveUseSolarisData() ? "run" : "subfile"),
       kTRUE, -1, -1);
-  add(SelectionStep::kInput, "beam_ref", "beam reference",
+  AddSelectionStep(
+      out, SelectionStep::kInput, "beam_ref", "beam reference",
       Form("beam mean and σ per strip from the first %s's pure-beam sample: "
            "every strip fired, inside the entrance (%s) and exit (%s) "
            "ellipses at %.1f σ, 3σ-clipped",
@@ -426,7 +441,8 @@ std::vector<SelectionStep> StripSumScatter::DescribeSelection() {
       kTRUE, -1, -1);
 
   // Event level, in the order of the fill loop.
-  add(SelectionStep::kEventLevel, "all_strips", kPreCutName[kPreAllStrips],
+  AddSelectionStep(
+      out, SelectionStep::kEventLevel, "all_strips", kPreCutName[kPreAllStrips],
       Form("every strip %d-%d read above zero", req0 ? 0 : 1, last), kTRUE,
       kPreAllStrips, -1);
   const TString gates =
@@ -434,75 +450,86 @@ std::vector<SelectionStep> StripSumScatter::DescribeSelection() {
           ? TString(Form("strip %d within %.1f σ of its fitted beam peak",
                          C.GATE_STRIP, C.GATE_NSIGMA))
           : TString("no beam gate");
-  add(SelectionStep::kEventLevel, "gate", kPreCutName[kPreGate], gates, kTRUE,
-      kPreGate, -1);
-  // "fewer than 1" reads better as "none".
-  auto fewer = [](Int_t n) {
-    return n <= 1 ? TString("none") : TString(Form("fewer than %d", n));
-  };
-  add(SelectionStep::kEventLevel, "pileup", kPreCutName[kPrePileup],
+  AddSelectionStep(out, SelectionStep::kEventLevel, "gate",
+                   kPreCutName[kPreGate], gates, kTRUE, kPreGate, -1);
+  AddSelectionStep(
+      out, SelectionStep::kEventLevel, "pileup", kPreCutName[kPrePileup],
       Form("%s of strips 1-16 at or above beam + %.1f σ",
-           fewer(C.PILEUP_MIN_STRIPS).Data(), C.PILEUP_NSIGMA),
+           FewerStrips(C.PILEUP_MIN_STRIPS).Data(), C.PILEUP_NSIGMA),
       C.PILEUP_NSIGMA > 0.0, kPrePileup, -1);
-  add(SelectionStep::kEventLevel, "noise", kPreCutName[kPreNoise],
-      Form("%s of strips 1-16 at or below beam − %.1f σ",
-           fewer(C.NOISE_MIN_STRIPS).Data(), C.NOISE_NSIGMA),
-      C.NOISE_NSIGMA > 0.0, kPreNoise, -1);
-  add(SelectionStep::kEventLevel, "smooth", kPreCutName[kPreSmooth],
+  AddSelectionStep(out, SelectionStep::kEventLevel, "noise",
+                   kPreCutName[kPreNoise],
+                   Form("%s of strips 1-16 at or below beam − %.1f σ",
+                        FewerStrips(C.NOISE_MIN_STRIPS).Data(), C.NOISE_NSIGMA),
+                   C.NOISE_NSIGMA > 0.0, kPreNoise, -1);
+  AddSelectionStep(
+      out, SelectionStep::kEventLevel, "smooth", kPreCutName[kPreSmooth],
       Form("every step between strips 1-%d within %.1f σ of the later "
            "strip's spread, the single largest rise excepted",
            last, C.SMOOTHNESS_NSIGMA),
       C.SMOOTHNESS_NSIGMA > 0.0, kPreSmooth, -1);
-  add(SelectionStep::kEventLevel, "both_mult", kPreCutName[kPreBothMult],
+  AddSelectionStep(
+      out, SelectionStep::kEventLevel, "both_mult", kPreCutName[kPreBothMult],
       Form("at most %d of strips 1-%d with both ends fired (raw ADC)",
            C.BOTH_MULT_MAX, TMath::Min(16, C.BOTH_MULT_COUNT_TO)),
       C.BOTH_MULT_MAX >= 0, kPreBothMult, -1);
 
   // Per reaction strip, in the order of RejectReason. The loop marker first:
   // it carries the strip range and is not a cut.
-  add(SelectionStep::kPerStrip, "reac_loop",
+  AddSelectionStep(
+      out, SelectionStep::kPerStrip, "reac_loop",
       Form("for each reaction strip reac = %d..%d", C.REACTION_STRIP_MIN,
            C.REACTION_STRIP_MAX),
       "every strip is tested on its own; the first failing condition ends "
       "its test",
       kTRUE, -1, -1);
-  add(SelectionStep::kPerStrip, "upstream", kTagCutName[kCutUpstream],
-      Form("every strip 1..reac−1 within %.1f σ of the beam",
-           C.BEAM_UPSTREAM_NSIGMA),
-      C.REQUIRE_BEAM_UPSTREAM_OF_REAC, -1, kCutUpstream);
-  add(SelectionStep::kPerStrip, "jump", kTagCutName[kCutJump],
+  AddSelectionStep(out, SelectionStep::kPerStrip, "upstream",
+                   kTagCutName[kCutUpstream],
+                   Form("every strip 1..reac−1 within %.1f σ of the beam",
+                        C.BEAM_UPSTREAM_NSIGMA),
+                   C.REQUIRE_BEAM_UPSTREAM_OF_REAC, -1, kCutUpstream);
+  AddSelectionStep(
+      out, SelectionStep::kPerStrip, "jump", kTagCutName[kCutJump],
       Form("E(reac) − E(reac−1) > %.1f σ(reac)", C.REAC_JUMP_NSIGMA), kTRUE, -1,
       kCutJump);
-  add(SelectionStep::kPerStrip, "reac_level", kTagCutName[kCutReacLevel],
-      Form("E(reac) > beam + %.1f σ(reac)", C.REAC_JUMP_NSIGMA), kTRUE, -1,
-      kCutReacLevel);
-  add(SelectionStep::kPerStrip, "tail_rise", kTagCutName[kCutTailRise],
+  AddSelectionStep(out, SelectionStep::kPerStrip, "reac_level",
+                   kTagCutName[kCutReacLevel],
+                   Form("E(reac) > beam + %.1f σ(reac)", C.REAC_JUMP_NSIGMA),
+                   kTRUE, -1, kCutReacLevel);
+  AddSelectionStep(
+      out, SelectionStep::kPerStrip, "tail_rise", kTagCutName[kCutTailRise],
       Form("no step up above %.1f σ from strip max(reac, %d)+1 to %d",
            C.TAIL_RISE_NSIGMA, C.TAIL_FALL_FROM_STRIP, last),
       C.TAIL_FALL_FROM_STRIP > 0 && C.TAIL_RISE_NSIGMA > 0.0, -1, kCutTailRise);
-  add(SelectionStep::kPerStrip, "rerise", kTagCutName[kCutRerise],
+  AddSelectionStep(
+      out, SelectionStep::kPerStrip, "rerise", kTagCutName[kCutRerise],
       Form("once back within %.1f σ of the beam after the peak, never above "
            "beam + %.1f σ again",
            C.TAIL_RETURN_NSIGMA, C.TAIL_RERISE_NSIGMA),
       C.TAIL_RERISE_NSIGMA > 0.0, -1, kCutRerise);
-  add(SelectionStep::kPerStrip, "post_above", kTagCutName[kCutPostAbove],
+  AddSelectionStep(
+      out, SelectionStep::kPerStrip, "post_above", kTagCutName[kCutPostAbove],
       Form("strips reac+1 to reac+%d all above beam + %.1f σ",
            C.POST_ABOVE_STRIPS, C.POST_ABOVE_NSIGMA),
       C.POST_ABOVE_NSIGMA > 0.0 && C.POST_ABOVE_STRIPS > 0, -1, kCutPostAbove);
-  add(SelectionStep::kPerStrip, "cross", kTagCutName[kCutCross],
+  AddSelectionStep(
+      out, SelectionStep::kPerStrip, "cross", kTagCutName[kCutCross],
       Form("strips reac+1 through %d all at or above the beam mean: the "
            "residue reaches strip %d before crossing the beam",
            C.POST_CROSS_MIN_STRIP, C.POST_CROSS_MIN_STRIP),
       C.POST_CROSS_MIN_STRIP > 0, -1, kCutCross);
-  add(SelectionStep::kPerStrip, "last_strip", kTagCutName[kCutEndStrip],
+  AddSelectionStep(
+      out, SelectionStep::kPerStrip, "last_strip", kTagCutName[kCutEndStrip],
       Form("strip %d below beam − %.1f σ", end_strip, C.END_STRIP_NSIGMA),
       kTRUE, -1, kCutEndStrip);
-  add(SelectionStep::kPerStrip, "cliff", kTagCutName[kCutCliff],
+  AddSelectionStep(
+      out, SelectionStep::kPerStrip, "cliff", kTagCutName[kCutCliff],
       Form("the last step, strip %d to %d, at most %.0f%% of the fall from "
            "the peak",
            end_strip - 1, end_strip, 100.0 * C.TAIL_CLIFF_MAX_FRACTION),
       C.TAIL_CLIFF_MAX_FRACTION > 0.0, -1, kCutCliff);
-  add(SelectionStep::kPerStrip, "one_tag", kTagCutName[kCutOtherTag],
+  AddSelectionStep(
+      out, SelectionStep::kPerStrip, "one_tag", kTagCutName[kCutOtherTag],
       C.TAG_RESOLVE == StripSumScatterConfig::TAG_RESOLVE_FIRST_STRIP
           ? "one tag per event: the first strip that passes takes it"
           : "one tag per event: the passing strip with the largest jump takes "
@@ -510,9 +537,11 @@ std::vector<SelectionStep> StripSumScatter::DescribeSelection() {
       kTRUE, -1, kCutOtherTag);
 
   // What becomes of a tag.
-  add(SelectionStep::kOutcome, "tagged", "tagged",
-      "a reaction at reac; one strip per event", kTRUE, -1, kTagPass);
-  add(SelectionStep::kOutcome, "n_beam", "beam count",
+  AddSelectionStep(out, SelectionStep::kOutcome, "tagged", "tagged",
+                   "a reaction at reac; one strip per event", kTRUE, -1,
+                   kTagPass);
+  AddSelectionStep(
+      out, SelectionStep::kOutcome, "n_beam", "beam count",
       "events past the event-level cuts with beam upstream of reac and no "
       "tag before it: the beam incident on reac, the denominator",
       kTRUE, -1, -1);
@@ -524,11 +553,13 @@ std::vector<SelectionStep> StripSumScatter::DescribeSelection() {
                  "largest change of σ per condition in quadrature, with the "
                  "gas pressure uncertainty",
                  C.CUT_VARIATION_NSIGMA_STEP, C.CUT_VARIATION_CLIFF_STEP);
-    add(SelectionStep::kOutcome, "xs", "cross section, all tagged",
+    AddSelectionStep(
+        out, SelectionStep::kOutcome, "xs", "cross section, all tagged",
         "σ(reac) = tagged / (beam count × target atoms per strip); " + sys,
         kTRUE, -1, -1);
   } else {
-    add(SelectionStep::kOutcome, "xs", "cross section, mixture fit",
+    AddSelectionStep(
+        out, SelectionStep::kOutcome, "xs", "cross section, mixture fit",
         Form("scatter x = ΣE(%d..%d), y = ΣE(reac+1..reac+%d)%s; bivariate "
              "Gaussian mixture per strip, (a,n) = reaction component within "
              "%.1f σ, count as attributed by the fit",
@@ -2736,12 +2767,96 @@ void StripSumScatter::ReprojectFromReservoir() {
             << " tagged entries." << std::endl;
 }
 
-void StripSumScatter::FillScatters(const FileSet::GateGroups &groups) {
-  const std::vector<Int_t> &runOrder = groups.order;
+// Phase 1: one run's beam ellipses and strip gate. The first groups of the
+// epoch draw their gate figures; the rest are silent.
+void StripSumScatter::FitGateRun(Int_t i, std::vector<SingleRunFitResult> &fits,
+                                 const std::vector<Int_t> &runOrder,
+                                 const std::vector<TString> &labelVec,
+                                 const std::vector<TChain *> &chainVec) {
+  Constants::SetPlotsThisFile(Constants::InPlotSample(i));
+  fits[i] = FitRunGates(runOrder[i], labelVec[i], chainVec[i]);
+}
+
+// Merge one file's fill into the totals: the scatters, the reservoir and
+// the counts. The pure-beam events are capped GLOBALLY, not per task
+// (reaction-tagged are never dropped); per-task capping would scale kept
+// beam with file count.
+void StripSumScatter::MergeRunFill(Int_t t,
+                                   std::vector<SingleRunFillResult> &fills,
+                                   Int_t &nBeamKept, Long64_t &totalGated,
+                                   Long64_t &totalSeen) {
   const Int_t kReacMin =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
   const Int_t kReacMax =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX;
+  const Int_t kBeamReservoirCap =
+      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TRACES_PER_CLASS * 10;
+  for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
+    Int_t ri = ReacIndex(reac);
+    if (ri < Int_t(fills[t].scatters.size()) && fills[t].scatters[ri])
+      m_scatter[reac]->Add(fills[t].scatters[ri]);
+  }
+  for (Int_t k = 0; k < Int_t(fills[t].reservoir.size()); k++) {
+    const TraceEvt &e = fills[t].reservoir[k];
+    if (e.beam_flat) {
+      if (nBeamKept >= kBeamReservoirCap)
+        continue;
+      nBeamKept++;
+    }
+    m_reservoir.push_back(e);
+  }
+  totalGated += fills[t].gated;
+  totalSeen += fills[t].seen;
+  m_nNormed += fills[t].normed;
+  for (Int_t k = 0; k < Int_t(fills[t].normed_at.size()); k++)
+    m_normedAt[k] += fills[t].normed_at[k];
+  for (Int_t k = 0; k < Int_t(fills[t].tagged.size()); k++)
+    m_tagged[k] += fills[t].tagged[k];
+  if (m_taggedVar.size() == fills[t].tagged_var.size())
+    for (size_t v = 0; v < m_taggedVar.size(); v++)
+      for (Int_t k = 0; k < Int_t(fills[t].tagged_var[v].size()); k++) {
+        m_taggedVar[v][k] += fills[t].tagged_var[v][k];
+        m_normedVar[v][k] += fills[t].normed_var[v][k];
+      }
+  for (Int_t k = 0; k < Int_t(fills[t].cut_counts.size()); k++)
+    m_cutCounts[k] += fills[t].cut_counts[k];
+  for (Int_t k = 0; k < Int_t(fills[t].pre_counts.size()); k++)
+    m_preCounts[k] += fills[t].pre_counts[k];
+  for (Int_t k = 0; k < Int_t(fills[t].scatters.size()); k++)
+    delete fills[t].scatters[k];
+  fills[t].scatters.clear();
+  std::vector<TraceEvt>().swap(fills[t].reservoir);
+}
+
+// Phase 2: one file of the fill, then the finished prefixes merged into
+// the totals in task order as each prefix finishes, freeing on the spot;
+// the order keeps the pure-beam budget identical to sequential.
+void StripSumScatter::FillScatterFile(
+    Int_t t, const std::vector<FillTask> &tasks,
+    const std::vector<Int_t> &runOrder, const std::vector<TString> &labelVec,
+    const std::vector<SingleRunFitResult> &fits, FillPhase &phase) {
+  const Int_t i = tasks[t].run_idx;
+  // The first files of the epoch log their fill; the rest are silent.
+  Constants::SetPlotsThisFile(Constants::InPlotSample(t));
+  {
+    TChain ch("events");
+    ch.Add(tasks[t].path);
+    if (ch.GetEntries() > 0)
+      phase.fills[t] = FillRunScatters(runOrder[i], labelVec[i], &ch,
+                                       fits[i].gate, fits[i].pure_beam);
+  }
+  std::lock_guard<std::mutex> lk(phase.merge_mutex);
+  phase.filled[t] = kTRUE;
+  const Int_t nTasks = Int_t(tasks.size());
+  while (phase.next_merge < nTasks && phase.filled[phase.next_merge]) {
+    MergeRunFill(phase.next_merge, phase.fills, phase.nBeamKept,
+                 phase.totalGated, phase.totalSeen);
+    phase.next_merge++;
+  }
+}
+
+void StripSumScatter::FillScatters(const FileSet::GateGroups &groups) {
+  const std::vector<Int_t> &runOrder = groups.order;
 
   AllocateScatters();
   // The variant counters, in the order every per-run fill uses.
@@ -2779,17 +2894,11 @@ void StripSumScatter::FillScatters(const FileSet::GateGroups &groups) {
   // Phase 1: beam ellipses and the strip gate, one task per run.
   std::vector<SingleRunFitResult> fits(nRuns);
   RunIndexedParallel(nRuns, n_workers, [&](Int_t i) {
-    // The first groups of the epoch draw their gate figures.
-    Constants::SetPlotsThisFile(Constants::InPlotSample(i));
-    fits[i] = FitRunGates(runOrder[i], labelVec[i], chainVec[i]);
+    FitGateRun(i, fits, runOrder, labelVec, chainVec);
   });
 
   // Phase 2: fill, split per file, not per run: a CoMPASS run is hundreds of
   // subfiles in one chain (SOLARIS: one per run); tasks carry their gates.
-  struct FillTask {
-    Int_t run_idx;
-    TString path;
-  };
   std::vector<FillTask> tasks;
   {
     std::map<Int_t, Int_t> idx_of_run;
@@ -2826,78 +2935,20 @@ void StripSumScatter::FillScatters(const FileSet::GateGroups &groups) {
   std::cout << "strip-sum-scatter: filling " << nTasks << " files on "
             << fill_workers << " workers" << std::endl;
 
-  // Merge into the totals in TASK ORDER as each prefix finishes, freeing on
-  // the spot; the order keeps the pure-beam budget identical to sequential.
-  std::vector<SingleRunFillResult> fills(nTasks);
-  std::vector<Bool_t> filled(nTasks, kFALSE);
-  Int_t next_merge = 0;
-  std::mutex merge_mutex;
-  Long64_t totalGated = 0, totalSeen = 0;
-  const Int_t kBeamReservoirCap =
-      Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TRACES_PER_CLASS * 10;
-  Int_t nBeamKept = 0;
-  auto merge = [&](Int_t t) {
-    for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
-      Int_t ri = ReacIndex(reac);
-      if (ri < Int_t(fills[t].scatters.size()) && fills[t].scatters[ri])
-        m_scatter[reac]->Add(fills[t].scatters[ri]);
-    }
-    // Pure-beam events are capped GLOBALLY, not per task (reaction-tagged are
-    // never dropped); per-task capping would scale kept beam with file count.
-    for (Int_t k = 0; k < Int_t(fills[t].reservoir.size()); k++) {
-      const TraceEvt &e = fills[t].reservoir[k];
-      if (e.beam_flat) {
-        if (nBeamKept >= kBeamReservoirCap)
-          continue;
-        nBeamKept++;
-      }
-      m_reservoir.push_back(e);
-    }
-    totalGated += fills[t].gated;
-    totalSeen += fills[t].seen;
-    m_nNormed += fills[t].normed;
-    for (Int_t k = 0; k < Int_t(fills[t].normed_at.size()); k++)
-      m_normedAt[k] += fills[t].normed_at[k];
-    for (Int_t k = 0; k < Int_t(fills[t].tagged.size()); k++)
-      m_tagged[k] += fills[t].tagged[k];
-    if (m_taggedVar.size() == fills[t].tagged_var.size())
-      for (size_t v = 0; v < m_taggedVar.size(); v++)
-        for (Int_t k = 0; k < Int_t(fills[t].tagged_var[v].size()); k++) {
-          m_taggedVar[v][k] += fills[t].tagged_var[v][k];
-          m_normedVar[v][k] += fills[t].normed_var[v][k];
-        }
-    for (Int_t k = 0; k < Int_t(fills[t].cut_counts.size()); k++)
-      m_cutCounts[k] += fills[t].cut_counts[k];
-    for (Int_t k = 0; k < Int_t(fills[t].pre_counts.size()); k++)
-      m_preCounts[k] += fills[t].pre_counts[k];
-    for (Int_t k = 0; k < Int_t(fills[t].scatters.size()); k++)
-      delete fills[t].scatters[k];
-    fills[t].scatters.clear();
-    std::vector<TraceEvt>().swap(fills[t].reservoir);
-  };
+  // The workers fill their file and merge the finished prefixes into the
+  // shared phase as each prefix finishes; the merge runs in task order, so
+  // the pure-beam budget stays identical to sequential.
+  FillPhase phase;
+  phase.fills.resize(nTasks);
+  phase.filled.assign(nTasks, kFALSE);
   RunIndexedParallel(nTasks, fill_workers, [&](Int_t t) {
-    Int_t i = tasks[t].run_idx;
-    // The first files of the epoch log their fill; the rest are silent.
-    Constants::SetPlotsThisFile(Constants::InPlotSample(t));
-    {
-      TChain ch("events");
-      ch.Add(tasks[t].path);
-      if (ch.GetEntries() > 0)
-        fills[t] = FillRunScatters(runOrder[i], labelVec[i], &ch, fits[i].gate,
-                                   fits[i].pure_beam);
-    }
-    std::lock_guard<std::mutex> lk(merge_mutex);
-    filled[t] = kTRUE;
-    while (next_merge < nTasks && filled[next_merge]) {
-      merge(next_merge);
-      next_merge++;
-    }
+    FillScatterFile(t, tasks, runOrder, labelVec, fits, phase);
   });
-  m_nSeen = totalSeen;
-  std::cout << "strip-sum-scatter: " << totalGated << " reaction-tagged of "
-            << totalSeen << " events (" << m_nNormed
-            << " past every pre-tag cut); reservoir " << m_reservoir.size()
-            << std::endl;
+  m_nSeen = phase.totalSeen;
+  std::cout << "strip-sum-scatter: " << phase.totalGated
+            << " reaction-tagged of " << phase.totalSeen << " events ("
+            << m_nNormed << " past every pre-tag cut); reservoir "
+            << m_reservoir.size() << std::endl;
   WriteCutReport();
 }
 

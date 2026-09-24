@@ -670,6 +670,41 @@ private:
   // Run n indexed tasks on a pool of workers, pulling from a shared queue.
   static void RunIndexedParallel(Int_t n, Int_t workers,
                                  const std::function<void(Int_t)> &task);
+  // One fill task: a processed events file and the index of the gate group
+  // (run) it belongs to.
+  struct FillTask {
+    Int_t run_idx;
+    TString path;
+  };
+  // The fill phase's state shared by the workers: the per-file results, the
+  // merge order and the totals merged so far.
+  struct FillPhase {
+    std::vector<SingleRunFillResult> fills;
+    std::vector<Bool_t> filled;
+    Int_t next_merge = 0;
+    std::mutex merge_mutex;
+    Int_t nBeamKept = 0;
+    Long64_t totalGated = 0;
+    Long64_t totalSeen = 0;
+  };
+  // Phase 1: one run's beam ellipses and strip gate; the first groups of the
+  // epoch draw their gate figures.
+  void FitGateRun(Int_t i, std::vector<SingleRunFitResult> &fits,
+                  const std::vector<Int_t> &runOrder,
+                  const std::vector<TString> &labelVec,
+                  const std::vector<TChain *> &chainVec);
+  // Merge one file's fill into the totals: the scatters, the reservoir
+  // (pure-beam events are capped globally, not per task) and the counts.
+  void MergeRunFill(Int_t t, std::vector<SingleRunFillResult> &fills,
+                    Int_t &nBeamKept, Long64_t &totalGated,
+                    Long64_t &totalSeen);
+  // Phase 2: one file of the fill, then the finished prefixes merged into
+  // the totals in task order as each prefix finishes, freeing on the spot.
+  void FillScatterFile(Int_t t, const std::vector<FillTask> &tasks,
+                       const std::vector<Int_t> &runOrder,
+                       const std::vector<TString> &labelVec,
+                       const std::vector<SingleRunFitResult> &fits,
+                       FillPhase &phase);
   static void SimTotal(const RemixSim::Event &e, const Double_t *gain,
                        Double_t *total);
   static TGraph *SimPopScatter(const TString &file, Int_t reac,
