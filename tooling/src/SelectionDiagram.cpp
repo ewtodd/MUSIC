@@ -2,6 +2,7 @@
 #include <TSystem.h>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 namespace {
 
@@ -135,26 +136,30 @@ TString SelectionDiagram::Dot(const std::vector<SelectionStep> &all,
                               const TString &title) {
   const std::vector<SelectionStep> steps = Live(all);
   const Int_t kWrap = 44;
-  TString s;
-  s += "digraph selection {\n";
+  std::ostringstream s;
+  s << "digraph selection {" << std::endl;
   // Orthogonal edges: the column connectors run as clean L shapes through
   // the gaps between the columns.
-  s += Form("  graph [rankdir=TB, newrank=true, splines=ortho, nodesep=0.25, "
+  s << Form("  graph [rankdir=TB, newrank=true, splines=ortho, nodesep=0.25, "
             "ranksep=0.3, "
             "fontname=\"Helvetica\", fontsize=13, labelloc=t, "
-            "label=<<B>%s</B>>];\n",
-            EscapeHtml(title).Data());
-  s += "  node [shape=box, style=\"rounded,filled\", fillcolor=\"#f4f4f4\", "
+            "label=<<B>%s</B>>];",
+            EscapeHtml(title).Data())
+    << std::endl;
+  s << "  node [shape=box, style=\"rounded,filled\", fillcolor=\"#f4f4f4\", "
        "color=\"#555555\", fontname=\"Helvetica\", fontsize=10, "
-       "margin=\"0.16,0.08\"];\n";
-  s += "  edge [color=\"#555555\", fontname=\"Helvetica\", fontsize=9, "
-       "arrowsize=0.7];\n";
+       "margin=\"0.16,0.08\"];"
+    << std::endl;
+  s << "  edge [color=\"#555555\", fontname=\"Helvetica\", fontsize=9, "
+       "arrowsize=0.7];"
+    << std::endl;
   for (Int_t stage = SelectionStep::kInput; stage <= SelectionStep::kOutcome;
        stage++) {
-    s += Form("  subgraph cluster_%d {\n", stage);
-    s += Form("    label=\"%s\"; labeljust=\"l\"; fontname=\"Helvetica-Bold\"; "
-              "fontsize=11; color=\"#aaaaaa\"; style=\"rounded\";\n",
-              StageTitle(SelectionStep::Stage(stage)));
+    s << Form("  subgraph cluster_%d {", stage) << std::endl;
+    s << Form("    label=\"%s\"; labeljust=\"l\"; fontname=\"Helvetica-Bold\"; "
+              "fontsize=11; color=\"#aaaaaa\"; style=\"rounded\";",
+              StageTitle(SelectionStep::Stage(stage)))
+      << std::endl;
     for (size_t i = 0; i < steps.size(); i++) {
       const SelectionStep &st = steps[i];
       if (st.stage != stage)
@@ -164,23 +169,27 @@ TString SelectionDiagram::Dot(const std::vector<SelectionStep> &all,
       const char *fill = IsCut(st)           ? "#f4f4f4"
                          : st.id == "tagged" ? "#e3f2e1"
                                              : "#e8eef7";
-      s += Form("    %s [fillcolor=\"%s\", label=<<B>%s</B><BR/>%s>];\n",
-                st.id.Data(), fill, name.Data(), detail.Data());
+      s << Form("    %s [fillcolor=\"%s\", label=<<B>%s</B><BR/>%s>];",
+                st.id.Data(), fill, name.Data(), detail.Data())
+        << std::endl;
       if (IsCut(st)) {
         // The reject exit beside the box, on the same rank and to its left,
         // so the gap to the right of each column stays free for the
         // connector to the next one (a flat edge keeps its tail on the
         // left; dir=back puts the arrowhead on the exit).
-        s += Form("    rej_%s [shape=plaintext, style=\"\", fontsize=9, "
-                  "fontcolor=\"#b00020\", label=\"%s\"];\n",
-                  st.id.Data(), RejectLabel(st));
-        s += Form("    rej_%s -> %s [dir=back, color=\"#b00020\", "
-                  "arrowsize=0.6];\n",
-                  st.id.Data(), st.id.Data());
-        s += Form("    {rank=same; rej_%s; %s;}\n", st.id.Data(), st.id.Data());
+        s << Form("    rej_%s [shape=plaintext, style=\"\", fontsize=9, "
+                  "fontcolor=\"#b00020\", label=\"%s\"];",
+                  st.id.Data(), RejectLabel(st))
+          << std::endl;
+        s << Form("    rej_%s -> %s [dir=back, color=\"#b00020\", "
+                  "arrowsize=0.6];",
+                  st.id.Data(), st.id.Data())
+          << std::endl;
+        s << Form("    {rank=same; rej_%s; %s;}", st.id.Data(), st.id.Data())
+          << std::endl;
       }
     }
-    s += "  }\n";
+    s << "  }" << std::endl;
   }
   // The columns: the first node of each on one rank, ordered left to right
   // by an invisible flat edge; the edges between columns carry no rank.
@@ -193,31 +202,35 @@ TString SelectionDiagram::Dot(const std::vector<SelectionStep> &all,
     heads += (heads.Length() ? " -> " : "") + steps[i].id;
     last_col = col;
   }
-  s += Form("  {rank=same; %s [style=invis];}\n", heads.Data());
+  s << Form("  {rank=same; %s [style=invis];}", heads.Data()) << std::endl;
   const std::vector<Edge> edges = Chain(steps);
   for (size_t i = 0; i < edges.size(); i++)
-    s += Form("  %s -> %s%s;\n", edges[i].from.Data(), edges[i].to.Data(),
-              edges[i].across ? " [constraint=false]" : "");
-  s += "}\n";
-  return s;
+    s << Form("  %s -> %s%s;", edges[i].from.Data(), edges[i].to.Data(),
+              edges[i].across ? " [constraint=false]" : "")
+      << std::endl;
+  s << "}" << std::endl;
+  return s.str();
 }
 
 TString SelectionDiagram::Mermaid(const std::vector<SelectionStep> &all,
                                   const TString &title) {
   const std::vector<SelectionStep> steps = Live(all);
   const Int_t kWrap = 44;
-  TString s;
-  s += Form("---\ntitle: %s\n---\n", title.Data());
-  s += "flowchart TB\n";
-  s += "  classDef cut fill:#f4f4f4,stroke:#555,color:#000;\n";
-  s += "  classDef note fill:#e8eef7,stroke:#555,color:#000;\n";
-  s += "  classDef tagged fill:#e3f2e1,stroke:#555,color:#000;\n";
-  s += "  classDef rej fill:none,stroke:none,color:#b00020;\n";
+  std::ostringstream s;
+  s << "---" << std::endl;
+  s << "title: " << title << std::endl;
+  s << "---" << std::endl;
+  s << "flowchart TB" << std::endl;
+  s << "  classDef cut fill:#f4f4f4,stroke:#555,color:#000;" << std::endl;
+  s << "  classDef note fill:#e8eef7,stroke:#555,color:#000;" << std::endl;
+  s << "  classDef tagged fill:#e3f2e1,stroke:#555,color:#000;" << std::endl;
+  s << "  classDef rej fill:none,stroke:none,color:#b00020;" << std::endl;
   for (Int_t stage = SelectionStep::kInput; stage <= SelectionStep::kOutcome;
        stage++) {
-    s += Form("  subgraph stage_%d[\"%s\"]\n", stage,
-              StageTitle(SelectionStep::Stage(stage)));
-    s += "    direction TB\n";
+    s << Form("  subgraph stage_%d[\"%s\"]", stage,
+              StageTitle(SelectionStep::Stage(stage)))
+      << std::endl;
+    s << "    direction TB" << std::endl;
     for (size_t i = 0; i < steps.size(); i++) {
       const SelectionStep &st = steps[i];
       if (st.stage != stage)
@@ -227,20 +240,24 @@ TString SelectionDiagram::Mermaid(const std::vector<SelectionStep> &all,
       const char *cls = IsCut(st)           ? "cut"
                         : st.id == "tagged" ? "tagged"
                                             : "note";
-      s += Form("    %s[\"<b>%s</b><br/>%s\"]:::%s\n", st.id.Data(),
-                name.Data(), detail.Data(), cls);
+      s << Form("    %s[\"<b>%s</b><br/>%s\"]:::%s", st.id.Data(), name.Data(),
+                detail.Data(), cls)
+        << std::endl;
       if (IsCut(st))
-        s += Form("    rej_%s[\"%s\"]:::rej\n", st.id.Data(), RejectLabel(st));
+        s << Form("    rej_%s[\"%s\"]:::rej", st.id.Data(), RejectLabel(st))
+          << std::endl;
     }
-    s += "  end\n";
+    s << "  end" << std::endl;
   }
   const std::vector<Edge> edges = Chain(steps);
   for (size_t i = 0; i < edges.size(); i++)
-    s += Form("  %s --> %s\n", edges[i].from.Data(), edges[i].to.Data());
+    s << Form("  %s --> %s", edges[i].from.Data(), edges[i].to.Data())
+      << std::endl;
   for (size_t i = 0; i < steps.size(); i++)
     if (IsCut(steps[i]))
-      s += Form("  %s -.-> rej_%s\n", steps[i].id.Data(), steps[i].id.Data());
-  return s;
+      s << Form("  %s -.-> rej_%s", steps[i].id.Data(), steps[i].id.Data())
+        << std::endl;
+  return s.str();
 }
 
 void SelectionDiagram::Write(const std::vector<SelectionStep> &steps,

@@ -707,7 +707,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
     // piecewise interleaves with another worker's.
     const TString line = Form(
         "[events] %s: %lld events, %lld complete (%.1f%%), %lld %s hits at "
-        "%.0f Hz, %lld outside window, dedup dropped %lld anode\n",
+        "%.0f Hz, %lld outside window, dedup dropped %lld anode",
         file_label.Data(), Long64_t(cnt.total_events),
         Long64_t(cnt.complete_events),
         cnt.total_events > 0 ? 100.0 * cnt.complete_events / cnt.total_events
@@ -715,7 +715,7 @@ Bool_t EventBuilder::BuildEventsFromSortedHits(const std::vector<RawHit> &hits,
         Long64_t(n_ref), Constants::ActiveReferenceChannel().Data(),
         ref_rate_hz, Long64_t(dropped_outside_window),
         Long64_t(cnt.dropped_anode_hits_total));
-    std::cout << line << std::flush;
+    std::cout << line << std::endl;
     return kTRUE;
   }
   if (emptyChannelMapEvents != 0)

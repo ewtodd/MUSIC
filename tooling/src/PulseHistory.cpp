@@ -25,6 +25,7 @@
 #include <functional>
 #include <iostream>
 #include <map>
+#include <sstream>
 
 namespace PulseHistory {
 
@@ -1362,29 +1363,32 @@ namespace {
 // The form's line of a report entry: which tau, how the free profile compares
 // with a given one, and the per-band amplitudes.
 TString FormLines(const Kernel &K, const char *indent) {
-  TString s;
-  s += Form("%sform: tau %.1f us (%s)  R^2 %.3f vs binned %.3f  rms %.1f vs "
-            "%.1f ADC%s\n",
+  std::ostringstream s;
+  s << Form("%sform: tau %.1f us (%s)  R^2 %.3f vs binned %.3f  rms %.1f vs "
+            "%.1f ADC%s",
             indent, K.tau_us, K.tau_given ? "given" : "profiled", K.r2_form,
             K.r2_binned, K.rms_after_form, K.rms_after_binned,
-            (!K.form && K.form_ok) ? "  [bins applied]" : "");
+            (!K.form && K.form_ok) ? "  [bins applied]" : "")
+    << std::endl;
   if (K.tau_given) {
     // The check: where the free profile lands and what it costs to hold the
     // given value. The grid step is about 15 percent, so a free tau within
     // one step of the given one is a match.
     const Double_t ratio = K.tau_us > 0.0 ? K.tau_free_us / K.tau_us : 0.0;
-    s += Form("%s  profile prefers tau %.1f us (%.2f x given, grid step "
-              "1.15)  R^2 %.4f there vs %.4f at given%s\n",
+    s << Form("%s  profile prefers tau %.1f us (%.2f x given, grid step "
+              "1.15)  R^2 %.4f there vs %.4f at given%s",
               indent, K.tau_free_us, ratio, K.r2_form_free, K.r2_form,
               (ratio > 0.0 && ratio < 1.0 / 1.15) || ratio > 1.15
                   ? "  <-- given tau not preferred"
-                  : "");
+                  : "")
+      << std::endl;
   }
   for (Int_t a = 0; a < K.n_amp; a++)
-    s += Form("%s  band %d: c %+.4f (undershoot > 0)  c_B %+.5f  W_eff %.0f "
-              "us\n",
-              indent, a, K.c[a], K.cb[a], K.EffectiveWindowUs(a));
-  return s;
+    s << Form("%s  band %d: c %+.4f (undershoot > 0)  c_B %+.5f  W_eff %.0f "
+              "us",
+              indent, a, K.c[a], K.cb[a], K.EffectiveWindowUs(a))
+      << std::endl;
+  return s.str();
 }
 
 const char *StatusOf(const Kernel &K, Bool_t enabled) {
@@ -1398,12 +1402,13 @@ const char *StatusOf(const Kernel &K, Bool_t enabled) {
 } // namespace
 
 TString Report(const Result &res, const TString &file_label, Bool_t detail) {
-  TString s;
-  s += Form("  pulse history %s: %lld hits%s, %lld reference seeds, %lld "
-            "beam-like events; %lld hits corrected, %lld clamped to 0\n",
+  std::ostringstream s;
+  s << Form("  pulse history %s: %lld hits%s, %lld reference seeds, %lld "
+            "beam-like events; %lld hits corrected, %lld clamped to 0",
             file_label.Data(), res.n_hits,
             res.sorted_input ? "" : " (SORTED: input was not time ordered)",
-            res.n_seeds, res.n_beam_events, res.n_corrected, res.n_clamped);
+            res.n_seeds, res.n_beam_events, res.n_corrected, res.n_clamped)
+    << std::endl;
   for (Int_t g = 1; g < kNGroups; g++) {
     const Kernel &K = res.kernel[g];
     // The group's own fit (the sum of its channels) is the fallback kernel
@@ -1411,11 +1416,12 @@ TString Report(const Result &res, const TString &file_label, Bool_t detail) {
     // summary form lists the enabled groups only.
     if (!detail && !res.enabled[g])
       continue;
-    s += Form("    %-22s %s  beam events %lld  n %lld  R^2 %.3f  rms %.1f -> "
-              "%.1f ADC  mean shift %.1f ADC  clamped %lld  [group fit]\n",
+    s << Form("    %-22s %s  beam events %lld  n %lld  R^2 %.3f  rms %.1f -> "
+              "%.1f ADC  mean shift %.1f ADC  clamped %lld  [group fit]",
               GroupName(g), StatusOf(K, res.enabled[g]), K.n_beam, K.n, K.r2,
               K.rms_before, K.rms_after, res.mean_shift[g],
-              res.n_clamped_group[g]);
+              res.n_clamped_group[g])
+      << std::endl;
     if (!res.enabled[g])
       continue;
     // Outside the per-file sample the group lines above are the report; the
@@ -1423,51 +1429,52 @@ TString Report(const Result &res, const TString &file_label, Bool_t detail) {
     if (!detail)
       continue;
     if (K.form_ok)
-      s += FormLines(K, "      ");
+      s << FormLines(K, "      ");
     for (Int_t a = 0; a < K.n_amp; a++) {
       if (K.n_amp == 1)
-        s += "      kernel:";
+        s << "      kernel:";
       else
-        s += Form("      kernel, previous pulse %s:",
+        s << Form("      kernel, previous pulse %s:",
                   BandLabel(a, K.n_amp, kFALSE).Data());
       for (Int_t b = 0; b < kNBins; b++)
-        s += Form(" %.0fus:%+.3f", BinCentreUs(b), K.k[a][b]);
-      s += "\n";
+        s << Form(" %.0fus:%+.3f", BinCentreUs(b), K.k[a][b]);
+      s << std::endl;
     }
     // Decay-time summary of the raw dt profile: p2 = the preamp decay the
     // pole-zero missed; flat profiles (matched chains) report no meaningful p2.
     if (K.tau.ok) {
       if (K.tau.flat)
-        s += Form(
-            "      tau fit: flat (A %.1f +- %.1f ADC within 2 sigma of 0)\n",
-            K.tau.p1, K.tau.p1err);
+        s << Form(
+                 "      tau fit: flat (A %.1f +- %.1f ADC within 2 sigma of 0)",
+                 K.tau.p1, K.tau.p1err)
+          << std::endl;
       else
-        s += Form(
-            "      tau fit: %.1f +- %.1f us  (A %+.1f +- %.1f ADC,"
-            " level %+.1f, baseline lift %+.4f ADC/us, chi2/ndf %.1f/%d)\n",
-            K.tau.p2, K.tau.p2err, K.tau.p1, K.tau.p1err, K.tau.p0, K.tau.p3,
-            K.tau.chi2, K.tau.ndf);
+        s << Form("      tau fit: %.1f +- %.1f us  (A %+.1f +- %.1f ADC,"
+                  " level %+.1f, baseline lift %+.4f ADC/us, chi2/ndf %.1f/%d)",
+                  K.tau.p2, K.tau.p2err, K.tau.p1, K.tau.p1err, K.tau.p0,
+                  K.tau.p3, K.tau.chi2, K.tau.ndf)
+          << std::endl;
     }
     // The channels of the group: the kernel each one is corrected with.
     for (Int_t c = 0; c < Int_t(res.kernel_ch.size()); c++) {
       if (res.group_of[c] != g)
         continue;
       const Kernel &C = res.kernel_ch[c];
-      s += Form("      %-8s %s  n %-9lld R^2 %.3f  rms %.1f -> %.1f ADC",
+      s << Form("      %-8s %s  n %-9lld R^2 %.3f  rms %.1f -> %.1f ADC",
                 res.name_ch[c].Data(), StatusOf(C, kTRUE), C.n, C.r2,
                 C.rms_before, C.rms_after);
       if (C.from_group) {
-        s += Form("  [group kernel: %s]\n", C.why_group.Data());
+        s << Form("  [group kernel: %s]", C.why_group.Data()) << std::endl;
         continue;
       }
       if (C.form_ok) {
-        s += Form("  tau %.1f us%s", C.tau_us, C.tau_given ? " given" : "");
+        s << Form("  tau %.1f us%s", C.tau_us, C.tau_given ? " given" : "");
         if (C.tau_given)
-          s += Form(", profile %.1f", C.tau_free_us);
-        s += "  c";
+          s << Form(", profile %.1f", C.tau_free_us);
+        s << "  c";
         for (Int_t a = 0; a < C.n_amp; a++)
-          s += Form(" %+.3f", C.c[a]);
-        s += Form("  (binned R^2 %.3f, group kernel %.3f)", C.r2_binned,
+          s << Form(" %+.3f", C.c[a]);
+        s << Form("  (binned R^2 %.3f, group kernel %.3f)", C.r2_binned,
                   C.r2_group);
       } else {
         // No form: the size of the binned kernel past the trapezoid, so a
@@ -1481,13 +1488,13 @@ TString Report(const Result &res, const TString &file_label, Bool_t detail) {
           for (Int_t b = b_from; b < kNBins; b++)
             if (TMath::Abs(C.k[a][b]) > TMath::Abs(kmax))
               kmax = C.k[a][b];
-        s += Form("  max|k| beyond %.1f us %+.3f  (group kernel R^2 %.3f)",
+        s << Form("  max|k| beyond %.1f us %+.3f  (group kernel R^2 %.3f)",
                   from_us, kmax, C.r2_group);
       }
-      s += "\n";
+      s << std::endl;
     }
   }
-  return s;
+  return s.str();
 }
 
 namespace {

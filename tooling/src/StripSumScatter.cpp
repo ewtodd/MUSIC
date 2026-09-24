@@ -4,6 +4,7 @@
 #include <TParameter.h>
 #include <algorithm>
 #include <fstream>
+#include <sstream>
 
 const char *const kTagCutName[kNTagCuts] = {
     "tagged",    "upstream beam", "jump",       "reac level",
@@ -1656,29 +1657,34 @@ void StripSumScatter::SimTagReport() {
     for (Int_t s = 0; s < 18; s++)
       gain[s] = 1.0;
 
-  TString out;
-  out += Form("strip-sum-scatter: the data selection over the simulated "
+  std::ostringstream out;
+  out << Form("strip-sum-scatter: the data selection over the simulated "
               "populations (%s), against the measured beam spread; the beam "
               "gate is not applied (fitted on data), the rest is the fill's "
-              "code.\n",
-              Paths::DatasetName().Data());
-  out += "Event level: sequential (all strips, pileup, noise, smoothness, both "
-         "mult). Own strip: the first failing tag condition, sequential; "
+              "code.",
+              Paths::DatasetName().Data())
+      << std::endl;
+  out << "Event level: sequential (all strips, pileup, noise, smoothness, "
+         "both mult). Own strip: the first failing tag condition, sequential; "
          "tagged = passed them all. One tag: where the event's single tag "
          "went under the one-tag rule (own, an earlier strip, a later strip, "
-         "none).\n\n";
+         "none)"
+      << std::endl;
+  out << std::endl;
   for (size_t k = 0; k < classes.size(); k++) {
     const SimClass &c = classes[k];
     TFile *fl = IO::OpenForReading(c.file);
     if (!fl || fl->IsZombie()) {
       delete fl;
-      out += Form("%s: cannot open %s\n", c.base.Data(), c.file.Data());
+      out << Form("%s: cannot open %s", c.base.Data(), c.file.Data())
+          << std::endl;
       continue;
     }
     TTree *t = static_cast<TTree *>(fl->Get("events_MeV"));
     RemixSim::Event e;
     if (!t || !e.Attach(t)) {
-      out += Form("%s: no events_MeV in %s\n", c.base.Data(), c.file.Data());
+      out << Form("%s: no events_MeV in %s", c.base.Data(), c.file.Data())
+          << std::endl;
       fl->Close();
       delete fl;
       continue;
@@ -1757,16 +1763,17 @@ void StripSumScatter::SimTagReport() {
     fl->Close();
     delete fl;
 
-    out += Form("%s%s: %lld events (%s)\n", PrettyLabel(c.base).Data(),
+    out << Form("%s%s: %lld events (%s)", PrettyLabel(c.base).Data(),
                 c.strip >= 0 ? Form(" at strip %d", c.strip) : "", n,
-                gSystem->BaseName(c.file));
+                gSystem->BaseName(c.file))
+        << std::endl;
     TString line = "  event level:";
     for (Int_t p = 1; p < kNPreCuts; p++)
       if (p != kPreGate)
         line += Form(" %s %lld,", kPreCutName[p], pre[p]);
     line += Form(" reached the tag %lld (%.1f%%)", pre[kPrePass],
                  n > 0 ? 100.0 * pre[kPrePass] / n : 0.0);
-    out += line + "\n";
+    out << line << std::endl;
     if (c.strip >= 0) {
       line = Form("  own strip %d:", c.strip);
       for (Int_t w = 1; w < kNTagCuts; w++)
@@ -1777,22 +1784,25 @@ void StripSumScatter::SimTagReport() {
                "the tag)",
                own[kTagPass], n > 0 ? 100.0 * own[kTagPass] / n : 0.0,
                pre[kPrePass] > 0 ? 100.0 * own[kTagPass] / pre[kPrePass] : 0.0);
-      out += line + "\n";
-      out += Form("  one tag: own %lld, earlier strip %lld, later strip %lld, "
-                  "none %lld\n",
-                  tag_own, tag_earlier, tag_later, tag_none);
+      out << line << std::endl;
+      out << Form("  one tag: own %lld, earlier strip %lld, later strip %lld, "
+                  "none %lld",
+                  tag_own, tag_earlier, tag_later, tag_none)
+          << std::endl;
     }
     line = "  tagged at:";
     for (Int_t reac = kReacMin; reac <= kReacMax; reac++)
       line += Form(" s%d %lld", reac, tag_at[ReacIndex(reac)]);
     line += Form("  (none %lld)", tag_none);
-    out += line + "\n\n";
+    out << line << std::endl;
+    out << std::endl;
   }
-  std::cout << out;
+  const std::string text = out.str();
+  std::cout << text;
   const TString dir = Paths::ResultsDir() + "/plots/strip_sum_scatter";
   gSystem->mkdir(dir, kTRUE);
   std::ofstream fo((dir + "/sim_tag_report.txt").Data());
-  fo << out;
+  fo << text;
 }
 
 /// Per reaction strip, overlay TRACES_PER_CLASS sampled per-strip traces of
@@ -2914,64 +2924,74 @@ void StripSumScatter::WriteCutReport() const {
       pre_active[steps[i].pre_cut] = steps[i].on;
   }
 
-  TString out;
-  out += Form("strip-sum-scatter tag cuts: %s, %lld events seen\n",
-              Paths::DatasetName().Data(), m_nSeen);
-  out += "Sequential counts: each condition counts the events that passed "
-         "everything before it.\n\n";
-  out += "Event-level cuts (before any reaction is asked about):\n";
+  std::ostringstream out;
+  out << Form("strip-sum-scatter tag cuts: %s, %lld events seen",
+              Paths::DatasetName().Data(), m_nSeen)
+      << std::endl;
+  out << "Sequential counts: each condition counts the events that passed "
+         "everything before it."
+      << std::endl;
+  out << std::endl;
+  out << "Event-level cuts (before any reaction is asked about):" << std::endl;
   for (Int_t c = 1; c < kNPreCuts; c++) {
     if (!pre_active[c])
-      out += Form("  %-14s off\n", kPreCutName[c]);
+      out << Form("  %-14s off", kPreCutName[c]) << std::endl;
     else
-      out += Form("  %-14s %12lld  (%6.2f%% of seen)\n", kPreCutName[c],
+      out << Form("  %-14s %12lld  (%6.2f%% of seen)", kPreCutName[c],
                   m_preCounts[c],
-                  m_nSeen > 0 ? 100.0 * m_preCounts[c] / m_nSeen : 0.0);
+                  m_nSeen > 0 ? 100.0 * m_preCounts[c] / m_nSeen : 0.0)
+          << std::endl;
   }
-  out += Form("  %-14s %12lld  (%6.2f%% of seen)\n\n", kPreCutName[kPrePass],
+  out << Form("  %-14s %12lld  (%6.2f%% of seen)", kPreCutName[kPrePass],
               m_preCounts[kPrePass],
-              m_nSeen > 0 ? 100.0 * m_preCounts[kPrePass] / m_nSeen : 0.0);
+              m_nSeen > 0 ? 100.0 * m_preCounts[kPrePass] / m_nSeen : 0.0)
+      << std::endl;
+  out << std::endl;
 
-  out += "Tag conditions per reaction strip (events past the event-level "
-         "cuts; % of those):\n";
-  out += "reac";
+  out << "Tag conditions per reaction strip (events past the event-level "
+         "cuts; % of those):"
+      << std::endl;
+  out << "reac";
   for (Int_t c = 1; c < kNTagCuts; c++)
-    out += Form(" | %13s", kTagCutName[c]);
-  out += Form(" | %13s\n", kTagCutName[kTagPass]);
+    out << Form(" | %13s", kTagCutName[c]);
+  out << Form(" | %13s", kTagCutName[kTagPass]) << std::endl;
   for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
     const Long64_t *row = &m_cutCounts[ReacIndex(reac) * kNTagCuts];
     Long64_t total = 0;
     for (Int_t c = 0; c < kNTagCuts; c++)
       total += row[c];
-    out += Form("%4d", reac);
+    out << Form("%4d", reac);
     for (Int_t c = 1; c < kNTagCuts; c++) {
       if (!active[c])
-        out += Form(" | %13s", "off");
+        out << Form(" | %13s", "off");
       else
-        out += Form(" | %13s", Form("%lld (%.2f%%)", row[c],
+        out << Form(" | %13s", Form("%lld (%.2f%%)", row[c],
                                     total > 0 ? 100.0 * row[c] / total : 0.0));
     }
-    out += Form(" | %13s\n",
+    out << Form(" | %13s",
                 Form("%lld (%.3f%%)", row[kTagPass],
-                     total > 0 ? 100.0 * row[kTagPass] / total : 0.0));
+                     total > 0 ? 100.0 * row[kTagPass] / total : 0.0))
+        << std::endl;
   }
-  std::cout << out;
+  std::cout << out.str();
 
   // The cut variation: tagged count per strip under each shifted threshold,
   // beside the nominal, so the sensitivity is readable before the cross
   // section folds it into a systematic.
   if (!m_variantNames.empty()) {
-    out += "\nCut variation (tagged events per strip with one threshold "
-           "shifted; nominal first):\n";
-    out += "reac |       nominal";
+    out << std::endl;
+    out << "Cut variation (tagged events per strip with one threshold "
+           "shifted; nominal first):"
+        << std::endl;
+    out << "reac |       nominal";
     for (size_t v = 0; v < m_variantNames.size(); v++)
-      out += Form(" | %9s", m_variantNames[v].Data());
-    out += "\n";
+      out << Form(" | %9s", m_variantNames[v].Data());
+    out << std::endl;
     for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
-      out += Form("%4d | %13lld", reac, m_tagged[ReacIndex(reac)]);
+      out << Form("%4d | %13lld", reac, m_tagged[ReacIndex(reac)]);
       for (size_t v = 0; v < m_variantNames.size(); v++)
-        out += Form(" | %9lld", m_taggedVar[v][ReacIndex(reac)]);
-      out += "\n";
+        out << Form(" | %9lld", m_taggedVar[v][ReacIndex(reac)]);
+      out << std::endl;
     }
   }
 
@@ -2983,7 +3003,7 @@ void StripSumScatter::WriteCutReport() const {
     std::cerr << "strip-sum-scatter: cannot write " << path << std::endl;
     return;
   }
-  f << out;
+  f << out.str();
   f.close();
   std::cout << "strip-sum-scatter: tag-cut report written to " << path
             << std::endl;

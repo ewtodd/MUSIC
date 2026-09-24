@@ -152,23 +152,27 @@ Int_t RunModel(const TalysModel &model, const TString &work,
       return -1;
     }
   }
-  TString input;
-  input += "# Written by talys-xs for " + Paths::DatasetName() + ": " +
-           model.label + "\n";
-  input += "projectile a\n";
-  input += "element " + X.BEAM_ELEMENT + "\n";
-  input += Form("mass %d\n", X.BEAM_A);
-  input += "energy energies\n";
+  std::ostringstream input_ss;
+  input_ss << "# Written by talys-xs for " << Paths::DatasetName() << ": "
+           << model.label << std::endl;
+  input_ss << "projectile a" << std::endl;
+  input_ss << "element " << X.BEAM_ELEMENT << std::endl;
+  input_ss << Form("mass %d", X.BEAM_A) << std::endl;
+  input_ss << "energy energies" << std::endl;
   // The shared settings first, then the model's own, which win where they
   // repeat one (TALYS keeps the last value read).
-  if (!X.TALYS_COMMON_KEYWORDS.empty())
-    input +=
-        "#\n# common settings (CROSS_SECTION_CONFIG.TALYS_COMMON_KEYWORDS)\n";
+  if (!X.TALYS_COMMON_KEYWORDS.empty()) {
+    input_ss << "#" << std::endl;
+    input_ss << "# common settings (CROSS_SECTION_CONFIG.TALYS_COMMON_KEYWORDS)"
+             << std::endl;
+  }
   for (Int_t k = 0; k < Int_t(X.TALYS_COMMON_KEYWORDS.size()); k++)
-    input += X.TALYS_COMMON_KEYWORDS[k] + "\n";
-  input += "#\n# model: " + model.label + "\n";
+    input_ss << X.TALYS_COMMON_KEYWORDS[k] << std::endl;
+  input_ss << "#" << std::endl;
+  input_ss << "# model: " << model.label << std::endl;
   for (Int_t k = 0; k < Int_t(model.keywords.size()); k++)
-    input += model.keywords[k] + "\n";
+    input_ss << model.keywords[k] << std::endl;
+  const TString input = input_ss.str();
   {
     std::ofstream en((work + "/energies").Data());
     en << energies;
@@ -263,9 +267,10 @@ int main() {
   const Double_t ecm_lo =
       kEcmStep * std::floor(TMath::Max(kEcmStep, e_lo) / kEcmStep);
   const Double_t ecm_hi = kEcmStep * std::ceil(e_hi / kEcmStep);
-  TString energies;
+  std::ostringstream energies_ss;
   for (Double_t ecm = ecm_lo; ecm <= ecm_hi + 1.0e-9; ecm += kEcmStep)
-    energies += Form("%.4f\n", ecm * lab_per_cm);
+    energies_ss << Form("%.4f", ecm * lab_per_cm) << std::endl;
+  const TString energies = energies_ss.str();
 
   // Everything TALYS touches lives under root_files/talys, which git
   // ignores: one run per model under work/, the graphs beside them.
