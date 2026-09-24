@@ -104,6 +104,35 @@ std::vector<FileSpec> BuildSpecsImpl(Bool_t processed) {
   }
   return specs;
 }
+
+// Suffix order: the empty suffix first, then the leading subfile number
+// (_1_c000 -> 1, _c000 -> 0), then lexicographic.
+Bool_t SuffixLess(const TString &a, const TString &b) {
+  if (a == "")
+    return kTRUE;
+  if (b == "")
+    return kFALSE;
+  Int_t na = 0, nb = 0;
+  if (a.Length() > 1 && a[0] == '_') {
+    TString numA = a(1, a.Length() - 1);
+    Int_t dash = numA.Index('_');
+    if (dash > 0)
+      numA = numA(0, dash);
+    if (numA.IsDigit())
+      na = numA.Atoi();
+  }
+  if (b.Length() > 1 && b[0] == '_') {
+    TString numB = b(1, b.Length() - 1);
+    Int_t dash = numB.Index('_');
+    if (dash > 0)
+      numB = numB(0, dash);
+    if (numB.IsDigit())
+      nb = numB.Atoi();
+  }
+  if (na != nb)
+    return na < nb;
+  return a < b;
+}
 } // namespace
 
 std::vector<TString> FileSet::DiscoverRunSuffixes(Int_t run) {
@@ -231,35 +260,7 @@ std::vector<TString> FileSet::DiscoverProcessedRunSuffixes(Int_t run) {
     suffixes.push_back(rest);
   }
   gSystem->FreeDirectory(dirp);
-  std::sort(suffixes.begin(), suffixes.end(),
-            [](const TString &a, const TString &b) {
-              if (a == "")
-                return true;
-              if (b == "")
-                return false;
-              // Extract leading numeric part for sorting: _1_c000 -> 1, _c000
-              // -> 0
-              Int_t na = 0, nb = 0;
-              if (a.Length() > 1 && a[0] == '_') {
-                TString numA = a(1, a.Length() - 1);
-                Int_t dash = numA.Index('_');
-                if (dash > 0)
-                  numA = numA(0, dash);
-                if (numA.IsDigit())
-                  na = numA.Atoi();
-              }
-              if (b.Length() > 1 && b[0] == '_') {
-                TString numB = b(1, b.Length() - 1);
-                Int_t dash = numB.Index('_');
-                if (dash > 0)
-                  numB = numB(0, dash);
-                if (numB.IsDigit())
-                  nb = numB.Atoi();
-              }
-              if (na != nb)
-                return na < nb;
-              return a < b;
-            });
+  std::sort(suffixes.begin(), suffixes.end(), SuffixLess);
   return suffixes;
 }
 
