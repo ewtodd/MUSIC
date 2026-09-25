@@ -164,7 +164,16 @@
               alias wipe-analysis='rm -r analysis/${dataset}/plots analysis/${dataset}/root_files'
               alias wipe-plots='rm -r analysis/${dataset}/plots'
               alias wipe-root='rm -r analysis/${dataset}/root_files'
-              alias clean-aclic='rm -f *_C.so *_C.d *_C_ACLiC_dict_rdict.pcm *_cpp.so *_cpp.d *_cpp_ACLiC_dict_rdict.pcm *_cxx.so *_cxx.d *_cxx_ACLiC_dict_rdict.pcm AutoDict_*'
+
+              # for using argo
+              anl-opencode() {
+                if ! (exec 3<>"/dev/tcp/127.0.0.1/8118") 2>/dev/null; then
+                  echo "anl-opencode: nothing on 127.0.0.1:8118 - start scripts/anl-tunnel.sh first." >&2
+                  return 1
+                fi
+                HTTP_PROXY="http://127.0.0.1:8118" HTTPS_PROXY="http://127.0.0.1:8118" \
+                  NO_PROXY="localhost,127.0.0.1,::1" opencode "$@"
+              }
             '';
           };
       in

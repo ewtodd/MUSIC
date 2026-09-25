@@ -137,8 +137,9 @@ void InitDatasetConfig() {
   gInstance.CROSS_SECTION_CONFIG.EFFECTIVE_ENERGY = kTRUE;
   gInstance.CROSS_SECTION_CONFIG.PRELIMINARY = kTRUE;
   gInstance.CROSS_SECTION_CONFIG.EPOCHS = {"late"};
+  // TALYS supplies the unresolved (a,p) branching correction.
   gInstance.CROSS_SECTION_CONFIG.CHANNELS = {
-      {"an", "(#alpha, n+p)", {"n", "p"}, {}, "", 0}};
+      {"an", "(#alpha, n)", {"n"}, {"p"}, {}, "", 0}};
   gInstance.CROSS_SECTION_CONFIG.TALYS_MODELS = {
       {"TALYS HF + McFadden-Satchler", {"alphaomp 2"}},
       {"TALYS HF + Avrigeanu", {"alphaomp 6"}}};

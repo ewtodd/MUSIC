@@ -88,6 +88,8 @@ public:
   /// @return Its configured label, or one derived from its exit list when it
   ///         has none.
   static TString Label(const CrossSectionChannel &ch);
+  /// Label the channel's subtracted exits, or return an empty string.
+  static TString SubtractedLabel(const CrossSectionChannel &ch);
 
 private:
   struct TalysCurve {
@@ -98,6 +100,8 @@ private:
     Int_t reac;
     Double_t e_in, e_out, e_eff, e_eff_lo, e_eff_hi; // E_cm [MeV]
     Double_t n_reac, n_denom;
+    /// Fraction removed from the tagged count and half its model spread.
+    Double_t sub_frac, sub_frac_err;
     Double_t sigma, sys; // [mb]
     /// Statistical error below and above the point [mb]: Feldman-Cousins
     /// on the Poisson count under FELDMAN_COUSINS_MAX_COUNT, root-N above.
@@ -108,7 +112,17 @@ private:
   struct ChannelResult {
     const CrossSectionChannel *ch;
     std::vector<TalysCurve> talys;
+    /// TALYS curves for the exits listed in `subtract_exits`.
+    std::vector<TalysCurve> talys_sub;
     std::vector<Point> points;
+  };
+  /// Fit components, with kept exits before subtracted exits.
+  struct FitComponents {
+    std::vector<TGraph *> graph;
+    std::vector<TString> label;
+    std::vector<TString> tag;
+    Int_t n_keep = 0;
+    Int_t Size() const { return Int_t(graph.size()); }
   };
   /// The per-exit scale fit, post-pinning: the scales and their errors,
   /// the free and pinned exit indices, the covariance of the free scales,
@@ -116,6 +130,8 @@ private:
   struct ScaleFit {
     std::vector<Double_t> scale;
     std::vector<Double_t> scale_err;
+    std::vector<Double_t> scale_raw;
+    std::vector<Double_t> scale_raw_err;
     std::vector<Int_t> free_idx;
     std::vector<Int_t> pinned;
     TMatrixD cov;
@@ -148,13 +164,16 @@ private:
   // root_files/talys/talys_xs.root, keyed by model then (Z, A).
   void LoadTalys();
 
-  // The channel's curves: per model, the sum over its exits' residues.
-  std::vector<TalysCurve> ChannelCurves(const CrossSectionChannel &ch) const;
+  // Sum the named exits for each TALYS model.
+  std::vector<TalysCurve> ExitCurves(const CrossSectionChannel &ch,
+                                     const std::vector<TString> &exits,
+                                     const char *what) const;
   Bool_t RunChannel(const CrossSectionChannel &ch, ChannelResult &out);
 
   // One strip's point, or kFALSE (with a printed reason) when it has none.
   Bool_t Strip(const CrossSectionChannel &ch,
-               const std::vector<TalysCurve> &talys, Int_t reac, Point &pt);
+               const std::vector<TalysCurve> &talys,
+               const std::vector<TalysCurve> &talys_sub, Int_t reac, Point &pt);
   void CompareReference(const ChannelResult &r) const;
 
   // The figure for these channels; name is the file's basename.
@@ -166,21 +185,23 @@ private:
   // The model's per-exit curves for the fit figure, or kFALSE (with the
   // reason printed) when it has none of the channel's exits.
   Bool_t CollectFitComponents(const ChannelResult &r, Int_t m,
-                              std::vector<TGraph *> &comp,
-                              std::vector<TString> &comp_label) const;
+                              FitComponents &comp) const;
   // The weighted least-squares scale per exit, exits that go negative
-  // pinned at 0.
-  void FitExitScales(const ChannelResult &r, const std::vector<TGraph *> &comp,
-                     ScaleFit &fs) const;
+  // Negative scales are pinned at zero; point_scale fits pre-subtraction data.
+  void FitExitScales(const ChannelResult &r, const FitComponents &comp,
+                     ScaleFit &fs,
+                     const std::vector<Double_t> *point_scale = nullptr) const;
+  // Compare subtracted-exit scales before and after correction.
+  void PrintSubtractionCheck(const ChannelResult &r, const FitComponents &comp,
+                             const ScaleFit &fs) const;
   // The "scaled to this work's points" block: the per-exit lines, the
-  // free-scale correlations, the chi2 line, and the pull table header.
+  // free-scale correlations, chi2, and the pull table header.
   void PrintScaleFit(const CrossSectionChannel &ch, Int_t m,
-                     const std::vector<TString> &comp_label, const ScaleFit &fs,
+                     const FitComponents &comp, const ScaleFit &fs,
                      Int_t np) const;
   // The scaled sum and its 3-sigma band on the model's grid, and the
   // unscaled sum; kFALSE (the caller returns) when the grid is empty.
-  Bool_t BuildScaledCurves(const ChannelResult &r,
-                           const std::vector<TGraph *> &comp,
+  Bool_t BuildScaledCurves(const ChannelResult &r, const FitComponents &comp,
                            const ScaleFit &fs, TGraph *&sum, TGraph *&fit,
                            TGraphErrors *&band) const;
   // The measured and deviation graphs and each point's pull (printed as a
@@ -196,18 +217,16 @@ private:
   // The "#times" scale text and the legend's width in pixels from the
   // full label list.
   void FitLegendWidthPx(const ScaleFit &fs, const CrossSectionChannel &ch,
-                        const std::vector<TString> &comp_label,
-                        const TString &model_label, Bool_t has_published,
-                        TString &scale_text, Double_t &legend_width_px) const;
+                        const FitComponents &comp, const TString &model_label,
+                        Bool_t has_published, TString &scale_text,
+                        Double_t &legend_width_px) const;
   // The canvas with its side-legend pad and the top panel: the frame, the
   // 3-sigma band, the scaled and unscaled sums, the per-exit components,
   // the published and measured points, and the preliminary stamp.
   void DrawFitTopPanel(const CrossSectionChannel &ch, const FitFrame &frame,
                        const TString &scale_text, Double_t legend_width_px,
                        TGraph *sum, TGraph *fit, TGraphErrors *band,
-                       const std::vector<TGraph *> &comp,
-                       const std::vector<TString> &comp_label,
-                       TGraphAsymmErrors *published,
+                       const FitComponents &comp, TGraphAsymmErrors *published,
                        TGraphAsymmErrors *measured, FitPanels &pads) const;
   // The pull panel: the zero and +-3 lines and the deviation points.
   void DrawPullPanel(const FitFrame &frame, TGraphAsymmErrors *deviation,
@@ -234,6 +253,14 @@ private:
   Double_t CutVariation(Int_t reac, Double_t per_count, TString &detail) const;
   // The gas-pressure uncertainty on a point [mb]: relative, 1 / pressure.
   Double_t GasPressureSys(Double_t sigma) const;
+  // Return the mean subtracted branching fraction and half its model spread.
+  static Double_t SubtractedFraction(const std::vector<TalysCurve> &talys,
+                                     const std::vector<TalysCurve> &talys_sub,
+                                     Double_t e_out, Double_t e_in,
+                                     Double_t &spread);
+  // Average a TALYS curve across a strip; covered reports grid coverage.
+  static Double_t StripAverage(TGraph *g, Double_t e_out, Double_t e_in,
+                               Bool_t &covered);
 
   TFile *cache_ = nullptr;
   Long64_t n_seen_ = 0, n_beam_ = 0;

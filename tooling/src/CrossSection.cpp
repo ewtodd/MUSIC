@@ -186,6 +186,15 @@ TString CrossSection::Label(const CrossSectionChannel &ch) {
   return "(#alpha, " + joined + ")";
 }
 
+TString CrossSection::SubtractedLabel(const CrossSectionChannel &ch) {
+  if (ch.subtract_exits.empty())
+    return "";
+  TString joined;
+  for (Int_t k = 0; k < Int_t(ch.subtract_exits.size()); k++)
+    joined += (k ? ", " : "") + ch.subtract_exits[k];
+  return "(#alpha, " + joined + ")";
+}
+
 Long64_t CrossSection::ReadCount(TFile &f, const char *name, Bool_t &ok) {
   TParameter<Long64_t> *p = static_cast<TParameter<Long64_t> *>(f.Get(name));
   if (!p) {
@@ -440,26 +449,28 @@ void CrossSection::LoadTalys() {
 }
 
 std::vector<CrossSection::TalysCurve>
-CrossSection::ChannelCurves(const CrossSectionChannel &ch) const {
+CrossSection::ExitCurves(const CrossSectionChannel &ch,
+                         const std::vector<TString> &exits,
+                         const char *what) const {
   const CrossSectionConfig &X = Constants::cfg.CROSS_SECTION_CONFIG;
   std::vector<TalysCurve> curves;
-  if (talys_raw_.empty())
+  if (talys_raw_.empty() || exits.empty())
     return curves;
   for (Int_t m = 0; m < Int_t(talys_raw_.size()); m++) {
     std::map<Double_t, Double_t> sum;
     TString used, missing;
-    for (Int_t k = 0; k < Int_t(ch.talys_exits.size()); k++) {
+    for (Int_t k = 0; k < Int_t(exits.size()); k++) {
       Int_t z = 0, a = 0;
-      ExitResidue(ch.talys_exits[k], X.BEAM_Z, X.BEAM_A, z, a);
+      ExitResidue(exits[k], X.BEAM_Z, X.BEAM_A, z, a);
       std::map<std::pair<Int_t, Int_t>, TGraph *>::const_iterator it =
           talys_raw_[m].find(std::make_pair(z, a));
       if (it == talys_raw_[m].end()) {
-        missing += Form(" %s(Z=%d,A=%d)", ch.talys_exits[k].Data(), z, a);
+        missing += Form(" %s(Z=%d,A=%d)", exits[k].Data(), z, a);
         continue;
       }
       for (Int_t p = 0; p < it->second->GetN(); p++)
         sum[it->second->GetX()[p]] += it->second->GetY()[p];
-      used += Form(" %s(Z=%d,A=%d)", ch.talys_exits[k].Data(), z, a);
+      used += Form(" %s(Z=%d,A=%d)", exits[k].Data(), z, a);
     }
     std::vector<Double_t> tx, ty;
     for (std::map<Double_t, Double_t>::const_iterator it = sum.begin();
@@ -469,7 +480,7 @@ CrossSection::ChannelCurves(const CrossSectionChannel &ch) const {
         ty.push_back(it->second);
       }
     std::cout << "cross-section: " << ch.name << ": " << talys_labels_[m]
-              << ": summed" << (used.Length() ? used : " nothing")
+              << ": summed " << what << (used.Length() ? used : " nothing")
               << (missing.Length() ? "; not in the file:" + missing : "")
               << std::endl;
     if (tx.empty())
@@ -482,8 +493,73 @@ CrossSection::ChannelCurves(const CrossSectionChannel &ch) const {
   return curves;
 }
 
+Double_t CrossSection::StripAverage(TGraph *g, Double_t e_out, Double_t e_in,
+                                    Bool_t &covered) {
+  const Double_t lo = TMath::Min(e_out, e_in), hi = TMath::Max(e_out, e_in);
+  covered = g && g->GetN() >= 2 && lo >= g->GetX()[0] &&
+            hi <= g->GetX()[g->GetN() - 1];
+  const Int_t n_sub = 200;
+  Double_t sum = 0.0;
+  for (Int_t k = 0; k <= n_sub; k++) {
+    const Double_t e = lo + (hi - lo) * Double_t(k) / Double_t(n_sub);
+    sum += ((k == 0 || k == n_sub) ? 0.5 : 1.0) * Interpolated(g, e);
+  }
+  return sum / Double_t(n_sub);
+}
+
+Double_t
+CrossSection::SubtractedFraction(const std::vector<TalysCurve> &talys,
+                                 const std::vector<TalysCurve> &talys_sub,
+                                 Double_t e_out, Double_t e_in,
+                                 Double_t &spread) {
+  spread = 0.0;
+  if (talys_sub.empty() || talys.empty())
+    return 0.0;
+  Double_t sum = 0.0, lo = 1.0e9, hi = -1.0e9;
+  Int_t used = 0, skipped = 0;
+  // Pair kept and subtracted curves by model label.
+  for (Int_t ms = 0; ms < Int_t(talys_sub.size()); ms++) {
+    const TalysCurve *chan = nullptr;
+    for (Int_t m = 0; m < Int_t(talys.size()); m++)
+      if (talys[m].label == talys_sub[ms].label) {
+        chan = &talys[m];
+        break;
+      }
+    if (!chan) {
+      skipped++;
+      continue;
+    }
+    Bool_t cov_chan = kFALSE, cov_drop = kFALSE;
+    const Double_t keep = StripAverage(chan->axn, e_out, e_in, cov_chan);
+    const Double_t drop =
+        StripAverage(talys_sub[ms].axn, e_out, e_in, cov_drop);
+    if (!cov_chan || !cov_drop) {
+      skipped++;
+      continue;
+    }
+    if (!(keep + drop > 0.0))
+      continue;
+    const Double_t f = drop / (keep + drop);
+    sum += f;
+    lo = TMath::Min(lo, f);
+    hi = TMath::Max(hi, f);
+    used++;
+  }
+  if (used == 0) {
+    if (skipped > 0)
+      std::cout << Form("         no model both has the exits to subtract and "
+                        "covers [%.2f, %.2f] MeV: nothing subtracted",
+                        TMath::Min(e_out, e_in), TMath::Max(e_out, e_in))
+                << std::endl;
+    return 0.0;
+  }
+  spread = used > 1 ? 0.5 * (hi - lo) : 0.0;
+  return sum / Double_t(used);
+}
+
 Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
-                           const std::vector<TalysCurve> &talys, Int_t reac,
+                           const std::vector<TalysCurve> &talys,
+                           const std::vector<TalysCurve> &talys_sub, Int_t reac,
                            Point &pt) {
   const StripSumScatterConfig &C = Constants::cfg.STRIP_SUM_SCATTER_CONFIG;
   const TString region = "region_" + ch.name;
@@ -535,23 +611,45 @@ Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
   // Geometric = in-region / enclosed fraction; attributed = 3-sigma fit share.
   // Disagreement = region systematic; geometric runs away over beam tail.
   const Double_t n_raw = CountInCut(h, cut, 1.0);
+  // Remove the TALYS-predicted branching fraction from the tagged count.
+  pt.sub_frac =
+      SubtractedFraction(talys, talys_sub, pt.e_out, pt.e_in, pt.sub_frac_err);
+  const Double_t n_kept = n_raw * (1.0 - pt.sub_frac);
+  if (pt.sub_frac > 0.0)
+    std::cout << Form("         %s: TALYS puts %.2f%% +- %.2f%% of what is "
+                      "tagged here in it, so %.0f of %.0f events are removed",
+                      SubtractedLabel(ch).Data(), 100.0 * pt.sub_frac,
+                      100.0 * pt.sub_frac_err, n_raw - n_kept, n_raw)
+              << std::endl;
   if (all_tagged) {
     // Every tagged event is the reaction: no enclosed-fraction correction,
     // and the systematic is the cut variation plus the gas pressure.
-    pt.n_reac = n_raw;
+    pt.n_reac = n_kept;
     pt.sigma = pt.n_reac / norm;
+    // Scale the count interval by the retained fraction.
     Double_t below = 0.0, above = 0.0;
     PoissonInterval(n_raw, below, above);
-    pt.stat_lo = below / norm;
-    pt.stat_hi = above / norm;
+    pt.stat_lo = below * (1.0 - pt.sub_frac) / norm;
+    pt.stat_hi = above * (1.0 - pt.sub_frac) / norm;
     TString detail;
     const Double_t sys_cuts =
-        CutVariation(reac, 1.0 / (areal_ * kCm2PerMb), detail);
+        CutVariation(reac, (1.0 - pt.sub_frac) / (areal_ * kCm2PerMb), detail);
     const Double_t sys_gas = GasPressureSys(pt.sigma);
-    pt.sys = std::hypot(sys_cuts, sys_gas);
+    // Propagate the model spread on the removed fraction.
+    const Double_t sys_sub = pt.sub_frac_err * n_raw / norm;
+    pt.sys =
+        std::sqrt(sys_cuts * sys_cuts + sys_gas * sys_gas + sys_sub * sys_sub);
+    if (pt.sub_frac > 0.0)
+      std::cout << Form("         subtraction systematic %.2f mb (%.1f%% of "
+                        "the point), against %.2f mb cut variation and %.2f "
+                        "mb gas pressure",
+                        sys_sub,
+                        pt.sigma > 0.0 ? 100.0 * sys_sub / pt.sigma : 0.0,
+                        sys_cuts, sys_gas)
+                << std::endl;
     std::cout << Form("   %2d    [%5.2f, %5.2f]      %6.2f   %6.0f  %9.0f   "
                       "%7.1f +%.1f -%.1f (+%.1f -%.1f stat%s, %.1f cut "
-                      "variation, %.2f gas pressure; all tagged events "
+                      "variation, %.2f gas pressure%s; all tagged events "
                       "counted%s%s)",
                       reac, pt.e_in, pt.e_out, pt.e_eff, pt.n_reac, pt.n_denom,
                       pt.sigma, pt.ErrHi(), pt.ErrLo(), pt.stat_hi, pt.stat_lo,
@@ -560,6 +658,8 @@ Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
                           ? " Feldman-Cousins"
                           : "",
                       sys_cuts, sys_gas,
+                      pt.sub_frac > 0.0 ? Form(", %.2f subtraction", sys_sub)
+                                        : "",
                       detail.IsNull() ? "; no variation counts in the cache"
                                       : "; per condition, change of sigma "
                                         "with its threshold up (+) and "
@@ -569,10 +669,13 @@ Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
     delete cut;
     return kTRUE;
   }
-  const Double_t est_geo = n_raw / Enclosed(C.AN_REGION_NSIGMA);
+  // Apply the same correction in the fitted-region mode.
+  const Double_t keep = 1.0 - pt.sub_frac;
+  const Double_t est_geo = n_raw * keep / Enclosed(C.AN_REGION_NSIGMA);
   const Double_t n_assigned = RegionCutStore::LoadAssigned(region, reac);
   const Bool_t have_fit = n_assigned >= 0.0;
-  const Double_t est_fit = have_fit ? n_assigned / Enclosed(3.0) : est_geo;
+  const Double_t est_fit =
+      have_fit ? n_assigned * keep / Enclosed(3.0) : est_geo;
   pt.n_reac = est_fit;
   pt.sigma = pt.n_reac / norm;
   {
@@ -587,24 +690,30 @@ Bool_t CrossSection::Strip(const CrossSectionChannel &ch,
   }
   if (have_fit) {
     // Core check: 1-sigma ellipse (half the drawn region), corrected for the
-    // 39% enclosed; the gap to the core count = the overlap ambiguity's size.
+    // Apply the retained fraction to the core count.
     const Double_t est_core =
-        CountInCut(h, cut, 1.0 / C.AN_REGION_NSIGMA) / Enclosed(1.0);
+        keep * CountInCut(h, cut, 1.0 / C.AN_REGION_NSIGMA) / Enclosed(1.0);
     pt.sys = std::fabs(est_core - est_fit) / norm;
   } else {
     // A drawn region without an attributed count: scale it by 0.75x and
-    // 1.25x, each corrected for its enclosed fraction.
+    // Correct each variation for enclosure and subtraction.
     Double_t lo = pt.sigma, hi = pt.sigma;
     const Double_t kScale[2] = {0.75, 1.25};
     for (Int_t k = 0; k < 2; k++) {
-      const Double_t s = CountInCut(h, cut, kScale[k]) /
+      const Double_t s = keep * CountInCut(h, cut, kScale[k]) /
                          Enclosed(kScale[k] * C.AN_REGION_NSIGMA) / norm;
       lo = TMath::Min(lo, s);
       hi = TMath::Max(hi, s);
     }
     pt.sys = 0.5 * (hi - lo);
   }
-  pt.sys = std::hypot(pt.sys, GasPressureSys(pt.sigma));
+  {
+    const Double_t sys_sub =
+        keep > 0.0 ? pt.sub_frac_err / keep * pt.sigma : 0.0;
+    pt.sys = std::sqrt(pt.sys * pt.sys +
+                       GasPressureSys(pt.sigma) * GasPressureSys(pt.sigma) +
+                       sys_sub * sys_sub);
+  }
   std::cout << Form("   %2d    [%5.2f, %5.2f]      %6.2f   %6.0f  %9.0f   "
                     "%7.1f +%.1f -%.1f (+%.1f -%.1f stat, %.1f region; "
                     "in-region %.0f, attributed %s)",
@@ -809,10 +918,8 @@ void CrossSection::StampPreliminary(const TPad *pad) {
                    1.0 - pad->GetTopMargin() - 0.02, "PRELIMINARY");
 }
 
-Bool_t
-CrossSection::CollectFitComponents(const ChannelResult &r, Int_t m,
-                                   std::vector<TGraph *> &comp,
-                                   std::vector<TString> &comp_label) const {
+Bool_t CrossSection::CollectFitComponents(const ChannelResult &r, Int_t m,
+                                          FitComponents &comp) const {
   const CrossSectionConfig &X = Constants::cfg.CROSS_SECTION_CONFIG;
   const CrossSectionChannel &ch = *r.ch;
   for (Int_t k = 0; k < Int_t(ch.talys_exits.size()); k++) {
@@ -822,10 +929,24 @@ CrossSection::CollectFitComponents(const ChannelResult &r, Int_t m,
         talys_raw_[m].find(std::make_pair(z, a));
     if (it == talys_raw_[m].end())
       continue;
-    comp.push_back(it->second);
-    comp_label.push_back("(#alpha, " + ch.talys_exits[k] + ")");
+    comp.graph.push_back(it->second);
+    comp.label.push_back("(#alpha, " + ch.talys_exits[k] + ")");
+    comp.tag.push_back(ch.talys_exits[k]);
   }
-  if (comp.empty()) {
+  comp.n_keep = comp.Size();
+  // Include subtracted exits as free fit components.
+  for (Int_t k = 0; k < Int_t(ch.subtract_exits.size()); k++) {
+    Int_t z = 0, a = 0;
+    ExitResidue(ch.subtract_exits[k], X.BEAM_Z, X.BEAM_A, z, a);
+    std::map<std::pair<Int_t, Int_t>, TGraph *>::const_iterator it =
+        talys_raw_[m].find(std::make_pair(z, a));
+    if (it == talys_raw_[m].end())
+      continue;
+    comp.graph.push_back(it->second);
+    comp.label.push_back("(#alpha, " + ch.subtract_exits[k] + ") subtracted");
+    comp.tag.push_back(ch.subtract_exits[k]);
+  }
+  if (comp.n_keep == 0) {
     std::cerr << "cross-section: channel " << ch.name << ": "
               << talys_labels_[m] << " has none of the channel's exits"
               << std::endl;
@@ -834,10 +955,10 @@ CrossSection::CollectFitComponents(const ChannelResult &r, Int_t m,
   return kTRUE;
 }
 
-void CrossSection::FitExitScales(const ChannelResult &r,
-                                 const std::vector<TGraph *> &comp,
-                                 ScaleFit &fs) const {
-  const Int_t nc = Int_t(comp.size());
+void CrossSection::FitExitScales(
+    const ChannelResult &r, const FitComponents &comp, ScaleFit &fs,
+    const std::vector<Double_t> *point_scale) const {
+  const Int_t nc = comp.Size();
   const Int_t np = Int_t(r.points.size());
 
   // Weighted linear least squares for the scales, dropping exits that are
@@ -845,34 +966,48 @@ void CrossSection::FitExitScales(const ChannelResult &r,
   for (Int_t k = 0; k < nc; k++) {
     Bool_t any = kFALSE;
     for (Int_t i = 0; i < np && !any; i++)
-      any = Interpolated(comp[k], r.points[i].e_eff) > 0.0;
+      any = Interpolated(comp.graph[k], r.points[i].e_eff) > 0.0;
     if (any)
       fs.free_idx.push_back(k);
   }
   fs.scale.assign(nc, 1.0);
   fs.scale_err.assign(nc, 0.0);
+  fs.scale_raw.assign(nc, 1.0);
+  fs.scale_raw_err.assign(nc, 0.0);
   Int_t nf = Int_t(fs.free_idx.size());
   fs.cov.ResizeTo(nf, nf);
+  Bool_t first_pass = kTRUE;
   while (nf > 0 && np >= nf) {
     TMatrixD mat(nf, nf);
     TVectorD rhs(nf);
     for (Int_t i = 0; i < np; i++) {
       const Point &pt = r.points[i];
-      const Double_t err = 0.5 * (pt.ErrLo() + pt.ErrHi());
+      const Double_t k = point_scale ? (*point_scale)[i] : 1.0;
+      const Double_t err = k * 0.5 * (pt.ErrLo() + pt.ErrHi());
       if (!(err > 0.0))
         continue;
       const Double_t w = 1.0 / (err * err);
       for (Int_t a = 0; a < nf; a++) {
-        const Double_t ca = Interpolated(comp[fs.free_idx[a]], pt.e_eff);
-        rhs[a] += w * ca * pt.sigma;
+        const Double_t ca = Interpolated(comp.graph[fs.free_idx[a]], pt.e_eff);
+        rhs[a] += w * ca * k * pt.sigma;
         for (Int_t b = 0; b < nf; b++)
-          mat[a][b] += w * ca * Interpolated(comp[fs.free_idx[b]], pt.e_eff);
+          mat[a][b] +=
+              w * ca * Interpolated(comp.graph[fs.free_idx[b]], pt.e_eff);
       }
     }
     fs.cov.ResizeTo(nf, nf);
     fs.cov = mat;
     fs.cov.Invert();
     const TVectorD sol = fs.cov * rhs;
+    // Preserve the raw solution before nonnegative pinning.
+    if (first_pass) {
+      for (Int_t a = 0; a < nf; a++) {
+        fs.scale_raw[fs.free_idx[a]] = sol[a];
+        fs.scale_raw_err[fs.free_idx[a]] =
+            std::sqrt(TMath::Max(0.0, fs.cov[a][a]));
+      }
+      first_pass = kFALSE;
+    }
     Int_t worst = -1;
     for (Int_t a = 0; a < nf; a++)
       if (sol[a] < 0.0 && (worst < 0 || sol[a] < sol[worst]))
@@ -893,26 +1028,27 @@ void CrossSection::FitExitScales(const ChannelResult &r,
   fs.nf = nf;
   for (Int_t i = 0; i < np; i++) {
     const Point &pt = r.points[i];
-    const Double_t err = 0.5 * (pt.ErrLo() + pt.ErrHi());
+    const Double_t k = point_scale ? (*point_scale)[i] : 1.0;
+    const Double_t err = k * 0.5 * (pt.ErrLo() + pt.ErrHi());
     Double_t f = 0.0;
-    for (Int_t k = 0; k < nc; k++)
-      f += fs.scale[k] * Interpolated(comp[k], pt.e_eff);
+    for (Int_t c = 0; c < nc; c++)
+      f += fs.scale[c] * Interpolated(comp.graph[c], pt.e_eff);
     if (err > 0.0)
-      fs.chi2 += std::pow((pt.sigma - f) / err, 2);
+      fs.chi2 += std::pow((k * pt.sigma - f) / err, 2);
   }
 }
 
 void CrossSection::PrintScaleFit(const CrossSectionChannel &ch, Int_t m,
-                                 const std::vector<TString> &comp_label,
-                                 const ScaleFit &fs, Int_t np) const {
-  const Int_t nc = Int_t(comp_label.size());
+                                 const FitComponents &comp, const ScaleFit &fs,
+                                 Int_t np) const {
+  const Int_t nc = comp.Size();
   std::cout << std::endl
             << "  " << ch.name << " " << Label(ch) << ": " << talys_labels_[m]
             << " scaled to this work's points" << std::endl;
   for (Int_t k = 0; k < nc; k++) {
     const Bool_t is_pinned =
         std::find(fs.pinned.begin(), fs.pinned.end(), k) != fs.pinned.end();
-    std::cout << Form("    %-10s scale %.4f +- %.4f%s", comp_label[k].Data(),
+    std::cout << Form("    %-26s scale %.4f +- %.4f%s", comp.label[k].Data(),
                       fs.scale[k], fs.scale_err[k],
                       is_pinned ? "  (went negative: pinned at 0)"
                       : fs.scale_err[k] > 0.0
@@ -923,34 +1059,113 @@ void CrossSection::PrintScaleFit(const CrossSectionChannel &ch, Int_t m,
   for (Int_t a = 0; a < fs.nf; a++)
     for (Int_t b = a + 1; b < fs.nf; b++)
       std::cout << Form("    correlation %s-%s %.3f",
-                        comp_label[fs.free_idx[a]].Data(),
-                        comp_label[fs.free_idx[b]].Data(),
+                        comp.label[fs.free_idx[a]].Data(),
+                        comp.label[fs.free_idx[b]].Data(),
                         fs.cov[a][b] / std::sqrt(fs.cov[a][a] * fs.cov[b][b]))
                 << std::endl;
   std::cout << Form("    chi2 %.2f for %d points, %d free scale(s)", fs.chi2,
                     np, fs.nf)
             << std::endl;
-  std::cout << "    strip   E_cm,eff   this work [mb]   scaled model [mb]   "
-               "pull"
+}
+
+/// Compare the subtracted-exit fit before and after correction.
+void CrossSection::PrintSubtractionCheck(const ChannelResult &r,
+                                         const FitComponents &comp,
+                                         const ScaleFit &fs) const {
+  if (comp.n_keep >= comp.Size())
+    return;
+  const Int_t np = Int_t(r.points.size());
+  // Undo the correction for the comparison fit.
+  std::vector<Double_t> undo(np, 1.0);
+  Bool_t have_undo = kTRUE;
+  for (Int_t i = 0; i < np; i++) {
+    const Double_t keep = 1.0 - r.points[i].sub_frac;
+    if (!(keep > 0.0)) {
+      have_undo = kFALSE;
+      break;
+    }
+    undo[i] = 1.0 / keep;
+  }
+  ScaleFit before;
+  if (have_undo)
+    FitExitScales(r, comp, before, &undo);
+
+  std::cout << "    subtraction check: the subtracted exits' scales with the "
+               "points as measured and as corrected"
             << std::endl;
+  for (Int_t k = comp.n_keep; k < comp.Size(); k++) {
+    const Double_t after = fs.scale_raw[k], after_e = fs.scale_raw_err[k];
+    if (!have_undo) {
+      std::cout << Form("      %-26s after %.3f +- %.3f", comp.label[k].Data(),
+                        after, after_e)
+                << std::endl;
+      continue;
+    }
+    // The expected change is the kept-channel scale.
+    const Double_t raw = before.scale_raw[k];
+    const Double_t expected = comp.n_keep > 0 ? -before.scale_raw[0] : -1.0;
+    std::cout << Form("      %-26s before %.3f, after %.3f (+- %.3f): moved "
+                      "%+.3f, expected %+.3f",
+                      comp.label[k].Data(), raw, after, after_e, after - raw,
+                      expected)
+              << std::endl;
+  }
+  // Report whether the component fit is informative.
+  Double_t rho = 0.0;
+  for (Int_t a = 0; a < fs.nf; a++)
+    for (Int_t b = a + 1; b < fs.nf; b++)
+      if (fs.cov[a][a] > 0.0 && fs.cov[b][b] > 0.0) {
+        const Double_t c =
+            fs.cov[a][b] / std::sqrt(fs.cov[a][a] * fs.cov[b][b]);
+        if (std::fabs(c) > std::fabs(rho))
+          rho = c;
+      }
+  const Double_t chi2_ndf =
+      np > fs.nf ? fs.chi2 / Double_t(np - fs.nf) : fs.chi2;
+  const Bool_t degenerate = std::fabs(rho) > 0.9;
+  const Bool_t poor_fit = chi2_ndf > 5.0;
+  if (degenerate || poor_fit)
+    std::cout << Form("      the scale is not a usable check here: %s%s%s. A "
+                      "component this close to the channel's own absorbs the "
+                      "shape mismatch rather than its own yield, so its value "
+                      "says nothing about how much %s is left. The "
+                      "subtraction rests on the TALYS branching, and its "
+                      "uncertainty is the model spread already in the "
+                      "systematic.",
+                      degenerate
+                          ? Form("the two scales are %.2f correlated", rho)
+                          : "",
+                      degenerate && poor_fit ? " and " : "",
+                      poor_fit ? Form("chi2/ndf is %.1f, so the model does not "
+                                      "describe the shape",
+                                      chi2_ndf)
+                               : "",
+                      SubtractedLabel(*r.ch).Data())
+              << std::endl;
+  else
+    std::cout << Form("      chi2/ndf %.1f and correlation %.2f, so the move "
+                      "is meaningful",
+                      chi2_ndf, rho)
+              << std::endl;
 }
 
 Bool_t CrossSection::BuildScaledCurves(const ChannelResult &r,
-                                       const std::vector<TGraph *> &comp,
+                                       const FitComponents &comp,
                                        const ScaleFit &fs, TGraph *&sum,
                                        TGraph *&fit,
                                        TGraphErrors *&band) const {
-  const Int_t nc = Int_t(comp.size());
+  const Int_t nc = comp.Size();
   // The scaled sum and its 3-sigma band on the model's grid, and the
-  // unscaled sum.
+  // The unscaled sum contains kept exits only.
   std::vector<Double_t> gx, gsum, gfit, gband;
-  for (Int_t p = 0; p < comp[0]->GetN(); p++) {
-    const Double_t e = comp[0]->GetX()[p];
+  for (Int_t p = 0; p < comp.graph[0]->GetN(); p++) {
+    const Double_t e = comp.graph[0]->GetX()[p];
     Double_t s = 0.0, f = 0.0, var = 0.0;
     std::vector<Double_t> c(nc);
     for (Int_t k = 0; k < nc; k++) {
-      c[k] = Interpolated(comp[k], e);
-      s += c[k];
+      c[k] = Interpolated(comp.graph[k], e);
+      if (k < comp.n_keep)
+        s += c[k];
       f += fs.scale[k] * c[k];
     }
     for (Int_t a = 0; a < fs.nf; a++)
@@ -1048,14 +1263,14 @@ CrossSection::BuildPublishedGraph(const CrossSectionChannel &ch,
 
 void CrossSection::FitLegendWidthPx(const ScaleFit &fs,
                                     const CrossSectionChannel &ch,
-                                    const std::vector<TString> &comp_label,
+                                    const FitComponents &comp,
                                     const TString &model_label,
                                     Bool_t has_published, TString &scale_text,
                                     Double_t &legend_width_px) const {
   scale_text = "#times";
-  for (Int_t k = 0; k < Int_t(comp_label.size()); k++)
-    scale_text += Form("%s %.2f_{%s}", k ? " &" : "", fs.scale[k],
-                       ch.talys_exits[k].Data());
+  for (Int_t k = 0; k < comp.Size(); k++)
+    scale_text +=
+        Form("%s %.2f_{%s}", k ? " &" : "", fs.scale[k], comp.tag[k].Data());
   std::vector<TString> legend_labels;
   legend_labels.push_back("Present Work");
   if (has_published)
@@ -1063,20 +1278,20 @@ void CrossSection::FitLegendWidthPx(const ScaleFit &fs,
   legend_labels.push_back(Label(ch) + " scaled");
   legend_labels.push_back(scale_text);
   legend_labels.push_back(Label(ch));
-  if (Int_t(comp_label.size()) > 1)
-    for (Int_t k = 0; k < Int_t(comp_label.size()); k++)
-      legend_labels.push_back(comp_label[k]);
+  if (comp.Size() > 1)
+    for (Int_t k = 0; k < comp.Size(); k++)
+      legend_labels.push_back(comp.label[k]);
   legend_width_px = PlottingUtils::LegendWidthPx(legend_labels, model_label);
 }
 
 void CrossSection::DrawFitTopPanel(
     const CrossSectionChannel &ch, const FitFrame &frame,
     const TString &scale_text, Double_t legend_width_px, TGraph *sum,
-    TGraph *fit, TGraphErrors *band, const std::vector<TGraph *> &comp,
-    const std::vector<TString> &comp_label, TGraphAsymmErrors *published,
-    TGraphAsymmErrors *measured, FitPanels &pads) const {
+    TGraph *fit, TGraphErrors *band, const FitComponents &comp,
+    TGraphAsymmErrors *published, TGraphAsymmErrors *measured,
+    FitPanels &pads) const {
   const Double_t x_lo = frame.fx_lo - 0.4, x_hi = frame.fx_hi + 0.4;
-  const Int_t nc = Int_t(comp.size());
+  const Int_t nc = comp.Size();
   const Int_t panel_height_px = 205;
   const Int_t plot_right_margin_px =
       TMath::Nint(1200.0 * gStyle->GetPadRightMargin());
@@ -1132,13 +1347,17 @@ void CrossSection::DrawFitTopPanel(
   }
   if (nc > 1)
     for (Int_t k = 0; k < nc; k++) {
-      TGraph *g = Clipped(comp[k], x_lo, x_hi);
+      TGraph *g = Clipped(comp.graph[k], x_lo, x_hi);
       if (!g)
         continue;
       PlottingUtils::ConfigureGraph(g, kComponentColor[k % 4]);
-      g->SetLineStyle(2);
+      // Subtracted exits are dotted and grey.
+      const Bool_t subtracted = k >= comp.n_keep;
+      if (subtracted)
+        g->SetLineColor(kGray + 1);
+      g->SetLineStyle(subtracted ? 3 : 2);
       g->Draw("L SAME");
-      pads.entries.push_back(std::make_pair(g, comp_label[k]));
+      pads.entries.push_back(std::make_pair(g, comp.label[k]));
     }
   if (published)
     published->Draw("P SAME");
@@ -1191,15 +1410,18 @@ void CrossSection::DrawFit(const ChannelResult &r, const TString &name) const {
               << std::endl;
     return;
   }
-  std::vector<TGraph *> comp;
-  std::vector<TString> comp_label;
-  if (!CollectFitComponents(r, m, comp, comp_label))
+  FitComponents comp;
+  if (!CollectFitComponents(r, m, comp))
     return;
   const Int_t np = Int_t(r.points.size());
 
   ScaleFit fs;
   FitExitScales(r, comp, fs);
-  PrintScaleFit(ch, m, comp_label, fs, np);
+  PrintScaleFit(ch, m, comp, fs, np);
+  PrintSubtractionCheck(r, comp, fs);
+  std::cout << "    strip   E_cm,eff   this work [mb]   scaled model [mb]   "
+               "pull"
+            << std::endl;
 
   TGraph *sum = nullptr;
   TGraph *fit = nullptr;
@@ -1217,12 +1439,12 @@ void CrossSection::DrawFit(const ChannelResult &r, const TString &name) const {
 
   TString scale_text;
   Double_t legend_width_px = 0.0;
-  FitLegendWidthPx(fs, ch, comp_label, talys_labels_[m], published != nullptr,
+  FitLegendWidthPx(fs, ch, comp, talys_labels_[m], published != nullptr,
                    scale_text, legend_width_px);
 
   FitPanels pads;
   DrawFitTopPanel(ch, frame, scale_text, legend_width_px, sum, fit, band, comp,
-                  comp_label, published, measured, pads);
+                  published, measured, pads);
   DrawPullPanel(frame, deviation, pads);
 
   pads.side->cd();
@@ -1266,23 +1488,54 @@ Bool_t CrossSection::RunChannel(const CrossSectionChannel &ch,
       return kFALSE;
     }
   }
+  for (Int_t k = 0; k < Int_t(ch.subtract_exits.size()); k++) {
+    Int_t z = 0, a = 0;
+    if (!ExitResidue(ch.subtract_exits[k], X.BEAM_Z, X.BEAM_A, z, a)) {
+      std::cerr << "cross-section: channel " << ch.name
+                << ": subtracted exit \"" << ch.subtract_exits[k]
+                << "\" does not parse (light particles n p d t h a g with an "
+                   "optional multiplicity digit)"
+                << std::endl;
+      return kFALSE;
+    }
+  }
   if (!talys_raw_.empty() && ch.talys_exits.empty()) {
     std::cerr << "cross-section: channel " << ch.name
               << ": TALYS models are declared but the channel names no exits"
               << std::endl;
     return kFALSE;
   }
-  out.talys = ChannelCurves(ch);
+  // Subtraction requires the TALYS curves.
+  if (!ch.subtract_exits.empty() && talys_raw_.empty()) {
+    std::cerr << "cross-section: channel " << ch.name
+              << ": subtract_exits needs the TALYS curves it subtracts; run "
+                 "talys-xs first"
+              << std::endl;
+    return kFALSE;
+  }
+  out.talys = ExitCurves(ch, ch.talys_exits, "the channel:");
+  out.talys_sub = ExitCurves(ch, ch.subtract_exits, "to subtract:");
+  if (!ch.subtract_exits.empty() && out.talys_sub.empty()) {
+    std::cerr << "cross-section: channel " << ch.name
+              << ": no model has any of the exits to subtract" << std::endl;
+    return kFALSE;
+  }
   std::cout << std::endl
             << "  " << ch.name << " " << Label(ch) << ", region_" << ch.name
             << (out.talys.empty() ? " (no TALYS curve: midpoint energies)" : "")
             << std::endl;
+  if (!out.talys_sub.empty())
+    std::cout << "  " << SubtractedLabel(ch)
+              << " is not separable from it here, so TALYS's predicted share "
+                 "of each strip's count is removed; the models' spread on "
+                 "that share is a systematic"
+              << std::endl;
   std::cout << "  strip   E_cm range [MeV]    "
             << (X.EFFECTIVE_ENERGY ? "E_cm,eff" : "E_cm,mid")
             << "   N_reac    N_beam    sigma [mb]" << std::endl;
   for (Int_t reac = X.XS_STRIP_MIN; reac <= X.XS_STRIP_MAX; reac++) {
     Point pt;
-    if (Strip(ch, out.talys, reac, pt))
+    if (Strip(ch, out.talys, out.talys_sub, reac, pt))
       out.points.push_back(pt);
   }
   if (out.points.empty()) {

@@ -310,6 +310,9 @@ struct CrossSectionChannel {
   /// 40K and "p" is 40Ar. Read at plot time, so changing it never needs a
   /// TALYS rerun. A name that does not parse stops the run.
   std::vector<TString> talys_exits;
+  /// Exits that cannot be separated from this channel; their TALYS branching
+  /// fraction is removed from the measured count. Empty means no subtraction.
+  std::vector<TString> subtract_exits;
   /// Published values to compare against, if any, one row per point: the
   /// effective centre-of-mass energy [MeV] with its upward and downward
   /// uncertainties [MeV] (the strip's extent, asymmetric about that energy;
