@@ -55,12 +55,19 @@ def load_compute_regions_reservoir():
             arrays["beam_flat"])
 
 
-def predict_in_chunks(classifier, X, chunk, output, seed_ts, extra=None):
+def predict_in_chunks(classifier, X, chunk, output, seed_ts, extra=None,
+                      fingerprint=None):
     """Resumable bounded prediction, writing after every independent chunk."""
     completed = 0
     probabilities = []
     if output.is_file():
         saved = np.load(output)
+        saved_fingerprint = (str(saved["fingerprint"])
+                             if "fingerprint" in saved.files else None)
+        if fingerprint is not None and saved_fingerprint != fingerprint:
+            raise RuntimeError(f"refusing incompatible TabFM cache {output}: "
+                               f"stored {saved_fingerprint!r}, current "
+                               f"{fingerprint!r}")
         old = saved["probabilities"]
         if old.shape[0] <= X.shape[0]:
             completed = old.shape[0]
@@ -74,6 +81,7 @@ def predict_in_chunks(classifier, X, chunk, output, seed_ts, extra=None):
             "seed_ts": seed_ts[:current.shape[0]],
             "probabilities": current.astype(np.float32),
             "classes": np.array(config.VLM_CLASSES),
+            "fingerprint": np.array(fingerprint or ""),
         }
         if extra:
             for name, values in extra.items():
@@ -90,6 +98,13 @@ def main():
     parser.add_argument("--context-rows", type=int, default=100)
     parser.add_argument("--estimators", type=int, default=8)
     parser.add_argument("--batch", type=int, default=32)
+    parser.add_argument("--data-seed", type=int,
+                        default=config.VLM_FINETUNE_SEED,
+                        help="fixed simulator subsample and validation split seed")
+    parser.add_argument("--seed", type=int, default=config.VLM_FINETUNE_SEED,
+                        help="TabFM context and ensemble seed")
+    parser.add_argument("--drop-strip17", action="store_true",
+                        help="drop disabled strip 17 from simulator-only validation")
     parser.add_argument("--sim-negative-scale", type=float, default=1.0,
                         help="scale simulated below-beam deviations toward beam")
     parser.add_argument("--experimental", action="store_true",
@@ -104,6 +119,7 @@ def main():
                         help="first experimental row to classify")
     args = parser.parse_args()
     config.VLM_FINETUNE_VAL_STRIPS = (args.holdout_strip, )
+    config.VLM_FINETUNE_SEED = args.data_seed
 
     X, y, holdout, beam_ref, _strips = vlm_finetune.load_examples(
         args.max_per_class)
@@ -113,6 +129,10 @@ def main():
             delta < 0.0, delta * args.sim_negative_scale, delta)
         print(f"scaled simulated below-beam deviations by "
               f"{args.sim_negative_scale:.3f}")
+    if args.drop_strip17:
+        X = X[:, :-1]
+        beam_ref = beam_ref[:-1]
+        print("dropped simulated strip 17 to match the live experimental schema")
     train_rows = np.flatnonzero(~holdout)
     validation_rows = np.flatnonzero(holdout)
 
@@ -149,9 +169,12 @@ def main():
         max_num_rows=args.context_rows,
         n_estimators=args.estimators,
         batch_size=args.batch,
-        random_state=config.VLM_FINETUNE_SEED)
+        random_state=args.seed)
     classifier.fit(X[train_rows], y[train_rows])
     probabilities = classifier.predict_proba(X[validation_rows])
+    fingerprint = (f"data{args.data_seed}_context{args.seed}_"
+                   f"rows{args.context_rows}_est{args.estimators}_"
+                   f"features{X.shape[1]}_neg{args.sim_negative_scale}")
     prediction = probabilities.argmax(axis=1)
     matrix = vlm_baseline.confusion_matrix(y[validation_rows], prediction)
     print(f"TabFM zero-shot: {train_rows.size} context-pool rows, "
@@ -170,7 +193,7 @@ def main():
         output = config.CACHE_DIR / f"tabfm_experimental_{begin}_{end}.npz"
         experimental_probabilities = predict_in_chunks(
             classifier, experimental, args.experimental_chunk, output,
-            experimental_seed_ts)
+            experimental_seed_ts, fingerprint=fingerprint)
         pan = experimental_probabilities[:, list(config.VLM_CLASSES).index("an")]
         threshold, _an_recall, background_fpr, _beam_fpr = \
             vlm_finetune.threshold_metrics(probabilities, y[validation_rows])
@@ -186,10 +209,13 @@ def main():
     if args.reservoir:
         reservoir_X, reservoir_seed_ts, reac, beam_flat = reservoir
         scale_tag = str(args.sim_negative_scale).replace(".", "p")
-        output = config.CACHE_DIR / f"tabfm_compute_regions_neg{scale_tag}.npz"
+        output = config.CACHE_DIR / (
+            f"tabfm_compute_regions_neg{scale_tag}_seed{args.seed}_"
+            f"est{args.estimators}.npz")
         reservoir_probabilities = predict_in_chunks(
             classifier, reservoir_X, args.experimental_chunk, output,
-            reservoir_seed_ts, {"reac": reac, "beam_flat": beam_flat})
+            reservoir_seed_ts, {"reac": reac, "beam_flat": beam_flat},
+            fingerprint=fingerprint)
         pan = reservoir_probabilities[:, list(config.VLM_CLASSES).index("an")]
         threshold, _an_recall, background_fpr, _beam_fpr = \
             vlm_finetune.threshold_metrics(probabilities, y[validation_rows])

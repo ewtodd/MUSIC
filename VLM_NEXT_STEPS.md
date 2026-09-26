@@ -103,10 +103,13 @@ Two identical-split comparisons were added:
   gave 0.492 `(alpha,n)` acceptance and 0.4% background leakage.
 
 TabFM is the best match to the original goal of avoiding task-specific weight
-training. It nearly matches XGBoost through strip 6 and clearly beats the
-fine-tuned VLM as a no-training method. Both tabular methods still degrade at
-strips 7--8, confirming that downstream simulation/domain transfer is the next
-physics problem rather than model scale.
+training, but the initial leave-one-strip table retained simulated strip 17
+while that channel is disabled in experiment. After explicitly dropping strip
+17, nominal strip-8 `(alpha,n)` argmax recall falls from 0.270 to 0.063 and its
+1%-background constrained acceptance from 0.508 to 0.175. The earlier table is
+therefore an optimistic simulator-only diagnostic, not the production estimate.
+Both tabular methods still degrade at strips 7--8, confirming that downstream
+simulation/domain transfer is the next physics problem rather than model scale.
 
 Next, apply TabFM and XGBoost to the complete beam-gated experimental subfile.
 Use simulated labels only to choose an operating threshold, then inspect the
@@ -147,6 +150,13 @@ deviations by 0.6--0.9 appeared to improve strip-8 validation when all 18
 simulated strips were present, but failed after matching the experiment's 17
 live strips and assigned no experimental tag above the resulting threshold.
 That correction is rejected; disabled strip 17 was acting as a shortcut.
+
+With the matched 17-strip schema and 32 estimators, five fixed-data context
+seeds give strip-8 constrained acceptance between 0.44 and 0.56 when strip 17
+is present; the matched-schema nominal value is only 0.175. Context-seed spread
+is secondary to the schema shortcut. TabFM caches now carry a full data seed,
+context seed, ensemble, feature-count, and domain-scaling fingerprint so runs
+with incompatible settings cannot silently resume one another.
 
 Within existing experimental tags, TabFM `p(an)` correlates most strongly with
 plateau height (`r=+0.653`), and only weakly with rise (`+0.190`) and collapse
