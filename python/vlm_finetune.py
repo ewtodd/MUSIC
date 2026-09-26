@@ -230,10 +230,33 @@ def _forward_kwargs(model):
     return {}
 
 
-def _batch_loss(model, builder, class_ids, X, y, beam_ref, rows, train):
+def translate_from_beam(X, beam_ref, shifts):
+    """Translate each trace's deviation from beam by an integer strip count."""
+    X = np.asarray(X, dtype=np.float32)
+    beam_ref = np.asarray(beam_ref, dtype=np.float32)
+    out = np.broadcast_to(beam_ref, X.shape).copy()
+    delta = X - beam_ref[np.newaxis, :]
+    for i, shift in enumerate(shifts):
+        if shift > 0:
+            out[i, shift:] += delta[i, :-shift]
+        elif shift < 0:
+            out[i, :shift] += delta[i, -shift:]
+        else:
+            out[i] = X[i]
+    return out
+
+
+def _batch_loss(model, builder, class_ids, X, y, beam_ref, rows, train,
+                rng=None):
     import torch
 
-    images = vlm.render_traces(X[rows], beam_ref)
+    traces = X[rows]
+    if train and config.VLM_FINETUNE_SHIFT_STRIPS > 0:
+        shifts = rng.integers(-config.VLM_FINETUNE_SHIFT_STRIPS,
+                             config.VLM_FINETUNE_SHIFT_STRIPS + 1,
+                             size=rows.size)
+        traces = translate_from_beam(traces, beam_ref, shifts)
+    images = vlm.render_traces(traces, beam_ref)
     inputs = _model_inputs(builder, images, model, torch.bfloat16)
     context = torch.enable_grad() if train else torch.inference_mode()
     with context:
@@ -242,36 +265,71 @@ def _batch_loss(model, builder, class_ids, X, y, beam_ref, rows, train):
         chosen = logits[:, class_ids]
         targets = torch.as_tensor(y[rows], device=chosen.device)
         loss = torch.nn.functional.cross_entropy(chosen, targets)
-    return loss, chosen.argmax(dim=1).detach().cpu().numpy()
+    probabilities = torch.softmax(chosen, dim=1).detach().cpu().numpy()
+    return loss, probabilities.argmax(axis=1), probabilities
 
 
 def evaluate(model, builder, class_ids, X, y, beam_ref, rows, batch):
     """Return loss, confusion matrix, and per-class recall on held-out traces."""
     n_cls = len(config.VLM_CLASSES)
     confusion = np.zeros((n_cls, n_cls), dtype=np.int64)
+    probabilities = np.empty((rows.size, n_cls), dtype=np.float32)
     loss_sum = 0.0
     model.eval()
+    cursor = 0
     for start in range(0, rows.size, batch):
         subset = rows[start:start + batch]
-        loss, predicted = _batch_loss(model, builder, class_ids, X, y, beam_ref,
-                                      subset, train=False)
+        loss, predicted, probs = _batch_loss(model, builder, class_ids, X, y,
+                                             beam_ref, subset, train=False)
         loss_sum += float(loss) * subset.size
+        probabilities[cursor:cursor + subset.size] = probs
+        cursor += subset.size
         np.add.at(confusion, (y[subset], predicted), 1)
     recall = np.divide(np.diag(confusion), confusion.sum(axis=1),
                        out=np.full(n_cls, np.nan),
                        where=confusion.sum(axis=1) > 0)
     if rows.size == 0:
         raise RuntimeError("cannot evaluate an empty validation selection")
-    return loss_sum / rows.size, confusion, recall
+    return loss_sum / rows.size, confusion, recall, probabilities
 
 
-def _print_evaluation(loss, confusion, recall):
+def threshold_metrics(probabilities, truth):
+    """Best p(an) cut subject to a cap on all simulated background leakage."""
+    an_index = list(config.VLM_CLASSES).index("an")
+    beam_index = list(config.VLM_CLASSES).index("beam")
+    pan = probabilities[:, an_index]
+    signal = truth == an_index
+    background = ~signal
+    beam = truth == beam_index
+    candidates = np.unique(np.concatenate(([0.0, 1.0], pan)))
+    best = None
+    for threshold in candidates:
+        accepted = pan >= threshold
+        recall = float(accepted[signal].mean())
+        background_fpr = float(accepted[background].mean())
+        beam_fpr = float(accepted[beam].mean())
+        if background_fpr <= config.VLM_FINETUNE_MAX_BACKGROUND_FPR:
+            candidate = (recall, -background_fpr, float(threshold), beam_fpr)
+            if best is None or candidate[:3] > best[:3]:
+                best = candidate
+    if best is None:
+        return 1.0, 0.0, 0.0, 0.0
+    return best[2], best[0], -best[1], best[3]
+
+
+def _print_evaluation(loss, confusion, recall, probabilities, truth):
+    threshold, an_recall, background_fpr, beam_fpr = threshold_metrics(
+        probabilities, truth)
     print(f"  validation loss: {loss:.4f}")
     print("  rows = truth, columns = prediction")
     print("           " + " ".join(f"{name:>7}" for name in config.VLM_CLASSES))
     for i, name in enumerate(config.VLM_CLASSES):
         cells = " ".join(f"{n:7d}" for n in confusion[i])
         print(f"  {name:>7} {cells}   recall {recall[i]:.3f}")
+    print(f"  selected p(an)>={threshold:.4f}: an recall {an_recall:.3f}, "
+          f"background false-positive {background_fpr:.3f}, "
+          f"beam false-positive {beam_fpr:.3f}")
+    return threshold, an_recall, background_fpr
 
 
 def main():
@@ -305,10 +363,11 @@ def main():
         from peft import PeftModel
         base = _load_base_model(config.VLM_FINETUNE_MODEL, load_in=None)
         model = PeftModel.from_pretrained(base, str(args.adapter))
-        loss, confusion, recall = evaluate(model, builder, class_ids, X, y,
-                                           beam_ref, validation_rows,
-                                           config.VLM_FINETUNE_BATCH)
-        _print_evaluation(loss, confusion, recall)
+        loss, confusion, recall, probabilities = evaluate(
+            model, builder, class_ids, X, y, beam_ref, validation_rows,
+            config.VLM_FINETUNE_BATCH)
+        _print_evaluation(loss, confusion, recall, probabilities,
+                          y[validation_rows])
         if args.evaluate:
             return
         raise RuntimeError("an adapter was supplied without --evaluate; refusing "
@@ -338,6 +397,9 @@ def main():
             optimizer, start_factor=0.1, end_factor=1.0,
             total_iters=warmup_steps)
     rng = np.random.default_rng(config.VLM_FINETUNE_SEED)
+    best_score = None
+    best_epoch = -1
+    best_threshold = config.VLM_AN_THRESHOLD
     for epoch in range(args.epochs):
         order = rng.permutation(train_rows)
         model.train()
@@ -346,8 +408,9 @@ def main():
         for step, start in enumerate(range(0, order.size,
                                            config.VLM_FINETUNE_BATCH), 1):
             rows = order[start:start + config.VLM_FINETUNE_BATCH]
-            loss, _pred = _batch_loss(model, builder, class_ids, X, y, beam_ref,
-                                      rows, train=True)
+            loss, _pred, _probabilities = _batch_loss(
+                model, builder, class_ids, X, y, beam_ref, rows, train=True,
+                rng=rng)
             (loss / config.VLM_FINETUNE_GRAD_ACCUM).backward()
             running += float(loss.detach())
             if step % config.VLM_FINETUNE_GRAD_ACCUM == 0 or step == steps_per_epoch:
@@ -355,16 +418,26 @@ def main():
                 optimizer.zero_grad(set_to_none=True)
                 if scheduler is not None and scheduler.last_epoch < warmup_steps:
                     scheduler.step()
-        val_loss, confusion, recall = evaluate(model, builder, class_ids, X, y,
-                                               beam_ref, validation_rows,
-                                               config.VLM_FINETUNE_BATCH)
+        val_loss, confusion, recall, probabilities = evaluate(
+            model, builder, class_ids, X, y, beam_ref, validation_rows,
+            config.VLM_FINETUNE_BATCH)
         print(f"epoch {epoch + 1}/{args.epochs}: train loss "
               f"{running / steps_per_epoch:.4f}")
-        _print_evaluation(val_loss, confusion, recall)
+        threshold, an_recall, background_fpr = _print_evaluation(
+            val_loss, confusion, recall, probabilities, y[validation_rows])
+        checkpoint = config.VLM_FINETUNE_OUTPUT_DIR / f"epoch-{epoch + 1}"
+        checkpoint.mkdir(parents=True, exist_ok=True)
+        model.save_pretrained(checkpoint)
+        score = (an_recall, -background_fpr, -val_loss)
+        if epoch == 0 or score > best_score:
+            best_score = score
+            best_epoch = epoch + 1
+            best_threshold = threshold
 
     output = config.VLM_FINETUNE_OUTPUT_DIR
-    output.mkdir(parents=True, exist_ok=True)
-    model.save_pretrained(output)
+    best = output / f"epoch-{best_epoch}"
+    print(f"selected epoch {best_epoch}: p(an)>={best_threshold:.4f}, "
+          f"score {best_score}")
     metadata = {
         "base_model": config.VLM_FINETUNE_MODEL,
         "classes": list(config.VLM_CLASSES),
@@ -372,10 +445,16 @@ def main():
         "validation_strips": list(config.VLM_FINETUNE_VAL_STRIPS),
         "train_examples": int(train_rows.size),
         "validation_examples": int(validation_rows.size),
+        "translation_strips": config.VLM_FINETUNE_SHIFT_STRIPS,
+        "selected_epoch": best_epoch,
+        "selected_adapter": str(best),
+        "selected_threshold": best_threshold,
+        "maximum_background_false_positive":
+        config.VLM_FINETUNE_MAX_BACKGROUND_FPR,
     }
     (output / "music_finetune_metadata.json").write_text(
         json.dumps(metadata, indent=2))
-    print(f"saved LoRA adapter -> {output}")
+    print(f"saved selected LoRA adapter -> {best}")
 
 
 if __name__ == "__main__":

@@ -143,6 +143,39 @@
         analysis-utils =
           if isLaptop then utils.packages.${system}.default else utils.packages.${system}.cuda;
         analysis-utils-py = utils.packages.${system}.pythonPackage;
+        tabfm = pkgs.python3Packages.buildPythonPackage {
+          pname = "tabfm";
+          version = "1.0.0-unstable-2026-08-18";
+          pyproject = true;
+          src = pkgs.fetchFromGitHub {
+            owner = "google-research";
+            repo = "tabfm";
+            rev = "fbb665569425fd2f490c6576b3af967876fe11ff";
+            hash = "sha256-yhzAzSSD3A9OWihA/bU+mkk29uAjbsrIO121HgMVFZw=";
+          };
+          build-system = [ pkgs.python3Packages.flit-core ];
+          postPatch = ''
+            substituteInPlace tabfm/src/classifier_and_regressor.py \
+              --replace-fail 'jt.typed = jt.jaxtyped(typechecker=typeguard.typechecked)' \
+                             'jt.typed = lambda function: function'
+          '';
+          dependencies = with pkgs.python3Packages; [
+            absl-py
+            huggingface-hub
+            jaxtyping
+            numpy
+            pandas
+            scikit-learn
+            scipy
+            torch-bin
+            typeguard
+          ];
+          pythonRemoveDeps = [
+            "jaxtyping"
+            "typeguard"
+          ];
+          doCheck = false;
+        };
         root = if isLaptop then pkgs.root else utils.packages.${system}.rootCuda;
         talys = talys-nix.packages.${system}.default;
         talys-potentials = talys-nix.packages.${system}.talys-atomki-v2-potentials;
@@ -202,6 +235,7 @@
                   # (config.VLM_LOAD_IN); bf16 12B does not fit a 24 GB card.
                   bitsandbytes
                   peft
+                  tabfm
                 ]
               ))
             ]

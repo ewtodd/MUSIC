@@ -396,6 +396,14 @@ VLM_FINETUNE_WARMUP_FRAC = 0.05
 VLM_FINETUNE_LORA_RANK = 16
 VLM_FINETUNE_LORA_ALPHA = 32
 VLM_FINETUNE_LORA_DROPOUT = 0.05
+# Randomly translate deviations from the beam reference by up to this many
+# strips during training. Vacated strips return to beam, so augmentation moves
+# reaction topology without inventing zero-energy detector channels.
+VLM_FINETUNE_SHIFT_STRIPS = 3
+# Select checkpoints by the largest validation (alpha,n) acceptance attainable
+# while keeping contamination from every simulated non-(alpha,n) class below
+# this fraction. Beam leakage is also reported separately.
+VLM_FINETUNE_MAX_BACKGROUND_FPR = 0.01
 VLM_FINETUNE_OUTPUT_DIR = RESULTS_DIR / "models" / "vlm-gemma-e2b-lora"
 # None keeps the base-model inference path. Set this to a saved LoRA directory
 # to evaluate or apply the fine-tuned model through the existing VLM scripts.

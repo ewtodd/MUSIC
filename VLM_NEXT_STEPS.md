@@ -75,3 +75,49 @@ analysis/37Cl/models/vlm-gemma-e2b-lora
 Do not spend time generating a larger simulator corpus until these checks show
 that data volume, rather than strip shortcuts or simulation-domain mismatch, is
 the limiting factor.
+
+## Follow-up completed after the first study
+
+The branch was rebased onto `origin/main` and the first three recommendations
+were implemented. Gemma training now translates deviations from the beam trace
+by up to three strips, saves every epoch, and selects by `(alpha,n)` acceptance
+under a 1% aggregate simulated-background leakage constraint.
+
+The augmented 500-example-per-class Gemma run selected epoch 3. On held-out
+strip 8 its argmax recalls were 0.683 `(alpha,n)`, 0.562 `(alpha,alpha')`, 0.927
+beam, and 0.338 other. At the constrained threshold `p(an) >= 0.164`, its
+`(alpha,n)` acceptance was 0.952 with zero simulated-beam leakage under the old
+beam-only threshold criterion. Re-evaluate this checkpoint with the corrected
+aggregate-background criterion before using that threshold.
+
+Two identical-split comparisons were added:
+
+- XGBoost, trained conventionally on 2,000 examples per class, had held-out
+  `(alpha,n)` argmax recall of 0.987, 0.966, 0.915, 0.922, 0.839, 0.741, and
+  0.422 for strips 2 through 8. Beam recall remained 0.993 or better.
+- Google TabFM 1.0.0, used zero-shot through in-context examples rather than
+  weight training, had held-out `(alpha,n)` recall of 0.878, 0.922, 0.924,
+  0.920, 0.937, 0.663, and 0.365 for strips 2 through 8 with 500 examples per
+  class, 100 rows per context, and eight estimators. Beam recall was 0.991 or
+  better. On strip 8, the corrected 1% aggregate-background operating point
+  gave 0.492 `(alpha,n)` acceptance and 0.4% background leakage.
+
+TabFM is the best match to the original goal of avoiding task-specific weight
+training. It nearly matches XGBoost through strip 6 and clearly beats the
+fine-tuned VLM as a no-training method. Both tabular methods still degrade at
+strips 7--8, confirming that downstream simulation/domain transfer is the next
+physics problem rather than model scale.
+
+Next, apply TabFM and XGBoost to the complete beam-gated experimental subfile.
+Use simulated labels only to choose an operating threshold, then inspect the
+experimental selected traces and per-strip rates. This attempt is currently
+blocked by a reproducible segmentation fault in the existing experimental ROOT
+loader under the rebased Python 3.14 environment, in NumPy/Pandas extension code
+while loading `Events_Run100_1_c000`; simulator ROOT loading and all model runs
+remain functional. Resolve that loader ABI/runtime problem before retrying
+`vlm_tabfm.py --experimental`.
+
+In parallel, compare simulation and data distributions at strips 7--8 before
+trusting either model for a cross section. The TabFM pretrained weights are
+non-commercial and may only be used under their
+`tabfm-non-commercial-v1.0` license.
