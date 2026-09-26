@@ -367,3 +367,36 @@ VLM_SHEET_PER_ROW = 8
 VLM_SHEET_ROWS = 4
 
 VLM_PLOT_SUBDIR = "vlm"
+
+# --- supervised VLM fine-tuning (vlm_finetune.py) ------------------------
+# Train the small E2B Gemma 4 rung on simulator truth, using the same
+# rasterizer, prompt, class-token readout and beam reference as inference.
+# The simulator controls live under analysis/<dataset>/sim_control/; generating
+# more events with Remix-MUSIC-Sim is intentionally separate from training.
+VLM_FINETUNE_MODEL = VLM_MODEL_LADDER[0]
+VLM_FINETUNE_LOAD_IN = "4bit"
+VLM_FINETUNE_SIM_DIR = SIM_ROOT_FILES_DIR
+VLM_FINETUNE_FILE_GLOBS = {
+    "an": ("traces_*_an_*.root", ),
+    "aa": ("traces_*_aa_*.root", ),
+    "beam": ("traces_*_beam*.root", ),
+    "other": ("traces_*_ap_*.root", ),
+}
+# A held-out reaction strip is more informative than a random split: it tests
+# that the learned topology transfers along the chamber rather than memorizing
+# a particular vertex location. -1 is the simulator's unreacted-beam label.
+VLM_FINETUNE_VAL_STRIPS = (8, )
+VLM_FINETUNE_MAX_PER_CLASS = None
+VLM_FINETUNE_SEED = 42
+VLM_FINETUNE_EPOCHS = 3
+VLM_FINETUNE_BATCH = 2
+VLM_FINETUNE_GRAD_ACCUM = 16
+VLM_FINETUNE_LR = 2.0e-4
+VLM_FINETUNE_WARMUP_FRAC = 0.05
+VLM_FINETUNE_LORA_RANK = 16
+VLM_FINETUNE_LORA_ALPHA = 32
+VLM_FINETUNE_LORA_DROPOUT = 0.05
+VLM_FINETUNE_OUTPUT_DIR = RESULTS_DIR / "models" / "vlm-gemma-e2b-lora"
+# None keeps the base-model inference path. Set this to a saved LoRA directory
+# to evaluate or apply the fine-tuned model through the existing VLM scripts.
+VLM_ADAPTER_PATH = None

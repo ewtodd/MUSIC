@@ -105,6 +105,7 @@ def main():
         for thr in (0.3, 0.5, 0.7, 0.9):
             print(f"    p>={thr}: {int((pan >= thr).sum())}")
 
+        config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
         out = config.CACHE_DIR / f"vlm_events_seed{seed}.npz"
         np.savez(out,
                  seed_ts=seed_ts,

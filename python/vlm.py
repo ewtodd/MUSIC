@@ -447,6 +447,11 @@ class EventClassifier:
         print(f"vlm: loading {self.model_id} "
               f"({config.VLM_DTYPE}, {config.VLM_DEVICE})")
         self.model = self._load_model()
+        adapter_path = getattr(config, "VLM_ADAPTER_PATH", None)
+        if adapter_path:
+            from peft import PeftModel
+            self.model = PeftModel.from_pretrained(self.model, str(adapter_path))
+            print(f"  loaded LoRA adapter {adapter_path}")
         self.model.eval()
         self._float_dtype = None
         self._logits_kwarg = self._resolve_logits_kwarg()

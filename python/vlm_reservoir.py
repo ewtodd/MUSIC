@@ -210,6 +210,8 @@ def main():
                     help="override config.VLM_TOKEN_BUDGET")
     ap.add_argument("--seeds", type=int, nargs="*", default=None,
                     help="override config.VLM_SEEDS")
+    ap.add_argument("--adapter", default=None,
+                    help="LoRA adapter directory for the configured base model")
     args = ap.parse_args()
     if args.model:
         config.VLM_MODEL = args.model
@@ -217,6 +219,8 @@ def main():
         config.VLM_LOAD_IN = None if args.load_in == "none" else args.load_in
     if args.budget:
         config.VLM_TOKEN_BUDGET = args.budget
+    if args.adapter:
+        config.VLM_ADAPTER_PATH = args.adapter
     seeds = tuple(args.seeds) if args.seeds else config.VLM_SEEDS
     # seed_perturbation treats the first configured seed as the unperturbed
     # one; keep that meaning when the list is overridden.
@@ -274,6 +278,7 @@ def main():
         pan = vlm.an_probability(probs)
         if seed == seeds[0]:
             contact_sheet(X, beam_ref, pan, meta, tag)
+        config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
         out = config.CACHE_DIR / f"vlm_reservoir_{tag}_seed{seed}.npz"
         np.savez(out,
                  seed_ts=meta["seed_ts"],

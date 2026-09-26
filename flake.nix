@@ -201,6 +201,7 @@
                   # 8-bit / 4-bit weights for the 12B rung of the ladder
                   # (config.VLM_LOAD_IN); bf16 12B does not fit a 24 GB card.
                   bitsandbytes
+                  peft
                 ]
               ))
             ]
