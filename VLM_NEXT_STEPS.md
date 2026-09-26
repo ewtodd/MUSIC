@@ -114,8 +114,18 @@ experimental selected traces and per-strip rates. The stale-Pandas-cache segment
 by replacing pickle-backed scalar loading with direct ROOT scalar buffers and a
 NumPy archive. Do not pass the complete 106,110-event reservoir to TabFM in one
 call: that exhausted GPU resources badly enough to reset the NVIDIA kernel
-module. `vlm_tabfm.py --experimental` now defaults to a 1,000-row probe and
-calls TabFM in independent 32-row chunks; increase those limits cautiously.
+module. `vlm_tabfm.py --experimental` now defaults to a 1,000-row probe,
+calls TabFM in independent 32-row chunks, and checkpoints each requested row range so an
+interrupted run can resume; increase those limits cautiously.
+
+A safe 6,000-event experimental test used four estimators, 100 context rows,
+and 16-row inference chunks. Two events (0.033%) passed the strip-8 simulated
+operating point `p(an) >= 0.5116`; 59 (0.98%) exceeded 0.01. The median score
+was about `1e-6`, the 99th percentile 0.0091, and the maximum 0.557. This is
+consistent with a rare-reaction reservoir and confirms that bounded TabFM
+inference works, but these sequential events did not overlap the existing
+compute-regions cache by `SeedTs`, so this sample does not yet measure event
+identity agreement.
 
 In parallel, compare simulation and data distributions at strips 7--8 before
 trusting either model for a cross section. The TabFM pretrained weights are

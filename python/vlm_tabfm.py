@@ -49,6 +49,8 @@ def main():
                         help="maximum experimental rows; raise only after a safe probe")
     parser.add_argument("--experimental-chunk", type=int, default=32,
                         help="rows per independent TabFM predict_proba call")
+    parser.add_argument("--experimental-offset", type=int, default=0,
+                        help="first experimental row to classify")
     args = parser.parse_args()
     config.VLM_FINETUNE_VAL_STRIPS = (args.holdout_strip, )
 
@@ -93,12 +95,30 @@ def main():
     if args.experimental:
         if args.experimental_max < 1 or args.experimental_chunk < 1:
             parser.error("experimental limits must be positive")
-        experimental = experimental[:args.experimental_max]
-        experimental_seed_ts = experimental_seed_ts[:args.experimental_max]
+        if args.experimental_offset < 0:
+            parser.error("--experimental-offset cannot be negative")
+        begin = args.experimental_offset
+        end = min(begin + args.experimental_max, experimental.shape[0])
+        experimental = experimental[begin:end]
+        experimental_seed_ts = experimental_seed_ts[begin:end]
+        output = config.CACHE_DIR / f"tabfm_experimental_{begin}_{end}.npz"
+        completed = 0
         chunks = []
-        for start in range(0, experimental.shape[0], args.experimental_chunk):
+        if output.is_file():
+            saved = np.load(output)
+            old_probabilities = saved["probabilities"]
+            if old_probabilities.shape[0] <= experimental.shape[0]:
+                completed = old_probabilities.shape[0]
+                chunks.append(old_probabilities)
+                print(f"  resuming TabFM experimental at {completed}/{experimental.shape[0]}")
+        for start in range(completed, experimental.shape[0],
+                           args.experimental_chunk):
             stop = min(start + args.experimental_chunk, experimental.shape[0])
             chunks.append(classifier.predict_proba(experimental[start:stop]))
+            current = np.concatenate(chunks)
+            np.savez(output, seed_ts=experimental_seed_ts[:current.shape[0]],
+                     probabilities=current.astype(np.float32),
+                     classes=np.array(config.VLM_CLASSES))
             print(f"  TabFM experimental {stop}/{experimental.shape[0]}")
         experimental_probabilities = np.concatenate(chunks)
         pan = experimental_probabilities[:, list(config.VLM_CLASSES).index("an")]
@@ -108,8 +128,6 @@ def main():
         print(f"experimental subfile: {selected.sum()} of {selected.size} events "
               f"({selected.mean():.4%}) at simulated p(an)>={threshold:.4f}; "
               f"validation background leakage {background_fpr:.3f}")
-        config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        output = config.CACHE_DIR / "tabfm_experimental_subfile.npz"
         np.savez(output, seed_ts=experimental_seed_ts,
                  probabilities=experimental_probabilities.astype(np.float32),
                  classes=np.array(config.VLM_CLASSES), threshold=threshold)
