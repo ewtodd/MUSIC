@@ -127,6 +127,18 @@ inference works, but these sequential events did not overlap the existing
 compute-regions cache by `SeedTs`, so this sample does not yet measure event
 identity agreement.
 
+TabFM was then applied directly to all 6,578 compute-regions cache events using
+the same bounded settings. At `p(an) >= 0.5116`, it accepted 25.2% of the 6,178
+existing tagged events and zero of 400 beam-flat events. Existing-tag acceptance
+was 27.1%, 26.5%, 21.7%, 22.8%, 23.2%, 23.4%, and 17.9% for reaction strips
+2--8; strip 9 had only ten events and none passed. The tagged population had
+median `p(an)=0.224`, while beam-flat had median `1.3e-6` and maximum 0.030.
+A looser cut of 0.05 retained 80.0% of existing tags with zero beam-flat events;
+0.03 retained 86.3% with one of 400 beam-flat events. These are agreement with
+the existing tag, not truth efficiency, but they establish that zero-shot
+TabFM sees the same reaction-like population much more strongly than the
+fine-tuned Gemma run did.
+
 In parallel, compare simulation and data distributions at strips 7--8 before
 trusting either model for a cross section. The TabFM pretrained weights are
 non-commercial and may only be used under their
