@@ -7,6 +7,9 @@ the supervised baselines.
 """
 
 import argparse
+import subprocess
+import sys
+from pathlib import Path
 
 import numpy as np
 
@@ -19,10 +22,16 @@ def load_experimental_subfile():
     """Load a pre-exported beam-gated subfile without importing ROOT here."""
     path = config.CACHE_DIR / "tabfm_experimental_input.npz"
     if not path.is_file():
-        raise FileNotFoundError(
-            f"no experimental input at {path}; export it with the established "
-            "experimental loader before importing TabFM. The rebased Python "
-            "3.14 environment currently segfaults in that ROOT/NumPy path.")
+        config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        code = (
+            "import numpy as np; import blind_an, vlm_apply; "
+            "X,both,ts=vlm_apply.beam_gated_reservoir(max_files=1); "
+            "beam,_=blind_an._beam_reference(X); live=beam>0; "
+            f"np.savez({str(path)!r}, X=X[:,live]/beam[None,live], "
+            "seed_ts=ts, live=live)"
+        )
+        subprocess.run([sys.executable, "-c", code], check=True,
+                       cwd=Path(__file__).parent)
     arrays = np.load(path)
     return arrays["X"], arrays["seed_ts"]
 
@@ -35,7 +44,11 @@ def main():
     parser.add_argument("--estimators", type=int, default=8)
     parser.add_argument("--batch", type=int, default=32)
     parser.add_argument("--experimental", action="store_true",
-                        help="also classify one beam-gated experimental subfile")
+                        help="also classify a beam-gated experimental sample")
+    parser.add_argument("--experimental-max", type=int, default=1000,
+                        help="maximum experimental rows; raise only after a safe probe")
+    parser.add_argument("--experimental-chunk", type=int, default=32,
+                        help="rows per independent TabFM predict_proba call")
     args = parser.parse_args()
     config.VLM_FINETUNE_VAL_STRIPS = (args.holdout_strip, )
 
@@ -48,6 +61,17 @@ def main():
     experimental_seed_ts = None
     if args.experimental:
         experimental, experimental_seed_ts = load_experimental_subfile()
+        if experimental.shape[1] != X.shape[1]:
+            # Strip 17 is disabled in this dataset and absent from experimental
+            # traces. Remove the same dead feature from simulator context.
+            live = np.any(experimental != 0.0, axis=0)
+            if live.size == X.shape[1] and int(live.sum()) == experimental.shape[1]:
+                X = X[:, live]
+            elif X.shape[1] - experimental.shape[1] == 1:
+                X = X[:, :-1]
+            else:
+                raise RuntimeError(f"simulator has {X.shape[1]} features but "
+                                   f"experiment has {experimental.shape[1]}")
 
     from tabfm import TabFMClassifier
     from tabfm import tabfm_v1_0_0_pytorch as tabfm_v1_0_0
@@ -67,7 +91,16 @@ def main():
     vlm_baseline.print_report(matrix, probabilities, y[validation_rows])
 
     if args.experimental:
-        experimental_probabilities = classifier.predict_proba(experimental)
+        if args.experimental_max < 1 or args.experimental_chunk < 1:
+            parser.error("experimental limits must be positive")
+        experimental = experimental[:args.experimental_max]
+        experimental_seed_ts = experimental_seed_ts[:args.experimental_max]
+        chunks = []
+        for start in range(0, experimental.shape[0], args.experimental_chunk):
+            stop = min(start + args.experimental_chunk, experimental.shape[0])
+            chunks.append(classifier.predict_proba(experimental[start:stop]))
+            print(f"  TabFM experimental {stop}/{experimental.shape[0]}")
+        experimental_probabilities = np.concatenate(chunks)
         pan = experimental_probabilities[:, list(config.VLM_CLASSES).index("an")]
         threshold, _an_recall, background_fpr, _beam_fpr = \
             vlm_finetune.threshold_metrics(probabilities, y[validation_rows])

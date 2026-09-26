@@ -110,12 +110,12 @@ physics problem rather than model scale.
 
 Next, apply TabFM and XGBoost to the complete beam-gated experimental subfile.
 Use simulated labels only to choose an operating threshold, then inspect the
-experimental selected traces and per-strip rates. This attempt is currently
-blocked by a reproducible segmentation fault in the existing experimental ROOT
-loader under the rebased Python 3.14 environment, in NumPy/Pandas extension code
-while loading `Events_Run100_1_c000`; simulator ROOT loading and all model runs
-remain functional. Resolve that loader ABI/runtime problem before retrying
-`vlm_tabfm.py --experimental`.
+experimental selected traces and per-strip rates. The stale-Pandas-cache segmentation fault in the experimental loader was fixed
+by replacing pickle-backed scalar loading with direct ROOT scalar buffers and a
+NumPy archive. Do not pass the complete 106,110-event reservoir to TabFM in one
+call: that exhausted GPU resources badly enough to reset the NVIDIA kernel
+module. `vlm_tabfm.py --experimental` now defaults to a 1,000-row probe and
+calls TabFM in independent 32-row chunks; increase those limits cautiously.
 
 In parallel, compare simulation and data distributions at strips 7--8 before
 trusting either model for a cross section. The TabFM pretrained weights are

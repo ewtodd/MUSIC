@@ -15,6 +15,7 @@ code uses UNIT gains. NO event selection is applied here
 -- the blind clustering pipeline's step 1 is the first filter.
 """
 
+import array
 import contextlib
 import os
 
@@ -137,6 +138,70 @@ def load_seed_ts(path, max_events=None):
     return ts
 
 
+def _load_scalar_branches(path, tree_name, branches, max_events=None):
+    """Read scalar ROOT leaves directly and cache them as a NumPy archive.
+
+    This avoids pandas pickle caches, which are not stable across the Python /
+    pandas ABI change in the rebased environment and can segfault during
+    unpickling rather than raising a recoverable exception.
+    """
+    import ROOT
+
+    type_map = {
+        "Float_t": ("f", np.float32),
+        "Double_t": ("d", np.float64),
+        "Int_t": ("i", np.int32),
+        "UInt_t": ("I", np.uint32),
+        "Long64_t": ("q", np.int64),
+        "ULong64_t": ("Q", np.uint64),
+        "Short_t": ("h", np.int16),
+        "UShort_t": ("H", np.uint16),
+        "UChar_t": ("B", np.uint8),
+    }
+    stem = os.path.splitext(os.path.basename(path))[0]
+    cache = config.CACHE_DIR / f"{stem}_{tree_name}_scalars.npz"
+    if cache.is_file() and os.path.getmtime(path) <= cache.stat().st_mtime:
+        stored = np.load(cache)
+        if all(name in stored.files for name in branches):
+            result = {name: stored[name] for name in branches}
+            if max_events is not None:
+                result = {name: values[:max_events]
+                          for name, values in result.items()}
+            return result
+
+    chain = ROOT.TChain(tree_name)
+    if chain.Add(path) == 0:
+        raise FileNotFoundError(f"cannot add {path} to {tree_name}")
+    n = chain.GetEntries()
+    if max_events is not None:
+        n = min(n, max_events)
+    chain.SetBranchStatus("*", 0)
+    buffers = {}
+    result = {}
+    for name in branches:
+        branch = chain.GetBranch(name)
+        if branch is None:
+            raise RuntimeError(f"{path}: no {name} branch in {tree_name}")
+        leaf = branch.GetLeaf(name)
+        type_name = leaf.GetTypeName()
+        if type_name not in type_map:
+            raise RuntimeError(f"{path}: unsupported {name} type {type_name}")
+        typecode, dtype = type_map[type_name]
+        buffer = array.array(typecode, [0])
+        chain.SetBranchStatus(name, 1)
+        chain.SetBranchAddress(name, buffer)
+        buffers[name] = buffer
+        result[name] = np.empty(n, dtype=dtype)
+    for i in range(n):
+        chain.GetEntry(i)
+        for name, buffer in buffers.items():
+            result[name][i] = buffer[0]
+    if max_events is None:
+        config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        np.savez(cache, **result)
+    return result
+
+
 def _load_calibrated_lr(path, max_events_per_file=None):
     """Calibrated (left, right) arrays (n, 18) + StripFactor / StripOffset
     for one events file, per channel like EnergyView::Decode; strip_factor
@@ -149,7 +214,7 @@ def _load_calibrated_lr(path, max_events_per_file=None):
     and GainStrip0/GainStrip17. Here they are widened to the 18-strip view
     the rest of the pipeline works in, with strips 0/17 in the left column
     and zero on the right."""
-    from analysis_utilities.io import load_leaf_array_data, load_tree_data
+    from analysis_utilities.io import load_leaf_array_data
     cache = str(config.CACHE_DIR)
     # Silence the loaders' per-file "Loading cached ..." lines (no quiet flag
     # upstream): redirect their stdout to devnull.
@@ -159,30 +224,30 @@ def _load_calibrated_lr(path, max_events_per_file=None):
                                   "events", ["LeftdE", "RightdE"],
                                   max_events=max_events_per_file,
                                   cache_dir=cache)
-        # Scalar branches come through the scalar loader; both loaders walk
-        # the entries the same way, so their rows line up.
-        ev_scalar = load_tree_data(path,
-                                   "events",
-                                   max_events=max_events_per_file,
-                                   cache_dir=cache)
+        if max_events_per_file is not None:
+            ev = {name: values[:max_events_per_file]
+                  for name, values in ev.items()}
         cal = load_leaf_array_data(path,
                                    "calibration",
                                    ["GainLeft", "GainRight", "OffsetLeft",
                                     "OffsetRight", "StripFactor",
                                     "StripOffset"],
                                    cache_dir=cache)
-        cal_scalar = load_tree_data(path, "calibration", cache_dir=cache)
+    ev_scalar = _load_scalar_branches(
+        path, "events", ["Strip0dE", "Strip17dE"], max_events_per_file)
+    cal_scalar = _load_scalar_branches(
+        path, "calibration", ["GainStrip0", "GainStrip17"])
     n = ev["LeftdE"].shape[0]
-    if len(ev_scalar) != n:
+    if ev_scalar["Strip0dE"].shape[0] != n:
         raise RuntimeError(
-            f"{path}: {n} array rows but {len(ev_scalar)} scalar rows")
-    raw_left = _with_unsegmented(ev["LeftdE"],
-                                 ev_scalar["Strip0dE"].to_numpy(),
-                                 ev_scalar["Strip17dE"].to_numpy())
+            f"{path}: {n} array rows but "
+            f"{ev_scalar['Strip0dE'].shape[0]} scalar rows")
+    raw_left = _with_unsegmented(ev["LeftdE"], ev_scalar["Strip0dE"],
+                                 ev_scalar["Strip17dE"])
     raw_right = _with_unsegmented(ev["RightdE"], 0.0, 0.0)
     gain_left = _with_unsegmented(cal["GainLeft"][0],
-                                  cal_scalar["GainStrip0"].iloc[0],
-                                  cal_scalar["GainStrip17"].iloc[0])
+                                  cal_scalar["GainStrip0"][0],
+                                  cal_scalar["GainStrip17"][0])
     gain_right = _with_unsegmented(cal["GainRight"][0], 0.0, 0.0)
     # Per-end offsets (short ends: the fixed amount a fired end reads over
     # its charge), subtracted only where the end fired and clamped at 0,
