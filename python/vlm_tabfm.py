@@ -90,6 +90,8 @@ def main():
     parser.add_argument("--context-rows", type=int, default=100)
     parser.add_argument("--estimators", type=int, default=8)
     parser.add_argument("--batch", type=int, default=32)
+    parser.add_argument("--sim-negative-scale", type=float, default=1.0,
+                        help="scale simulated below-beam deviations toward beam")
     parser.add_argument("--experimental", action="store_true",
                         help="also classify a beam-gated experimental sample")
     parser.add_argument("--reservoir", action="store_true",
@@ -103,8 +105,14 @@ def main():
     args = parser.parse_args()
     config.VLM_FINETUNE_VAL_STRIPS = (args.holdout_strip, )
 
-    X, y, holdout, _beam_ref, _strips = vlm_finetune.load_examples(
+    X, y, holdout, beam_ref, _strips = vlm_finetune.load_examples(
         args.max_per_class)
+    if args.sim_negative_scale != 1.0:
+        delta = X - beam_ref[np.newaxis, :]
+        X = beam_ref[np.newaxis, :] + np.where(
+            delta < 0.0, delta * args.sim_negative_scale, delta)
+        print(f"scaled simulated below-beam deviations by "
+              f"{args.sim_negative_scale:.3f}")
     train_rows = np.flatnonzero(~holdout)
     validation_rows = np.flatnonzero(holdout)
 
@@ -177,7 +185,8 @@ def main():
 
     if args.reservoir:
         reservoir_X, reservoir_seed_ts, reac, beam_flat = reservoir
-        output = config.CACHE_DIR / "tabfm_compute_regions.npz"
+        scale_tag = str(args.sim_negative_scale).replace(".", "p")
+        output = config.CACHE_DIR / f"tabfm_compute_regions_neg{scale_tag}.npz"
         reservoir_probabilities = predict_in_chunks(
             classifier, reservoir_X, args.experimental_chunk, output,
             reservoir_seed_ts, {"reac": reac, "beam_flat": beam_flat})

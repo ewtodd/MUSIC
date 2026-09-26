@@ -139,6 +139,23 @@ the existing tag, not truth efficiency, but they establish that zero-shot
 TabFM sees the same reaction-like population much more strongly than the
 fine-tuned Gemma run did.
 
+The simulator/data trace comparison explains part of the remaining gap. For
+strips 4--8, the median experimental tagged trace has a downstream collapse
+0.04--0.08 smaller than simulated `(alpha,n)`. Its median trace is about 0.25
+RMS away from simulation across live strips. Scaling simulated below-beam
+deviations by 0.6--0.9 appeared to improve strip-8 validation when all 18
+simulated strips were present, but failed after matching the experiment's 17
+live strips and assigned no experimental tag above the resulting threshold.
+That correction is rejected; disabled strip 17 was acting as a shortcut.
+
+Within existing experimental tags, TabFM `p(an)` correlates most strongly with
+plateau height (`r=+0.653`), and only weakly with rise (`+0.190`) and collapse
+(`+0.145`). The highest-scoring 20 tags had median plateau 1.259, versus 1.130
+for the lowest 20. Therefore the score is presently an event-strength ranking,
+not an independently validated reaction probability. A cross section should
+not use it until efficiency versus trace amplitude and reaction strip is
+measured or robustly simulated.
+
 In parallel, compare simulation and data distributions at strips 7--8 before
 trusting either model for a cross section. The TabFM pretrained weights are
 non-commercial and may only be used under their
