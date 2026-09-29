@@ -55,6 +55,21 @@ def load_compute_regions_reservoir():
             arrays["beam_flat"])
 
 
+def reaction_relative_view(X, reaction_strip, beam_ref, offsets=range(-2, 9)):
+    """Trace values at fixed offsets from a supplied candidate reaction strip."""
+    X = np.asarray(X, dtype=np.float32)
+    reaction_strip = np.asarray(reaction_strip, dtype=np.int32)
+    beam_ref = np.asarray(beam_ref, dtype=np.float32)
+    out = np.empty((X.shape[0], len(offsets)), dtype=np.float32)
+    for column, offset in enumerate(offsets):
+        source = reaction_strip + offset
+        valid = (source >= 0) & (source < X.shape[1])
+        out[:, column] = 1.0
+        rows = np.flatnonzero(valid)
+        out[rows, column] = X[rows, source[rows]]
+    return out
+
+
 def predict_in_chunks(classifier, X, chunk, output, seed_ts, extra=None,
                       fingerprint=None):
     """Resumable bounded prediction, writing after every independent chunk."""
@@ -105,6 +120,8 @@ def main():
                         help="TabFM context and ensemble seed")
     parser.add_argument("--drop-strip17", action="store_true",
                         help="drop disabled strip 17 from simulator-only validation")
+    parser.add_argument("--reaction-relative", action="store_true",
+                        help="align traces to the supplied reaction-strip candidate")
     parser.add_argument("--sim-negative-scale", type=float, default=1.0,
                         help="scale simulated below-beam deviations toward beam")
     parser.add_argument("--experimental", action="store_true",
@@ -121,7 +138,7 @@ def main():
     config.VLM_FINETUNE_VAL_STRIPS = (args.holdout_strip, )
     config.VLM_FINETUNE_SEED = args.data_seed
 
-    X, y, holdout, beam_ref, _strips = vlm_finetune.load_examples(
+    X, y, holdout, beam_ref, reaction_strip = vlm_finetune.load_examples(
         args.max_per_class)
     if args.sim_negative_scale != 1.0:
         delta = X - beam_ref[np.newaxis, :]
@@ -133,6 +150,14 @@ def main():
         X = X[:, :-1]
         beam_ref = beam_ref[:-1]
         print("dropped simulated strip 17 to match the live experimental schema")
+    if args.reaction_relative:
+        rng = np.random.default_rng(args.data_seed)
+        candidates = reaction_strip.copy()
+        beam_rows = candidates < 0
+        candidates[beam_rows] = rng.integers(2, 9, size=int(beam_rows.sum()))
+        X = reaction_relative_view(X, candidates, beam_ref)
+        beam_ref = np.ones(X.shape[1], dtype=np.float32)
+        print(f"reaction-relative view: {X.shape[1]} offsets from -2 through +8")
     train_rows = np.flatnonzero(~holdout)
     validation_rows = np.flatnonzero(holdout)
 
@@ -154,7 +179,14 @@ def main():
                                    f"experiment has {experimental.shape[1]}")
     if args.reservoir:
         reservoir = load_compute_regions_reservoir()
-        if reservoir[0].shape[1] != X.shape[1]:
+        if args.reaction_relative:
+            reservoir_X, seed_ts, reac, beam_flat = reservoir
+            candidates = reac.copy()
+            candidates[beam_flat] = 5
+            reservoir = (reaction_relative_view(
+                reservoir_X, candidates, np.ones(reservoir_X.shape[1])),
+                         seed_ts, reac, beam_flat)
+        elif reservoir[0].shape[1] != X.shape[1]:
             if X.shape[1] - reservoir[0].shape[1] == 1:
                 X = X[:, :-1]
             else:
@@ -172,9 +204,10 @@ def main():
         random_state=args.seed)
     classifier.fit(X[train_rows], y[train_rows])
     probabilities = classifier.predict_proba(X[validation_rows])
+    view_tag = "relative" if args.reaction_relative else "absolute"
     fingerprint = (f"data{args.data_seed}_context{args.seed}_"
                    f"rows{args.context_rows}_est{args.estimators}_"
-                   f"features{X.shape[1]}_neg{args.sim_negative_scale}")
+                   f"features{X.shape[1]}_{view_tag}_neg{args.sim_negative_scale}")
     prediction = probabilities.argmax(axis=1)
     matrix = vlm_baseline.confusion_matrix(y[validation_rows], prediction)
     print(f"TabFM zero-shot: {train_rows.size} context-pool rows, "
@@ -209,8 +242,9 @@ def main():
     if args.reservoir:
         reservoir_X, reservoir_seed_ts, reac, beam_flat = reservoir
         scale_tag = str(args.sim_negative_scale).replace(".", "p")
+        view_tag = "relative" if args.reaction_relative else "absolute"
         output = config.CACHE_DIR / (
-            f"tabfm_compute_regions_neg{scale_tag}_seed{args.seed}_"
+            f"tabfm_compute_regions_{view_tag}_neg{scale_tag}_seed{args.seed}_"
             f"est{args.estimators}.npz")
         reservoir_probabilities = predict_in_chunks(
             classifier, reservoir_X, args.experimental_chunk, output,

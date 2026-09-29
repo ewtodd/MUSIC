@@ -166,6 +166,30 @@ not an independently validated reaction probability. A cross section should
 not use it until efficiency versus trace amplitude and reaction strip is
 measured or robustly simulated.
 
+## Final handoff: reaction-relative experiment
+
+The latest unmerged work adds `--reaction-relative`, which conditions TabFM on
+a supplied candidate reaction strip and presents offsets -2 through +8 instead
+of absolute chamber strips. Beam context rows receive random candidate strips;
+compute-regions beam-flat rows use a fixed dummy candidate. This is a
+conditional identity test only: it does not discover reaction candidates.
+
+With strip 17 correctly removed and 32 estimators, leave-one-strip-out argmax
+`(alpha,n)` recall for relative traces was 0.932, 0.969, 0.894, 0.724, 0.667,
+0.699, and 0.413 for strips 2--8. At the 1% aggregate-background operating
+point, acceptance was 0.851, 0.672, 0.667, 0.540, 0.571, 0.108, and 0.159.
+The sharp loss at strips 7--8 is probably partly representational: offsets out
+to +8 run beyond the live detector there and are padded with beam. The next
+experiment should use a shorter common window that exists at every candidate,
+for example -2 through +6, then repeat the leave-one-strip table.
+
+A bounded reaction-relative compute-regions run was started but deliberately
+aborted before inference completed. Its cache fingerprinting is implemented,
+so it can be rerun safely. TabFM context and simulator data seeds are now
+separate CLI arguments, and every prediction cache records the data seed,
+context seed, context rows, ensemble size, feature count, representation, and
+simulator scaling. Incompatible caches are rejected rather than resumed.
+
 In parallel, compare simulation and data distributions at strips 7--8 before
 trusting either model for a cross section. The TabFM pretrained weights are
 non-commercial and may only be used under their
