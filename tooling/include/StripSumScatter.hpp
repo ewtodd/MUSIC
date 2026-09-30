@@ -256,6 +256,21 @@ struct TraceEvt {
 };
 
 /**
+ * @brief One simulated event that passed the fill's event-level selection.
+ *
+ * The cumulative strip sums (strips 1..s, never strip 0) let every candidate
+ * plane's window sums be taken in constant time, however many planes. Shared
+ * by the plane study and the template fit, which collect the sim in exactly
+ * the same way.
+ */
+struct StudyEvt {
+  Double_t cs[19]; ///< cs[s] = sum of strips 1..s; cs[0] = 0.
+  Int_t cls;       ///< 0 beam, 1 aa, 2 an, 3 ap.
+  Int_t src;       ///< -1 beam, else the generating reaction strip.
+  Int_t tagged;    ///< Strip the one-tag rule attributed, -1 for none.
+};
+
+/**
  * @brief One run's fitted beam gates.
  *
  * Both fill phases run one worker per run and merge afterwards **in run
@@ -371,6 +386,49 @@ public:
   void SimTagReport();
 
   /**
+   * @brief Score candidate scatter planes for (a,p) separation, on the
+   *        simulated populations.
+   *
+   * Every simulated event of every population the control directory holds
+   * goes through the fill's complete nominal selection — all-strips, the
+   * reference run's beam gate, pileup, noise, smoothness, both-ends
+   * multiplicity, the tag at every strip and the one-tag rule — before any
+   * projection. The events tagged at each reaction strip are then projected
+   * onto a grid of candidate planes (x: sum of strips 1 to xh, y: sum of
+   * reac+1 to yh, with and without the upstream-mean ratio) and two metrics
+   * rank the planes for separating (a,p) generated at that strip from (a,n)
+   * and (a,a'): the LDA distance between the clouds, and the (a,p) capture
+   * efficiency at fixed (a,n) leakage from a cell-greedy purity frontier.
+   * The plane the analysis currently uses is reported as the baseline. The
+   * report goes to plots/sim_scatter/plane_study_report.txt; the best planes
+   * and the baseline get figures carrying the simulated populations and,
+   * from the reservoir, the pure-beam data and the real data tagged at that
+   * strip. A negative `PLANE_STUDY_EXTRA_JITTER` smears the simulated
+   * traces per strip until their beam width matches the measured one.
+   * Configured by `PLANE_STUDY` and `PLANE_STUDY_EXTRA_JITTER`; needs
+   * Prepare() done (the strip noise and the reference gate).
+   */
+  void PlaneStudy();
+
+  /**
+   * @brief Fit the data tagged at each strip as a sum of the simulated
+   *        populations projected on the current analysis plane.
+   *
+   * The simulated events are collected exactly as the plane study collects
+   * them (StudyCollect), including the same per-strip and per-event smearing
+   * calibration, and binned with the data on the plane the analysis uses.
+   * The fit is an extended binned Poisson likelihood in the free yield of
+   * every component -- (a,a'), (a,n) and (a,p) generated at the strip, the
+   * migration (born at another strip, tagged here) with the observed
+   * per-strip yield profile, and the beam -- maximized by EM. The report
+   * goes to plots/sim_scatter/template_fit_report.txt with a figure per
+   * strip, and the fitted fractions go to template_fit.root. Configured by
+   * `TEMPLATE_FIT`, smeared by `PLANE_STUDY_EXTRA_JITTER`; needs Prepare()
+   * done.
+   */
+  void TemplateFit();
+
+  /**
    * @brief Region-trace overlays of every tagged event, one figure per
    *        reaction strip, against the beam band.
    *
@@ -447,6 +505,20 @@ private:
   static Double_t s_stripMean[18];
   std::map<Int_t, TH2F *> m_scatter;
   std::vector<TraceEvt> m_reservoir;
+  /// The first group's fitted beam gate, kept for the plane study, which
+  /// pushes simulated events through the same selection the fill applies.
+  BeamGate1D m_simStudyGate;
+  /// @brief Push every sim population through the fill's full nominal
+  ///        selection and return the surviving events, with the given
+  ///        per-strip jitter and per-event flux applied to the traces.
+  ///        Shared by the plane study and the template fit so the two score
+  ///        the very same simulated sample.
+  /// @param gain      Per-strip sim normalization gains (SimBeamGains).
+  /// @param jit       Per-strip smearing sigma (fraction of the strip mean).
+  /// @param sigmaFlux Per-event flux smearing (fraction of the beam mean).
+  /// @param seed      RNG seed for the smearing.
+  std::vector<StudyEvt> StudyCollect(const Double_t *gain, const Double_t *jit,
+                                     Double_t sigmaFlux, ULong64_t seed);
   // Normalization counts, merged over every run and persisted in the cache so
   // a cross section can be taken from it without a second pass over the data.
   Long64_t m_nSeen;

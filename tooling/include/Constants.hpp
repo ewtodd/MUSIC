@@ -265,6 +265,33 @@ struct StripSumScatterConfig {
   Bool_t RERUN_SIM;
   Int_t CANDIDATE_REAC_STRIP;
 
+  /// Exploratory: score candidate (x, y) scatter planes for separating the
+  /// (a,p) population from (a,n) and (a,a') in the early strips. Runs after
+  /// the sim overlays: every simulated event is pushed through the fill's
+  /// full selection (beam gate included), then projected onto hundreds of
+  /// candidate strip-sum planes; a report ranks the planes and figures show
+  /// the best ones. Writes only its report and figures under
+  /// plots/sim_scatter; changes no analysis product.
+  Bool_t PLANE_STUDY;
+  /// Per-strip Gaussian smearing added to the simulated traces for the plane
+  /// study, as a fraction of that strip's beam mean, applied in quadrature
+  /// on top of the simulation's own resolution. A positive value is one
+  /// value for every strip; a negative one asks for per-strip auto
+  /// calibration: just enough width that the simulated beam's relative rms
+  /// reaches the measured StripSigma/StripMean. 0 = off.
+  Double_t PLANE_STUDY_EXTRA_JITTER;
+
+  /// Exploratory: fit the data tagged at each reaction strip as a sum of
+  /// the simulated populations projected on the current analysis plane.
+  /// Every component -- (a,p), (a,n), (a,a') born at the strip, the
+  /// migration born elsewhere, and the beam -- gets a free yield in an
+  /// extended binned Poisson likelihood maximized by EM. The simulated
+  /// traces carry the same smearing as the plane study
+  /// (PLANE_STUDY_EXTRA_JITTER). Writes a per-strip report and figure, plus
+  /// template_fit.root, under plots/sim_scatter; changes no analysis
+  /// product. Needs Prepare() done.
+  Bool_t TEMPLATE_FIT;
+
   /// Leave out the Savitzky-Golay-smoothed copies of the trace overlays (the
   /// `_sg` figures and cluster-variable histograms), in both the
   /// strip-sum-scatter region overlays and compute-regions' all-tagged ones.

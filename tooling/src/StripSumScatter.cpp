@@ -1,8 +1,12 @@
 #include "StripSumScatter.hpp"
 #include "RegionCuts.hpp"
 #include "SelectionDiagram.hpp"
+#include <TDecompLU.h>
+#include <TMatrixD.h>
 #include <TParameter.h>
+#include <TRandom3.h>
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 
@@ -1824,6 +1828,1484 @@ void StripSumScatter::SimTagReport() {
   fo << text;
 }
 
+namespace {
+
+// One candidate plane, in the shape PlaneXY produces: x sums strips xl..xh,
+// y sums yl..yh and may be divided by the event's own upstream mean.
+struct StudyPlane {
+  Int_t xl, xh, yl, yh;
+  Bool_t ratio;
+};
+
+// A projected population for one strip and plane: label, colour, marker
+// style, and the points as separate x and y lists. The real data sets
+// #emphasize so it draws over the simulated clouds rather than blending in.
+struct StudySample {
+  TString label;
+  Int_t color = kBlack;
+  Int_t marker = 20; ///< ROOT marker style; the data samples override it.
+  Bool_t emphasize = kFALSE;
+  std::vector<Double_t> x;
+  std::vector<Double_t> y;
+};
+
+// A plane's score: the LDA distances of (a,p) from (a,n) and (a,a'), and the
+// (a,p) capture at (a,n) leakages of 1, 2 and 5 percent (with (a,a') held
+// under 2 percent throughout).
+struct StudyRow {
+  StudyPlane p;
+  Double_t d_an = 0.0, d_aa = 0.0;
+  Double_t cap1 = 0.0, cap2 = 0.0, cap5 = 0.0;
+  Bool_t current = kFALSE;
+};
+
+// The plane coordinates from the cumulative sums. The upstream divisor
+// follows PlaneXY: the mean of strips 1..reac-1, divided only when positive.
+void StudyXY(const StudyEvt &e, const StudyPlane &p, Int_t reac, Double_t &x,
+             Double_t &y) {
+  x = e.cs[p.xh] - e.cs[p.xl - 1];
+  y = e.cs[p.yh] - e.cs[p.yl - 1];
+  if (p.ratio && reac > 1) {
+    const Double_t up = e.cs[reac - 1] / Double_t(reac - 1);
+    if (up > 0.0)
+      y /= up;
+  }
+}
+
+// The linear separability of two 2-D samples: the Mahalanobis distance
+// between their means under the pooled covariance. 0 when either sample is
+// too small or the covariance degenerate.
+Double_t StudyLda(const std::vector<Double_t> &x1,
+                  const std::vector<Double_t> &y1,
+                  const std::vector<Double_t> &x2,
+                  const std::vector<Double_t> &y2) {
+  const Int_t n1 = Int_t(x1.size()), n2 = Int_t(x2.size());
+  if (n1 < 30 || n2 < 30)
+    return 0.0;
+  Double_t m1x = 0.0, m1y = 0.0, m2x = 0.0, m2y = 0.0;
+  for (Int_t i = 0; i < n1; i++) {
+    m1x += x1[i];
+    m1y += y1[i];
+  }
+  for (Int_t i = 0; i < n2; i++) {
+    m2x += x2[i];
+    m2y += y2[i];
+  }
+  m1x /= Double_t(n1);
+  m1y /= Double_t(n1);
+  m2x /= Double_t(n2);
+  m2y /= Double_t(n2);
+  Double_t sxx = 0.0, syy = 0.0, sxy = 0.0;
+  for (Int_t i = 0; i < n1; i++) {
+    const Double_t dx = x1[i] - m1x, dy = y1[i] - m1y;
+    sxx += dx * dx;
+    syy += dy * dy;
+    sxy += dx * dy;
+  }
+  for (Int_t i = 0; i < n2; i++) {
+    const Double_t dx = x2[i] - m2x, dy = y2[i] - m2y;
+    sxx += dx * dx;
+    syy += dy * dy;
+    sxy += dx * dy;
+  }
+  sxx /= Double_t(n1 + n2 - 2);
+  syy /= Double_t(n1 + n2 - 2);
+  sxy /= Double_t(n1 + n2 - 2);
+  const Double_t det = sxx * syy - sxy * sxy;
+  if (!(std::fabs(det) > 1.0e-30))
+    return 0.0;
+  const Double_t dx = m1x - m2x, dy = m1y - m2y;
+  const Double_t d2 =
+      (syy * dx * dx - 2.0 * sxy * dx * dy + sxx * dy * dy) / det;
+  return d2 > 0.0 ? std::sqrt(d2) : 0.0;
+}
+
+// The greedy purity frontier: fill the three samples on a common grid, order
+// the cells by signal fraction (Laplace-smoothed), and walk them, reporting
+// the largest signal capture reached while both background leakages stayed
+// within their budgets. Along that walk the counts only grow, so the walk
+// stops the first time either budget is crossed.
+Double_t
+StudyCapture(const std::vector<Double_t> &sx, const std::vector<Double_t> &sy,
+             const std::vector<Double_t> &b1x, const std::vector<Double_t> &b1y,
+             const std::vector<Double_t> &b2x, const std::vector<Double_t> &b2y,
+             Double_t leak1, Double_t leak2) {
+  const Int_t nTot = Int_t(sx.size()) + Int_t(b1x.size()) + Int_t(b2x.size());
+  if (Int_t(sx.size()) < 30 || Int_t(b1x.size()) < 30 || nTot < 90)
+    return 0.0;
+  Double_t xlo = 1.0e30, xhi = -1.0e30, ylo = 1.0e30, yhi = -1.0e30;
+  const std::vector<Double_t> *xs[3] = {&sx, &b1x, &b2x};
+  const std::vector<Double_t> *ys[3] = {&sy, &b1y, &b2y};
+  for (Int_t k = 0; k < 3; k++)
+    for (size_t i = 0; i < xs[k]->size(); i++) {
+      xlo = TMath::Min(xlo, (*xs[k])[i]);
+      xhi = TMath::Max(xhi, (*xs[k])[i]);
+      ylo = TMath::Min(ylo, (*ys[k])[i]);
+      yhi = TMath::Max(yhi, (*ys[k])[i]);
+    }
+  if (!(xhi > xlo) || !(yhi > ylo))
+    return 0.0;
+  const Int_t kB = 72;
+  std::vector<Double_t> ns(kB * kB, 0.0), nb1(kB * kB, 0.0), nb2(kB * kB, 0.0);
+  for (Int_t k = 0; k < 3; k++) {
+    std::vector<Double_t> &cnt = k == 0 ? ns : (k == 1 ? nb1 : nb2);
+    for (size_t i = 0; i < xs[k]->size(); i++) {
+      Int_t bx = Int_t(((*xs[k])[i] - xlo) / (xhi - xlo) * Double_t(kB));
+      Int_t by = Int_t(((*ys[k])[i] - ylo) / (yhi - ylo) * Double_t(kB));
+      bx = TMath::Min(TMath::Max(bx, 0), kB - 1);
+      by = TMath::Min(TMath::Max(by, 0), kB - 1);
+      cnt[by * kB + bx] += 1.0;
+    }
+  }
+  std::vector<std::pair<Double_t, Int_t>> order;
+  for (Int_t c = 0; c < kB * kB; c++) {
+    const Double_t tot = ns[c] + nb1[c] + nb2[c];
+    if (tot <= 0.0)
+      continue;
+    order.push_back(std::make_pair((ns[c] + 0.1) / (tot + 0.4), c));
+  }
+  std::sort(
+      order.begin(), order.end(),
+      [](const std::pair<Double_t, Int_t> &a,
+         const std::pair<Double_t, Int_t> &b) { return a.first > b.first; });
+  const Double_t nS = Double_t(sx.size());
+  const Double_t nB1 = Double_t(b1x.size());
+  const Double_t nB2 = Double_t(b2x.size());
+  Double_t cap = 0.0, g1 = 0.0, g2 = 0.0;
+  for (size_t o = 0; o < order.size(); o++) {
+    const Int_t c = order[o].second;
+    const Double_t next1 = g1 + nb1[c] / nB1;
+    const Double_t next2 = g2 + nb2[c] / nB2;
+    if (next1 > leak1 || next2 > leak2)
+      break;
+    g1 = next1;
+    g2 = next2;
+    cap += ns[c] / nS;
+  }
+  return cap;
+}
+
+// Report sort: by the capture at 2 percent (a,n) leakage.
+Bool_t StudyRowLess(const StudyRow &a, const StudyRow &b) {
+  return a.cap2 > b.cap2;
+}
+
+// One study figure: the four projected populations as translucent point
+// clouds on a frame spanning them all, with axes named for the plane.
+void StudyFigure(const TString &name, const TString &subtitle,
+                 const std::vector<StudySample> &samples) {
+  Double_t xlo = 1.0e30, xhi = -1.0e30, ylo = 1.0e30, yhi = -1.0e30;
+  for (size_t k = 0; k < samples.size(); k++)
+    for (size_t i = 0; i < samples[k].x.size(); i++) {
+      xlo = TMath::Min(xlo, samples[k].x[i]);
+      xhi = TMath::Max(xhi, samples[k].x[i]);
+      ylo = TMath::Min(ylo, samples[k].y[i]);
+      yhi = TMath::Max(yhi, samples[k].y[i]);
+    }
+  if (!(xhi > xlo) || !(yhi > ylo))
+    return;
+  const Double_t mx = 0.05 * (xhi - xlo), my = 0.05 * (yhi - ylo);
+  TH2F frame("study_frame", subtitle, 10, xlo - mx, xhi + mx, 10, ylo - my,
+             yhi + my);
+  frame.SetStats(0);
+  TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+  c->SetLeftMargin(0.18);
+  frame.Draw();
+  // Bottom-right: the beam sits bottom-left and the reactions top, leaving
+  // this corner clear. Tall enough for both data entries too.
+  TLegend *leg = PlottingUtils::AddLegend(0.60, 0.88, 0.09, 0.50);
+  for (size_t k = 0; k < samples.size(); k++) {
+    const StudySample &s = samples[k];
+    if (s.x.empty())
+      continue;
+    TGraph *g = new TGraph();
+    const Long64_t stride = FileSet::SampleStride(Int_t(s.x.size()), 4000);
+    Int_t n = 0;
+    for (size_t i = 0; i < s.x.size(); i += Long64_t(stride))
+      g->SetPoint(n++, s.x[i], s.y[i]);
+    g->Set(n);
+    g->SetMarkerStyle(s.marker);
+    g->SetMarkerSize(s.emphasize ? 0.55 : 0.3);
+    g->SetMarkerColorAlpha(s.color, s.emphasize ? 0.8 : 0.35);
+    g->SetLineColor(s.color);
+    g->Draw("P SAME");
+    leg->AddEntry(g, s.label, "p");
+  }
+  leg->Draw();
+  PlottingUtils::SaveFigure(c, name, "sim_scatter", PlotSaveOptions::kLINEAR);
+  delete leg;
+  delete c;
+}
+
+// The one sim beam file (the first "beam" spec, else SIM_BEAM_FILE),
+// opened; null when it cannot be. Callers close and delete it.
+TFile *StudyBeamFile() {
+  TString file;
+  std::vector<RemixSim::SimFileSpec> specs = RemixSim::BuildFileSpecs();
+  for (Int_t i = 0; i < Int_t(specs.size()); i++) {
+    if (RemixSim::TagWithoutStrip(specs[i].tag) == "beam") {
+      file = RemixSim::SimRootPath(specs[i]);
+      break;
+    }
+  }
+  if (file.Length() == 0)
+    file =
+        Paths::DatasetDir() + "/sim_root_files/" + Constants::cfg.SIM_BEAM_FILE;
+  TFile *f = IO::OpenForReading(file);
+  if (!f || f->IsZombie()) {
+    if (f)
+      delete f;
+    return nullptr;
+  }
+  return f;
+}
+
+// Mean and rms of the gain-normalized per-strip sim beam total, over the
+// same >0 events SimBeamGains averages -- so mean[s] is 1 wherever a gain
+// was set, and rms[s] is the sim's own relative resolution on that strip.
+Bool_t StudySimBeamMoments(const Double_t *gain, Double_t *mean,
+                           Double_t *rms) {
+  for (Int_t s = 0; s < 18; s++) {
+    mean[s] = 0.0;
+    rms[s] = 0.0;
+  }
+  TFile *f = StudyBeamFile();
+  if (!f)
+    return kFALSE;
+  TTree *t = static_cast<TTree *>(f->Get("events_MeV"));
+  RemixSim::Event e;
+  if (!t || !e.Attach(t)) {
+    f->Close();
+    delete f;
+    return kFALSE;
+  }
+  const Long64_t n = t->GetEntries();
+  const Long64_t stride = FileSet::SampleStride(
+      n, Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SAMPLE_MAX_POINTS);
+  Double_t sum[18] = {0}, sum2[18] = {0};
+  Long64_t cnt[18] = {0};
+  for (Long64_t j = 0; j < n; j += stride) {
+    t->GetEntry(j);
+    for (Int_t s = 0; s < 18; s++) {
+      const Double_t tot = gain[s] * e.Total(s);
+      if (tot > 0.0) {
+        sum[s] += tot;
+        sum2[s] += tot * tot;
+        cnt[s]++;
+      }
+    }
+  }
+  f->Close();
+  delete f;
+  for (Int_t s = 0; s < 18; s++) {
+    if (cnt[s] < 2 || !(sum[s] > 0.0))
+      continue;
+    mean[s] = sum[s] / Double_t(cnt[s]);
+    const Double_t v = sum2[s] / Double_t(cnt[s]) - mean[s] * mean[s];
+    rms[s] = v > 0.0 ? std::sqrt(v) : 0.0;
+  }
+  return kTRUE;
+}
+
+// The relative rms (rms / mean) of a sample of event totals.
+Double_t StudyRelRms(const std::vector<Double_t> &v) {
+  if (v.size() < 2)
+    return 0.0;
+  Double_t sum = 0.0, sum2 = 0.0;
+  for (size_t i = 0; i < v.size(); i++) {
+    sum += v[i];
+    sum2 += v[i] * v[i];
+  }
+  const Double_t m = sum / Double_t(v.size());
+  const Double_t s2 = sum2 / Double_t(v.size()) - m * m;
+  return (s2 > 0.0 && m > 0.0) ? std::sqrt(s2) / m : 0.0;
+}
+
+// Relative rms of the sim beam's full total (strips 1..16) under one
+// smearing setting: each strip its multiplicative jitter, the event its
+// common flux factor. A separate rng keeps the calibration reproducible.
+Double_t StudyBeamTotalRms(const Double_t *gain, const Double_t *jit,
+                           Double_t sigmaFlux, ULong64_t seed) {
+  TFile *f = StudyBeamFile();
+  if (!f)
+    return 0.0;
+  TTree *t = static_cast<TTree *>(f->Get("events_MeV"));
+  RemixSim::Event e;
+  if (!t || !e.Attach(t)) {
+    f->Close();
+    delete f;
+    return 0.0;
+  }
+  TRandom3 rng(seed);
+  const Long64_t n = t->GetEntries();
+  const Long64_t stride = FileSet::SampleStride(
+      n, Constants::cfg.STRIP_SUM_SCATTER_CONFIG.SAMPLE_MAX_POINTS);
+  std::vector<Double_t> tots;
+  for (Long64_t j = 0; j < n; j += stride) {
+    t->GetEntry(j);
+    const Double_t g = sigmaFlux > 0.0 ? 1.0 + rng.Gaus(0.0, sigmaFlux) : 1.0;
+    Double_t tot = 0.0;
+    for (Int_t s = 1; s <= 16; s++) {
+      Double_t f_s = g;
+      if (jit[s] > 0.0)
+        f_s *= 1.0 + rng.Gaus(0.0, jit[s]);
+      tot += f_s * gain[s] * e.Total(s);
+    }
+    if (tot > 0.0)
+      tots.push_back(tot);
+  }
+  f->Close();
+  delete f;
+  return StudyRelRms(tots);
+}
+
+// The full total (strips 1..16) of every pure-beam data event, the sample
+// the sim beam total is matched against.
+std::vector<Double_t>
+StudyReservoirBeamTotals(const std::vector<TraceEvt> &res) {
+  std::vector<Double_t> tots;
+  for (size_t k = 0; k < res.size(); k++) {
+    const TraceEvt &e = res[k];
+    if (!e.beam_flat)
+      continue;
+    Double_t tot = 0.0;
+    for (Int_t s = 1; s <= 16; s++)
+      tot += e.Total(s);
+    if (tot > 0.0)
+      tots.push_back(tot);
+  }
+  return tots;
+}
+
+// The data tagged at one strip, as study events, straight from the
+// reservoir: the fit's data sample.
+std::vector<StudyEvt> StudyDataEvts(Int_t reac,
+                                    const std::vector<TraceEvt> &res) {
+  const Int_t ri =
+      reac - Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
+  std::vector<StudyEvt> out;
+  for (size_t k = 0; k < res.size(); k++) {
+    const TraceEvt &e = res[k];
+    if (!(e.reac_mask & (1u << ri)))
+      continue;
+    Double_t tot[18];
+    e.Totals(tot);
+    StudyEvt se;
+    se.cls = -1;
+    se.src = reac;
+    se.tagged = reac;
+    se.cs[0] = 0.0;
+    for (Int_t s = 1; s <= 17; s++)
+      se.cs[s] = se.cs[s - 1] + tot[s];
+    out.push_back(se);
+  }
+  return out;
+}
+
+// The smearing shared by the plane study and the template fit. A positive
+// jitter is one value for every strip; a negative one auto-calibrates:
+// per-strip jitter from the strip widths, then a per-event flux jitter from
+// the beam total's spread, taken out of the per-strip budget so each strip
+// stays matched. The applied jitters land in jit and sigmaFlux.
+void StudySmearingCalibration(const Double_t *gain, Double_t jitter,
+                              const std::vector<Double_t> &dataBeamTotals,
+                              Double_t *jit, Double_t &sigmaFlux,
+                              std::ostringstream &calib) {
+  for (Int_t s = 0; s < 18; s++)
+    jit[s] = jitter > 0.0 ? jitter : 0.0;
+  sigmaFlux = 0.0;
+  if (!(jitter < 0.0))
+    return;
+  Double_t simMu[18], simRms[18];
+  if (!StudySimBeamMoments(gain, simMu, simRms)) {
+    std::cerr << "strip-sum-scatter: auto jitter cannot read the sim beam "
+                 "file; the run proceeds unsmeared."
+              << std::endl;
+    return;
+  }
+  Double_t jit0[18];
+  calib << "  Resolution match: multiplicative smearing added to the "
+           "simulated traces (in quadrature on the sim's own width): a "
+           "per-strip jitter so each strip's relative beam rms reaches the "
+           "measured one, plus one per-event flux jitter so the beam "
+           "total's spread reaches the measured one."
+        << std::endl;
+  calib << Form("  %6s  %11s  %11s  %8s", "strip", "sim rel-rms",
+                "data rel-rms", "jitter")
+        << std::endl;
+  for (Int_t s = 0; s < 18; s++) {
+    jit0[s] = 0.0;
+    const Double_t dataMu = StripSumScatter::StripMean(s),
+                   dataSg = StripSumScatter::StripSigma(s);
+    if (!(dataMu > 0.0) || !(dataSg > 0.0) || !(simMu[s] > 0.0))
+      continue;
+    const Double_t wd = dataSg / dataMu, ws = simRms[s] / simMu[s];
+    const Double_t diff = wd * wd - ws * ws;
+    jit0[s] = diff > 0.0 ? std::sqrt(diff) : 0.0;
+  }
+  const Double_t dataTot = StudyRelRms(dataBeamTotals);
+  const Double_t simTot0 = StudyBeamTotalRms(gain, jit0, 0.0, 20260930);
+  const Double_t flux2 = dataTot * dataTot - simTot0 * simTot0;
+  sigmaFlux = flux2 > 0.0 ? std::sqrt(flux2) : 0.0;
+  for (Int_t s = 0; s < 18; s++) {
+    const Double_t d = jit0[s] * jit0[s] - sigmaFlux * sigmaFlux;
+    jit[s] = d > 0.0 ? std::sqrt(d) : 0.0;
+  }
+  const Double_t simTotFin = StudyBeamTotalRms(gain, jit, sigmaFlux, 20260931);
+  for (Int_t s = 0; s < 18; s++) {
+    const Double_t dataMu = StripSumScatter::StripMean(s),
+                   dataSg = StripSumScatter::StripSigma(s);
+    if (!(dataMu > 0.0) || !(dataSg > 0.0) || !(simMu[s] > 0.0))
+      continue;
+    calib << Form("  %6d  %11.4f  %11.4f  %8.4f", s, simRms[s] / simMu[s],
+                  dataSg / dataMu, jit[s])
+          << std::endl;
+  }
+  calib << Form("  beam total rel-rms: data %.4f, sim %.4f before and "
+                "%.4f after, with %.4f per-event flux jitter (in addition "
+                "to the per-strip jitter above).",
+                dataTot, simTot0, simTotFin, sigmaFlux)
+        << std::endl;
+  calib << std::endl;
+}
+
+// --- Template fit: the extended binned Poisson likelihood of unit-summed
+// templates, maximized by EM. The yields update multiplicatively and the
+// likelihood is concave in them, so EM lands on the maximum likelihood.
+struct StudyFitResult {
+  std::vector<Double_t> N;   ///< Yields at the fit
+  std::vector<Double_t> cov; ///< Covariance, K*K row-major
+  Double_t dev = 0.0;        ///< -2 ln L at the fit
+  Int_t iters = 0;           ///< EM iterations run
+  Bool_t converged = kFALSE; ///< Yields stopped moving
+  Bool_t singular = kFALSE;  ///< The covariance would not invert
+};
+
+StudyFitResult StudyFitEM(Int_t nb, const std::vector<Double_t> &d,
+                          const std::vector<std::vector<Double_t>> &P) {
+  const Int_t K = Int_t(P.size());
+  std::vector<Double_t> N(K, 0.0), mu(nb, 0.0);
+  Double_t nTot = 0.0;
+  for (Int_t b = 0; b < nb; b++)
+    nTot += d[b];
+  for (Int_t k = 0; k < K; k++)
+    N[k] = nTot / Double_t(K);
+  StudyFitResult r;
+  for (Int_t it = 0; it < 50000; it++) {
+    r.iters = it + 1;
+    for (Int_t b = 0; b < nb; b++) {
+      Double_t m = 0.0;
+      for (Int_t k = 0; k < K; k++)
+        m += N[k] * P[k][b];
+      mu[b] = m > 0.0 ? m : 1.0e-9;
+    }
+    std::vector<Double_t> Nn(K, 0.0);
+    for (Int_t k = 0; k < K; k++) {
+      Double_t u = 0.0;
+      for (Int_t b = 0; b < nb; b++)
+        u += d[b] * P[k][b] / mu[b];
+      Nn[k] = N[k] * u;
+    }
+    Double_t maxrel = 0.0;
+    for (Int_t k = 0; k < K; k++)
+      maxrel = TMath::Max(maxrel,
+                          std::fabs(Nn[k] - N[k]) / TMath::Max(Nn[k], 1.0e-6));
+    N = Nn;
+    r.converged = maxrel < 1.0e-7;
+    if (r.converged)
+      break;
+  }
+  r.N = N;
+  r.dev = 0.0;
+  for (Int_t b = 0; b < nb; b++)
+    r.dev += 2.0 * (mu[b] - d[b] +
+                    (d[b] > 0.0 ? d[b] * std::log(d[b] / mu[b]) : 0.0));
+  // The Hessian of -ln L in the yields, inverted for the covariance.
+  TMatrixD H(K, K);
+  for (Int_t b = 0; b < nb; b++)
+    for (Int_t i = 0; i < K; i++)
+      for (Int_t j = i; j < K; j++) {
+        const Double_t h = P[i][b] * P[j][b] / mu[b];
+        H(i, j) += h;
+        if (j != i)
+          H(j, i) += h;
+      }
+  r.cov.assign(K * K, 0.0);
+  TDecompLU de(H);
+  r.singular = !de.Decompose();
+  if (!r.singular) {
+    const TMatrixD C = de.Invert();
+    for (Int_t i = 0; i < K; i++)
+      for (Int_t j = 0; j < K; j++)
+        r.cov[i * K + j] = C(i, j);
+  }
+  return r;
+}
+
+// The q-quantile of a sample, linearly interpolated.
+Double_t StudyQuantile(std::vector<Double_t> v, Double_t q) {
+  if (v.empty())
+    return 0.0;
+  std::sort(v.begin(), v.end());
+  const Double_t idx = q * Double_t(Int_t(v.size()) - 1);
+  const Int_t lo = Int_t(idx);
+  const Int_t hi = TMath::Min(lo + 1, Int_t(v.size()) - 1);
+  const Double_t f = idx - Double_t(lo);
+  return v[lo] * (1.0 - f) + v[hi] * f;
+}
+
+// The mean and standard deviation of a sample.
+void StudyMoments(const std::vector<Double_t> &v, Double_t &mean,
+                  Double_t &sd) {
+  mean = 0.0;
+  sd = 0.0;
+  if (v.size() < 2)
+    return;
+  Double_t s = 0.0, s2 = 0.0;
+  for (size_t i = 0; i < v.size(); i++) {
+    s += v[i];
+    s2 += v[i] * v[i];
+  }
+  mean = s / Double_t(v.size());
+  const Double_t v2 = s2 / Double_t(v.size()) - mean * mean;
+  sd = v2 > 0.0 ? std::sqrt(v2) : 0.0;
+}
+
+// One fit figure: the 1-D y distribution with the fitted components and
+// the data, and the pulls (d - mu) / sqrt(mu) below it.
+void StudyFitFigure(const TString &name, const TString &title, Int_t nb,
+                    const Double_t *ye, const std::vector<Double_t> &d,
+                    const std::vector<Double_t> &mu,
+                    const std::vector<TString> &labels,
+                    const std::vector<Int_t> &colors,
+                    const std::vector<Double_t> &N,
+                    const std::vector<Double_t> &E,
+                    const std::vector<std::vector<Double_t>> &P) {
+  TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
+  c->Divide(1, 2, 0.0, 0.0, 0.0);
+  c->cd(1);
+  // The frame is filled with the fit total so its auto y range covers the
+  // components; an empty frame would clamp the axis and clip every template.
+  TH1F frame("fit_frame", title, nb, ye);
+  frame.SetStats(0);
+  frame.GetYaxis()->SetTitle("events / bin");
+  std::vector<TH1F *> comps(N.size());
+  for (size_t k = 0; k < N.size(); k++) {
+    TH1F *h = new TH1F(Form("fit_c%d", Int_t(k)), labels[k].Data(), nb, ye);
+    for (Int_t b = 0; b < nb; b++)
+      h->SetBinContent(b + 1, P[k][b] * N[k]);
+    h->SetLineColor(colors[k]);
+    h->SetLineWidth(1.5);
+    comps[k] = h;
+  }
+  TH1F *tot = new TH1F("fit_tot", "fit", nb, ye);
+  for (Int_t b = 0; b < nb; b++) {
+    Double_t s = 0.0;
+    for (size_t k = 0; k < N.size(); k++)
+      s += comps[k]->GetBinContent(b + 1);
+    tot->SetBinContent(b + 1, s);
+  }
+  Double_t ymax = 0.0;
+  for (Int_t b = 0; b < nb; b++) {
+    if (tot->GetBinContent(b + 1) > ymax)
+      ymax = tot->GetBinContent(b + 1);
+    if (d[b] > ymax)
+      ymax = d[b];
+  }
+  frame.SetMaximum(1.15 * ymax + 1.0);
+  frame.SetMinimum(0.0);
+  frame.Draw();
+  for (size_t k = 0; k < comps.size(); k++)
+    comps[k]->Draw("hist SAME");
+  tot->SetLineColor(kBlack);
+  tot->SetLineWidth(2);
+  tot->Draw("hist SAME");
+  TGraphErrors *gd = new TGraphErrors(nb);
+  for (Int_t b = 0; b < nb; b++) {
+    gd->SetPoint(b, 0.5 * (ye[b] + ye[b + 1]), d[b]);
+    gd->SetPointError(b, 0.0, std::sqrt(d[b] > 0.0 ? d[b] : 1.0));
+  }
+  gd->SetMarkerStyle(20);
+  gd->SetMarkerSize(0.5);
+  gd->SetMarkerColor(kBlack);
+  gd->Draw("P SAME");
+  TLegend *leg = PlottingUtils::AddLegend(0.12, 0.52, 0.50, 0.90);
+  leg->AddEntry(tot, "fit", "l");
+  for (size_t k = 0; k < N.size(); k++)
+    leg->AddEntry(comps[k],
+                  Form("%s  %.0f #plusmn %.0f", labels[k].Data(), N[k], E[k]),
+                  "l");
+  leg->AddEntry(gd, "data", "p");
+  leg->Draw();
+  // Bottom pad: the pulls.
+  c->cd(2);
+  TGraphErrors *gp = new TGraphErrors(nb);
+  for (Int_t b = 0; b < nb; b++) {
+    const Double_t dd = d[b], m = mu[b];
+    const Double_t pull =
+        m > 1.0e-9 ? (dd - m) / std::sqrt(m) : (dd > 0.0 ? 6.0 : 0.0);
+    gp->SetPoint(b, 0.5 * (ye[b] + ye[b + 1]), pull);
+    gp->SetPointError(b, 0.0, 1.0);
+  }
+  gp->SetMarkerStyle(20);
+  gp->SetMarkerSize(0.4);
+  gp->SetMarkerColor(kBlack);
+  gp->Draw("AP");
+  gp->GetYaxis()->SetRangeUser(-6.0, 6.0);
+  gp->GetYaxis()->SetTitle("pull");
+  gp->GetXaxis()->SetTitle("y");
+  PlottingUtils::SaveFigure(c, name, "sim_scatter", PlotSaveOptions::kLINEAR);
+  delete gp;
+  delete gd;
+  delete tot;
+  for (size_t k = 0; k < comps.size(); k++)
+    delete comps[k];
+  delete leg;
+  delete c;
+}
+
+// Fill the figure samples: the four simulated populations, then the real
+// beam and the real data tagged at this strip, so both draw over the clouds.
+void StudyMakeSamples(Int_t reac, const std::vector<const StudyEvt *> *pop,
+                      const std::vector<StudyEvt> &dataBeam,
+                      const std::vector<StudyEvt> &data, const StudyPlane &p,
+                      std::vector<StudySample> &samples) {
+  samples.assign(6, StudySample());
+  samples[0].label = "Beam";
+  samples[0].color = kGray + 2;
+  samples[1].label = "(#alpha,#alpha')";
+  samples[1].color = kAzure + 2;
+  samples[2].label = "(#alpha,n)";
+  samples[2].color = kRed + 1;
+  samples[3].label = "(#alpha,p)";
+  samples[3].color = kGreen + 2;
+  samples[4].label = "Data beam";
+  samples[4].color = kBlack;
+  samples[4].marker = 26;
+  samples[4].emphasize = kTRUE;
+  samples[5].label = Form("Data tagged at %d", reac);
+  samples[5].color = kBlack;
+  samples[5].marker = 22;
+  samples[5].emphasize = kTRUE;
+  for (Int_t k = 0; k < 4; k++)
+    for (size_t i = 0; i < pop[k].size(); i++) {
+      Double_t x = 0.0, y = 0.0;
+      StudyXY(*pop[k][i], p, reac, x, y);
+      samples[k].x.push_back(x);
+      samples[k].y.push_back(y);
+    }
+  for (size_t i = 0; i < dataBeam.size(); i++) {
+    Double_t x = 0.0, y = 0.0;
+    StudyXY(dataBeam[i], p, reac, x, y);
+    samples[4].x.push_back(x);
+    samples[4].y.push_back(y);
+  }
+  for (size_t i = 0; i < data.size(); i++) {
+    Double_t x = 0.0, y = 0.0;
+    StudyXY(data[i], p, reac, x, y);
+    samples[5].x.push_back(x);
+    samples[5].y.push_back(y);
+  }
+}
+
+} // namespace
+
+std::vector<StudyEvt> StripSumScatter::StudyCollect(const Double_t *gain,
+                                                    const Double_t *jit,
+                                                    Double_t sigmaFlux,
+                                                    ULong64_t seed) {
+  const StripSumScatterConfig &C = Constants::cfg.STRIP_SUM_SCATTER_CONFIG;
+  const Int_t kReacMin = C.REACTION_STRIP_MIN;
+  const Int_t kReacMax = C.REACTION_STRIP_MAX;
+  const Int_t nReac = kReacMax - kReacMin + 1;
+  const TagThresholds T = NominalThresholds();
+  // The beam gate was fitted on data (Prepare's first group); a failed fit
+  // or a grid-axis gate cannot be applied to the sim, which has no grid.
+  const Bool_t applyGate = T.gate_nsigma > 0.0 && m_simStudyGate.ok &&
+                           C.GATE_STRIP != GATE_AXIS_GRID;
+  std::vector<RemixSim::SimFileSpec> specs = RemixSim::BuildFileSpecs();
+  if (specs.empty()) {
+    std::cerr << "strip-sum-scatter: no sim control files; no simulated "
+                 "events to collect."
+              << std::endl;
+    return std::vector<StudyEvt>();
+  }
+  TRandom3 rng(seed);
+  std::vector<StudyEvt> evts;
+  for (size_t k = 0; k < specs.size(); k++) {
+    const TString base = RemixSim::TagWithoutStrip(specs[k].tag);
+    Int_t cls = -1;
+    if (base == "beam")
+      cls = 0;
+    else if (base == "aa")
+      cls = 1;
+    else if (base == "an")
+      cls = 2;
+    else if (base == "ap")
+      cls = 3;
+    if (cls < 0)
+      continue;
+    const Int_t src = cls == 0 ? -1 : RemixSim::ReactionStripOf(specs[k].tag);
+    if (cls > 0 && (src < kReacMin || src > kReacMax))
+      continue;
+    TFile *fl = IO::OpenForReading(RemixSim::SimRootPath(specs[k]));
+    if (!fl || fl->IsZombie()) {
+      delete fl;
+      std::cerr << "  cannot open the sim file for " << specs[k].tag << ": "
+                << RemixSim::SimRootPath(specs[k]) << std::endl;
+      continue;
+    }
+    TTree *t = static_cast<TTree *>(fl->Get("events_MeV"));
+    RemixSim::Event e;
+    if (!t || !e.Attach(t)) {
+      std::cerr << "  no events_MeV for " << specs[k].tag << std::endl;
+      if (fl)
+        fl->Close();
+      delete fl;
+      continue;
+    }
+    const Long64_t n = t->GetEntries();
+    Long64_t kept = 0, tagged = 0;
+    EnergyView ev;
+    std::vector<Bool_t> pass(nReac, kFALSE);
+    for (Long64_t j = 0; j < n; j++) {
+      t->GetEntry(j);
+      // The sim's deposit per end on the data's beam scale, exactly as
+      // SimTagReport builds it, with the smearing: one factor per event
+      // (the flux) times one per strip, so the strip total carries both.
+      const Double_t g = sigmaFlux > 0.0 ? 1.0 + rng.Gaus(0.0, sigmaFlux) : 1.0;
+      for (Int_t s = 1; s <= 16; s++) {
+        Double_t f = g;
+        if (jit[s] > 0.0)
+          f *= 1.0 + rng.Gaus(0.0, jit[s]);
+        const Double_t tot = f * gain[s] * e.Total(s);
+        if (Constants::ActiveIgnoreShortStrips()) {
+          ev.left[s - 1] = (s % 2) != 0 ? tot : 0.0;
+          ev.right[s - 1] = (s % 2) != 0 ? 0.0 : tot;
+        } else {
+          ev.left[s - 1] = Float_t(f * gain[s] * e.Left(s));
+          ev.right[s - 1] = Float_t(f * gain[s] * e.Right(s));
+        }
+        ev.leftdE_adc[s - 1] = ev.left[s - 1] > 0.0 ? 1 : 0;
+        ev.rightdE_adc[s - 1] = ev.right[s - 1] > 0.0 ? 1 : 0;
+      }
+      ev.strip0 =
+          Float_t(g * (jit[0] > 0.0 ? 1.0 + rng.Gaus(0.0, jit[0]) : 1.0) *
+                  gain[0] * e.strip0);
+      ev.strip17 =
+          Float_t(g * (jit[17] > 0.0 ? 1.0 + rng.Gaus(0.0, jit[17]) : 1.0) *
+                  gain[17] * e.strip17);
+      // The event-level funnel, in the fill's order.
+      if (!AllStripsFired(ev))
+        continue;
+      if (applyGate &&
+          !PassesGate(m_simStudyGate, ev, C.GATE_STRIP, T.gate_nsigma))
+        continue;
+      if (IsPileup(ev, T.pileup_nsigma))
+        continue;
+      if (IsNoise(ev, T.noise_nsigma))
+        continue;
+      if (T.smooth_nsigma > 0.0 && MaxStepNSigma(ev) > T.smooth_nsigma)
+        continue;
+      if (C.BOTH_MULT_MAX >= 0 &&
+          CountBothEnds(ev, TMath::Min(16, C.BOTH_MULT_COUNT_TO)) >
+              C.BOTH_MULT_MAX)
+        continue;
+      // The tag at every strip and the one-tag rule, nominal thresholds.
+      for (Int_t reac = kReacMin; reac <= kReacMax; reac++)
+        pass[ReacIndex(reac)] = RejectReason(ev, reac) == kTagPass;
+      StudyEvt se;
+      se.cls = cls;
+      se.src = src;
+      se.tagged = ResolveTag(ev, pass);
+      se.cs[0] = 0.0;
+      for (Int_t s = 1; s <= 17; s++)
+        se.cs[s] = se.cs[s - 1] + ev.Total(s);
+      evts.push_back(se);
+      kept++;
+      if (se.tagged >= 0)
+        tagged++;
+    }
+    fl->Close();
+    delete fl;
+    std::cout << Form("  %s at %s: %lld events, %lld past the event-level "
+                      "cuts, %lld tagged somewhere",
+                      base.Data(), src >= 0 ? Form("strip %d", src) : "beam", n,
+                      kept, tagged)
+              << std::endl;
+  }
+  return evts;
+}
+
+void StripSumScatter::PlaneStudy() {
+  const StripSumScatterConfig &C = Constants::cfg.STRIP_SUM_SCATTER_CONFIG;
+  const Int_t kReacMin = C.REACTION_STRIP_MIN;
+  const Int_t kReacMax = C.REACTION_STRIP_MAX;
+  const Int_t nReac = kReacMax - kReacMin + 1;
+  const TagThresholds T = NominalThresholds();
+  std::cout << "strip-sum-scatter: plane study, scoring candidate scatter "
+               "planes on the simulated populations."
+            << std::endl;
+
+  // The beam gate was fitted on data (Prepare's first group); a failed fit
+  // or a grid-axis gate cannot be applied to the sim, which has no grid.
+  const Bool_t applyGate = T.gate_nsigma > 0.0 && m_simStudyGate.ok &&
+                           C.GATE_STRIP != GATE_AXIS_GRID;
+  if (T.gate_nsigma > 0.0 && !applyGate)
+    std::cout << "  note: the beam gate is skipped in the study (the sim has "
+                 "no grid, or the gate was not fitted)."
+              << std::endl;
+
+  Double_t gain[18];
+  if (!SimBeamGains(gain))
+    for (Int_t s = 0; s < 18; s++)
+      gain[s] = 1.0;
+  // Smearing of the simulated traces: PLANE_STUDY_EXTRA_JITTER > 0 is one
+  // Gaussian per strip; < 0 auto-calibrates the per-strip jitter and a
+  // per-event flux jitter to the measured beam (the calibration table goes
+  // into the report).
+  const Double_t jitter = C.PLANE_STUDY_EXTRA_JITTER;
+  const Bool_t autoJit = jitter < 0.0;
+  Double_t jit[18];
+  Double_t sigmaFlux = 0.0;
+  std::ostringstream calib;
+  StudySmearingCalibration(gain, jitter, StudyReservoirBeamTotals(m_reservoir),
+                           jit, sigmaFlux, calib);
+
+  // --- Collect: every sim population through the fill's full selection.
+  std::vector<StudyEvt> evts = StudyCollect(gain, jit, sigmaFlux, 20260929);
+  if (evts.empty())
+    return;
+
+  // Pure-beam data events from the reservoir, projected exactly like the
+  // sim beam, so the figures can compare the measured and simulated widths.
+  std::vector<StudyEvt> dataBeamEvts;
+  for (size_t k = 0; k < m_reservoir.size(); k++) {
+    const TraceEvt &e = m_reservoir[k];
+    if (!e.beam_flat)
+      continue;
+    Double_t tot[18];
+    e.Totals(tot);
+    StudyEvt se;
+    se.cls = -1;
+    se.src = -1;
+    se.tagged = -1;
+    se.cs[0] = 0.0;
+    for (Int_t s = 1; s <= 17; s++)
+      se.cs[s] = se.cs[s - 1] + tot[s];
+    dataBeamEvts.push_back(se);
+  }
+
+  // --- Score: candidate planes per reaction strip.
+  std::ostringstream out;
+  out << "strip-sum-scatter: plane study (" << Paths::DatasetName().Data()
+      << "): simulated populations pushed through the fill's full nominal "
+         "selection (event-level cuts"
+      << (applyGate ? ", beam gate," : ", no beam gate,")
+      << " tag, one-tag rule), projected onto candidate planes x = sum of "
+         "strips 1..xh, y = sum of reac+1..yh (/event upstream mean when "
+         "ratio); smearing: "
+      << (autoJit ? "auto-calibrated per strip and per event (flux) to the "
+                    "measured beam"
+                  : Form("extra jitter %.1f%%", 100.0 * jitter))
+      << "." << std::endl;
+  if (autoJit)
+    out << calib.str();
+  out << "Samples per strip: (a,p), (a,n) and (a,a') GENERATED at and TAGGED "
+         "at that strip. d(ap|an), d(ap|aa): LDA distance between the clouds. "
+         "cap@k: (a,p) capture at (a,n) leakage k (with (a,a') leakage kept "
+         "under 2%), from a cell-greedy purity frontier: an optimistic "
+         "ceiling, not a drawable cut. Migration is deliberately excluded: "
+         "events tagged away from their birth strip are another strip's "
+         "problem (see sim_tag_report.txt)."
+      << std::endl;
+  out << "Figures also carry the pure-beam data from the reservoir ("
+      << dataBeamEvts.size() << " events) next to the simulated beam."
+      << std::endl;
+  out << std::endl;
+
+  for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
+    // The four populations for this strip: beam for the figures only, aa/an
+    // as backgrounds, ap as signal.
+    std::vector<const StudyEvt *> pop[4];
+    for (size_t i = 0; i < evts.size(); i++) {
+      const StudyEvt &e = evts[i];
+      if (e.cls == 0)
+        pop[0].push_back(&e);
+      else if (e.src == reac && e.tagged == reac) {
+        if (e.cls == 1)
+          pop[1].push_back(&e);
+        else if (e.cls == 2)
+          pop[2].push_back(&e);
+        else if (e.cls == 3)
+          pop[3].push_back(&e);
+      }
+    }
+    // The real data tagged at this strip, straight from the reservoir: the
+    // figures carry it so the simulated clouds can be read against it.
+    std::vector<StudyEvt> dataEvts;
+    for (size_t k = 0; k < m_reservoir.size(); k++) {
+      const TraceEvt &e = m_reservoir[k];
+      if (!(e.reac_mask & (1u << ReacIndex(reac))))
+        continue;
+      Double_t tot[18];
+      e.Totals(tot);
+      StudyEvt se;
+      se.cls = -1;
+      se.src = reac;
+      se.tagged = reac;
+      se.cs[0] = 0.0;
+      for (Int_t s = 1; s <= 17; s++)
+        se.cs[s] = se.cs[s - 1] + tot[s];
+      dataEvts.push_back(se);
+    }
+    out << Form("(%s) at strip %d: n(ap)=%zu n(an)=%zu n(aa)=%zu n(beam)=%zu "
+                "n(data)=%zu",
+                "a,p", reac, pop[3].size(), pop[2].size(), pop[1].size(),
+                pop[0].size(), dataEvts.size())
+        << std::endl;
+    if (pop[3].size() < 30 || pop[2].size() < 30) {
+      out << "  too few (a,p) or (a,n) tagged here to score any plane."
+          << std::endl
+          << std::endl;
+      continue;
+    }
+
+    // The candidate grid: xh and yh sweep every window, each with and
+    // without the upstream-mean ratio. The current analysis plane is marked.
+    std::vector<StudyPlane> planes;
+    for (Int_t xh = reac; xh <= 17; xh++)
+      for (Int_t yh = reac + 1; yh <= 17; yh++) {
+        StudyPlane p;
+        p.xl = 1;
+        p.xh = xh;
+        p.yl = reac + 1;
+        p.yh = yh;
+        p.ratio = kTRUE;
+        planes.push_back(p);
+        p.ratio = kFALSE;
+        planes.push_back(p);
+      }
+
+    std::vector<StudyRow> rows;
+    for (size_t q = 0; q < planes.size(); q++) {
+      const StudyPlane &p = planes[q];
+      std::vector<Double_t> px[4], py[4];
+      for (Int_t k = 0; k < 4; k++) {
+        px[k].reserve(pop[k].size());
+        py[k].reserve(pop[k].size());
+      }
+      for (Int_t k = 1; k < 4; k++)
+        for (size_t i = 0; i < pop[k].size(); i++) {
+          Double_t x = 0.0, y = 0.0;
+          StudyXY(*pop[k][i], p, reac, x, y);
+          px[k].push_back(x);
+          py[k].push_back(y);
+        }
+      StudyRow row;
+      row.p = p;
+      row.d_an = StudyLda(px[3], py[3], px[2], py[2]);
+      row.d_aa = StudyLda(px[3], py[3], px[1], py[1]);
+      row.cap1 =
+          StudyCapture(px[3], py[3], px[2], py[2], px[1], py[1], 0.01, 0.02);
+      row.cap2 =
+          StudyCapture(px[3], py[3], px[2], py[2], px[1], py[1], 0.02, 0.02);
+      row.cap5 =
+          StudyCapture(px[3], py[3], px[2], py[2], px[1], py[1], 0.05, 0.02);
+      row.current = p.xl == C.X_LO && p.xh == C.X_HI && p.yl == YLoOf(reac) &&
+                    p.yh == YHiOf(reac) && p.ratio == C.Y_RATIO_TO_UPSTREAM;
+      rows.push_back(row);
+    }
+
+    // Find the baseline row first (the grid's own current flag).
+    const StudyRow *cur = nullptr;
+    for (size_t q = 0; q < rows.size(); q++)
+      if (rows[q].current)
+        cur = &rows[q];
+    out << Form("  current plane  x 1->%-2d  y %d->%-2d %-6s d(an)=%6.2f "
+                "d(aa)=%6.2f  cap@1%%=%5.1f%%  cap@2%%=%5.1f%%  "
+                "cap@5%%=%5.1f%%",
+                C.X_HI, YLoOf(reac), YHiOf(reac),
+                C.Y_RATIO_TO_UPSTREAM ? "ratio" : "plain",
+                cur ? cur->d_an : 0.0, cur ? cur->d_aa : 0.0,
+                cur ? 100.0 * cur->cap1 : 0.0, cur ? 100.0 * cur->cap2 : 0.0,
+                cur ? 100.0 * cur->cap5 : 0.0)
+        << std::endl;
+
+    std::sort(rows.begin(), rows.end(), StudyRowLess);
+    out << "  ranked planes (top 12 by cap@2%):" << std::endl;
+    const Int_t kTop = 12;
+    for (Int_t q = 0; q < Int_t(rows.size()) && q < kTop; q++)
+      out << Form("   %2d   x 1->%-2d  y %d->%-2d %-6s d(an)=%6.2f d(aa)=%6.2f "
+                  " cap@1%%=%5.1f%%  cap@2%%=%5.1f%%  cap@5%%=%5.1f%%%s",
+                  q + 1, rows[q].p.xh, rows[q].p.yl, rows[q].p.yh,
+                  rows[q].p.ratio ? "ratio" : "plain", rows[q].d_an,
+                  rows[q].d_aa, 100.0 * rows[q].cap1, 100.0 * rows[q].cap2,
+                  100.0 * rows[q].cap5, rows[q].current ? "   <- current" : "")
+          << std::endl;
+    out << std::endl;
+
+    // Figures: the top three and the current plane, simulated populations,
+    // the pure-beam and tagged data from the reservoir.
+    const char *figTag[3] = {"top1", "top2", "top3"};
+    std::vector<StudySample> samples;
+    for (Int_t q = 0; q < 3 && q < Int_t(rows.size()); q++) {
+      StudyMakeSamples(reac, pop, dataBeamEvts, dataEvts, rows[q].p, samples);
+      const TString title = Form(
+          "strip %d: x #Sigma s1#rightarrows%d, y #Sigma s%d#rightarrows%d%s",
+          reac, rows[q].p.xh, rows[q].p.yl, rows[q].p.yh,
+          rows[q].p.ratio ? " / upstream" : "");
+      StudyFigure(Form("plane_study_reac%d_%s", reac, figTag[q]), title,
+                  samples);
+    }
+    if (cur) {
+      StudyPlane cp;
+      cp.xl = C.X_LO;
+      cp.xh = C.X_HI;
+      cp.yl = YLoOf(reac);
+      cp.yh = YHiOf(reac);
+      cp.ratio = C.Y_RATIO_TO_UPSTREAM;
+      StudyMakeSamples(reac, pop, dataBeamEvts, dataEvts, cp, samples);
+      StudyFigure(Form("plane_study_reac%d_current", reac),
+                  Form("strip %d: the current analysis plane, selection as "
+                       "the fill applies it",
+                       reac),
+                  samples);
+    }
+  }
+
+  const std::string text = out.str();
+  std::cout << text;
+  const TString dir = Paths::ResultsDir() + "/plots/sim_scatter";
+  gSystem->mkdir(dir, kTRUE);
+  std::ofstream fo((dir + "/plane_study_report.txt").Data());
+  fo << text;
+  std::cout << "strip-sum-scatter: plane study written to " << dir
+            << "/plane_study_report.txt" << std::endl;
+}
+
+void StripSumScatter::TemplateFit() {
+  const StripSumScatterConfig &C = Constants::cfg.STRIP_SUM_SCATTER_CONFIG;
+  const Int_t kReacMin = C.REACTION_STRIP_MIN;
+  const Int_t kReacMax = C.REACTION_STRIP_MAX;
+  std::cout << "strip-sum-scatter: template fit, the data tagged at each "
+               "strip as a sum of the simulated populations."
+            << std::endl;
+
+  Double_t gain[18];
+  if (!SimBeamGains(gain))
+    for (Int_t s = 0; s < 18; s++)
+      gain[s] = 1.0;
+  // The same smearing calibration as the plane study, so the templates
+  // carry the measured beam resolution and flux.
+  Double_t jit[18];
+  Double_t sigmaFlux = 0.0;
+  std::ostringstream calib;
+  StudySmearingCalibration(gain, C.PLANE_STUDY_EXTRA_JITTER,
+                           StudyReservoirBeamTotals(m_reservoir), jit,
+                           sigmaFlux, calib);
+
+  std::vector<StudyEvt> evts = StudyCollect(gain, jit, sigmaFlux, 20260930);
+  if (evts.empty()) {
+    std::cerr << "strip-sum-scatter: no simulated events; skipping the "
+                 "template fit."
+              << std::endl;
+    return;
+  }
+
+  // The data yield profile per strip, the migration template's weights:
+  // its ap/an/aa mixture follows the physical strip yields, not the sim's
+  // uniform generation.
+  Int_t nDataAt[10] = {0};
+  for (Int_t reac = kReacMin; reac <= kReacMax; reac++)
+    nDataAt[ReacIndex(reac)] = Int_t(StudyDataEvts(reac, m_reservoir).size());
+
+  const Int_t nb = 40;
+  std::ostringstream out;
+  out << "strip-sum-scatter: template fit (" << Paths::DatasetName().Data()
+      << "): the data tagged at each strip, binned " << nb
+      << " deep on the y axis of the current analysis plane, fitted as a "
+         "sum of the simulated components (each with a free yield) by the "
+         "extended binned Poisson likelihood, maximized by EM. The "
+         "simulated traces carry the same smearing as the plane study. "
+         "The fit is 1-D in y on purpose: the (a,p) proton is charged and "
+         "its Q value is 0.7 MeV less negative, so (a,p) sits at higher y "
+         "than (a,n), and a 1-D fit is far better conditioned than the 2-D "
+         "one, whose clouds are only ~1.7 sigma apart."
+      << std::endl;
+  if (C.PLANE_STUDY_EXTRA_JITTER < 0.0)
+    out << calib.str();
+  out << "Components: (a,p), (a,n), (a,a') GENERATED at and TAGGED at the "
+         "strip; the migration (born at another strip, tagged here) with "
+         "the data yield profile as its composition weight; the beam. The "
+         "migration's own composition is the sim's, so its yield is a "
+         "shape, not a per-class count."
+      << std::endl;
+  out << std::endl;
+
+  // Accumulate the per-strip fit rows for template_fit.root.
+  struct FitRow {
+    Int_t reac;
+    Double_t n_data;
+    Double_t n_ap, n_an, n_aa, n_mig, n_beam;
+    Double_t err_ap, err_an, err_aa, err_mig, err_beam;
+    Double_t f_ap, err_fap;
+    Double_t chi2, dof;
+  };
+  std::vector<FitRow> rows;
+
+  for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
+    std::vector<StudyEvt> data = StudyDataEvts(reac, m_reservoir);
+    out << Form("strip %d: n_data=%zu", reac, data.size()) << std::endl;
+    if (data.size() < 30) {
+      out << "  too few data to fit." << std::endl << std::endl;
+      continue;
+    }
+
+    // The current analysis plane for this strip (only its y axis is used).
+    StudyPlane p;
+    p.xl = C.X_LO;
+    p.xh = C.X_HI;
+    p.yl = YLoOf(reac);
+    p.yh = YHiOf(reac);
+    p.ratio = C.Y_RATIO_TO_UPSTREAM;
+
+    // Component y lists and weights. Index 0 ap, 1 an, 2 aa, 3 migration,
+    // 4 beam.
+    std::vector<Double_t> cy[5], cw[5];
+    for (size_t i = 0; i < evts.size(); i++) {
+      const StudyEvt &e = evts[i];
+      if (e.tagged != reac)
+        continue;
+      Double_t x = 0.0, y = 0.0;
+      StudyXY(e, p, reac, x, y);
+      if (e.cls > 0 && e.src == reac) {
+        // cls 3 ap -> 0, 2 an -> 1, 1 aa -> 2, the component order.
+        const Int_t idx = (e.cls == 3) ? 0 : (e.cls == 2) ? 1 : 2;
+        cy[idx].push_back(y);
+        cw[idx].push_back(1.0);
+      } else if (e.cls > 0 && e.src != reac) {
+        const Int_t sri = ReacIndex(e.src);
+        cy[3].push_back(y);
+        cw[3].push_back(nDataAt[sri] > 0 ? Double_t(nDataAt[sri]) : 0.0);
+      } else if (e.cls == 0) {
+        cy[4].push_back(y);
+        cw[4].push_back(1.0);
+      }
+    }
+    // The data y values.
+    std::vector<Double_t> dy;
+    for (size_t i = 0; i < data.size(); i++) {
+      Double_t x = 0.0, y = 0.0;
+      StudyXY(data[i], p, reac, x, y);
+      dy.push_back(y);
+    }
+
+    // Drop empty components, keeping the index for the report.
+    Int_t compIdx[5] = {0, 1, 2, 3, 4};
+    Int_t nComp = 0;
+    for (Int_t a = 0; a < 5; a++) {
+      const Int_t k = compIdx[a];
+      Double_t wsum = 0.0;
+      for (size_t i = 0; i < cw[k].size(); i++)
+        wsum += cw[k][i];
+      if (cw[k].size() >= 20 && wsum > 0.0) {
+        compIdx[nComp++] = k;
+      }
+    }
+    if (nComp < 2) {
+      out << "  too few simulated components to fit." << std::endl << std::endl;
+      continue;
+    }
+
+    // Bin range from the 2nd-98th percentile of the data y.
+    const Double_t ylo = StudyQuantile(dy, 0.02), yhi = StudyQuantile(dy, 0.98);
+    if (!(yhi > ylo)) {
+      out << "  degenerate data range; skipping." << std::endl << std::endl;
+      continue;
+    }
+    const Double_t ybin = (yhi - ylo) / Double_t(nb);
+
+    // Data binned counts.
+    std::vector<Double_t> d(nb, 0.0);
+    for (size_t i = 0; i < dy.size(); i++) {
+      const Int_t iy = Int_t((dy[i] - ylo) / ybin);
+      if (iy < 0 || iy >= nb)
+        continue;
+      d[iy] += 1.0;
+    }
+
+    // Templates, unit-summed, weighted.
+    std::vector<std::vector<Double_t>> P;
+    std::vector<TString> labels;
+    std::vector<Int_t> colors;
+    for (Int_t a = 0; a < nComp; a++) {
+      const Int_t k = compIdx[a];
+      std::vector<Double_t> pk(nb, 0.0);
+      Double_t wsum = 0.0;
+      for (size_t i = 0; i < cy[k].size(); i++) {
+        const Int_t iy = Int_t((cy[k][i] - ylo) / ybin);
+        if (iy < 0 || iy >= nb)
+          continue;
+        pk[iy] += cw[k][i];
+        wsum += cw[k][i];
+      }
+      if (wsum <= 0.0)
+        continue;
+      for (Int_t b = 0; b < nb; b++)
+        pk[b] /= wsum;
+      P.push_back(pk);
+      const Int_t idx = k;
+      if (idx == 0) {
+        labels.push_back("(#alpha,p)");
+        colors.push_back(kGreen + 2);
+      } else if (idx == 1) {
+        labels.push_back("(#alpha,n)");
+        colors.push_back(kRed + 1);
+      } else if (idx == 2) {
+        labels.push_back("(#alpha,#alpha')");
+        colors.push_back(kAzure + 2);
+      } else if (idx == 3) {
+        labels.push_back("migration");
+        colors.push_back(kOrange + 2);
+      } else {
+        labels.push_back("beam");
+        colors.push_back(kGray + 2);
+      }
+    }
+    if (P.size() < 2) {
+      out << "  too few in-bin components to fit." << std::endl << std::endl;
+      continue;
+    }
+
+    // DIAGNOSTIC: the y moments of the data and each template, so the
+    // templates can be compared to the data directly. The beam (data and
+    // sim) is included to separate a scale problem from a reaction-shape
+    // problem: the beam is flat, so its y is ~1 with no reaction content.
+    {
+      const char *cname[5] = {"(a,p)", "(a,n)", "(a,a')", "migr", "beam"};
+      Double_t m = 0.0, sd = 0.0;
+      StudyMoments(dy, m, sd);
+      out << Form("  y moments (mean +- sd): data n=%zu  %.4f +- %.4f",
+                  dy.size(), m, sd)
+          << std::endl;
+      std::vector<Double_t> dataBeamY;
+      for (size_t k = 0; k < m_reservoir.size(); k++) {
+        const TraceEvt &e = m_reservoir[k];
+        if (!e.beam_flat)
+          continue;
+        Double_t tot[18];
+        e.Totals(tot);
+        StudyEvt se;
+        se.cls = -1;
+        se.src = reac;
+        se.tagged = -1;
+        se.cs[0] = 0.0;
+        for (Int_t s = 1; s <= 17; s++)
+          se.cs[s] = se.cs[s - 1] + tot[s];
+        Double_t bx = 0.0, by = 0.0;
+        StudyXY(se, p, reac, bx, by);
+        dataBeamY.push_back(by);
+      }
+      Double_t bm = 0.0, bsd = 0.0;
+      StudyMoments(dataBeamY, bm, bsd);
+      out << Form("   %-7s n=%5zu  %.4f +- %.4f  (data beam)", "beam",
+                  dataBeamY.size(), bm, bsd)
+          << std::endl;
+      std::vector<Double_t> simBeamY;
+      for (size_t i = 0; i < evts.size(); i++) {
+        if (evts[i].cls != 0)
+          continue;
+        Double_t bx = 0.0, by = 0.0;
+        StudyXY(evts[i], p, reac, bx, by);
+        simBeamY.push_back(by);
+      }
+      Double_t sbm = 0.0, sbd = 0.0;
+      StudyMoments(simBeamY, sbm, sbd);
+      out << Form("   %-7s n=%5zu  %.4f +- %.4f  (sim beam)", "beam",
+                  simBeamY.size(), sbm, sbd)
+          << std::endl;
+      for (Int_t a = 0; a < nComp; a++) {
+        const Int_t k = compIdx[a];
+        Double_t cm = 0.0, csd = 0.0;
+        StudyMoments(cy[k], cm, csd);
+        out << Form("   %-7s n=%5zu  %.4f +- %.4f", cname[k], cy[k].size(), cm,
+                    csd)
+            << std::endl;
+      }
+      // The binned data y, so the shape (a single shifted peak vs a reaction
+      // peak plus a low-y beam tail) can be read directly.
+      out << Form("  data y bins [%.2f..%.2f]:", ylo, yhi);
+      for (Int_t b = 0; b < nb; b++) {
+        if (b % 8 == 7)
+          out << std::endl;
+        out << Form(" %4.0f", d[b]);
+      }
+      out << std::endl;
+    }
+
+    const Int_t K = Int_t(P.size());
+    const StudyFitResult r = StudyFitEM(nb, d, P);
+    Double_t ntot = 0.0;
+    for (Int_t k = 0; k < K; k++)
+      ntot += r.N[k];
+
+    // The fitted yields back-mapped to the component order. P keeps the
+    // components in compIdx order minus any dropped for being empty
+    // in-bin, so rebuild that map the same way the templates were.
+    Double_t N[5] = {0.0}, E[5] = {0.0};
+    std::vector<Int_t> pToComp;
+    for (Int_t a = 0; a < nComp; a++) {
+      const Int_t k = compIdx[a];
+      Double_t wsum = 0.0;
+      for (size_t i = 0; i < cw[k].size(); i++) {
+        const Int_t iy = Int_t((cy[k][i] - ylo) / ybin);
+        if (iy >= 0 && iy < nb)
+          wsum += cw[k][i];
+      }
+      if (wsum > 0.0)
+        pToComp.push_back(k);
+    }
+    for (Int_t b = 0; b < K && b < Int_t(pToComp.size()); b++) {
+      N[pToComp[b]] = r.N[b];
+      E[pToComp[b]] =
+          r.cov[b * K + b] > 0.0 ? std::sqrt(r.cov[b * K + b]) : 0.0;
+    }
+
+    // f(a,p) and its error, by covariance propagation on N_ap / total.
+    Double_t f_ap = ntot > 0.0 ? N[0] / ntot : 0.0;
+    Double_t err_fap = 0.0;
+    Int_t apos = -1;
+    for (Int_t b = 0; b < Int_t(pToComp.size()); b++)
+      if (pToComp[b] == 0)
+        apos = b;
+    if (apos >= 0 && ntot > 0.0) {
+      // f = N_a / sum N; df/dN_a = 1 - f, df/dN_j = -f for j != a.
+      Double_t v = 0.0;
+      for (Int_t i = 0; i < K; i++) {
+        const Double_t gi = (i == apos) ? (1.0 - f_ap) : -f_ap;
+        for (Int_t j = 0; j < K; j++) {
+          const Double_t gj = (j == apos) ? (1.0 - f_ap) : -f_ap;
+          v += gi * gj * r.cov[i * K + j];
+        }
+      }
+      err_fap = v > 0.0 ? std::sqrt(v) : 0.0;
+    }
+
+    const Double_t chi2dof = (nb - K) > 0 ? r.dev / Double_t(nb - K) : 0.0;
+    out << Form("  fitted (EM converged=%s, %d iters):",
+                r.converged ? "yes" : "no", r.iters)
+        << std::endl;
+    const char *cname[5] = {"(a,p)", "(a,n)", "(a,a')", "migr", "beam"};
+    for (Int_t b = 0; b < Int_t(pToComp.size()); b++) {
+      const Int_t k = pToComp[b];
+      out << Form("    %-7s  %8.1f +- %6.1f", cname[k], N[k], E[k])
+          << std::endl;
+    }
+    out << Form("  total  %8.1f  (data %zu)", ntot, data.size()) << std::endl;
+    out << Form("  chi2/dof  %6.2f  (%d bins, %d components)%s", chi2dof, nb, K,
+                r.singular ? "  [covariance singular]" : "")
+        << std::endl;
+    out << Form("  f(a,p) = %6.3f +- %5.3f   (fraction of tagged that is "
+                "(a,p))",
+                f_ap, err_fap)
+        << std::endl;
+    out << std::endl;
+
+    FitRow row;
+    row.reac = reac;
+    row.n_data = Double_t(data.size());
+    row.n_ap = N[0];
+    row.n_an = N[1];
+    row.n_aa = N[2];
+    row.n_mig = N[3];
+    row.n_beam = N[4];
+    row.err_ap = E[0];
+    row.err_an = E[1];
+    row.err_aa = E[2];
+    row.err_mig = E[3];
+    row.err_beam = E[4];
+    row.f_ap = f_ap;
+    row.err_fap = err_fap;
+    row.chi2 = r.dev;
+    row.dof = Double_t(nb - K);
+    rows.push_back(row);
+
+    // The figure.
+    std::vector<Double_t> mu(nb, 0.0);
+    for (Int_t b = 0; b < nb; b++)
+      for (Int_t k = 0; k < K; k++)
+        mu[b] += r.N[k] * P[k][b];
+    std::vector<Double_t> ye(nb + 1);
+    for (Int_t i = 0; i <= nb; i++)
+      ye[i] = ylo + i * ybin;
+    std::vector<Double_t> Evec(K, 0.0);
+    for (Int_t k = 0; k < K; k++)
+      Evec[k] = r.cov[k * K + k] > 0.0 ? std::sqrt(r.cov[k * K + k]) : 0.0;
+    StudyFitFigure(
+        Form("template_fit_reac%d", reac),
+        Form("strip %d: 1-D template fit, y #Sigma s%d#rightarrows%d%s", reac,
+             p.yl, p.yh, p.ratio ? " / upstream" : ""),
+        nb, ye.data(), d, mu, labels, colors, r.N, Evec, P);
+  }
+
+  const std::string text = out.str();
+  std::cout << text;
+  const TString dir = Paths::ResultsDir() + "/plots/sim_scatter";
+  gSystem->mkdir(dir, kTRUE);
+  std::ofstream fo((dir + "/template_fit_report.txt").Data());
+  fo << text;
+
+  // The per-strip fit rows, for a cross-section to read the (a,p) scale.
+  TFile *rf = new TFile((dir + "/template_fit.root").Data(), "RECREATE");
+  TTree *tr = new TTree("template_fit", "Template fit per strip");
+  Int_t reac_i;
+  Double_t n_data, n_ap, n_an, n_aa, n_mig, n_beam;
+  Double_t err_ap, err_an, err_aa, err_mig, err_beam;
+  Double_t f_ap, err_fap, chi2, dof;
+  tr->Branch("reac", &reac_i, "reac/I");
+  tr->Branch("n_data", &n_data, "n_data/D");
+  tr->Branch("n_ap", &n_ap, "n_ap/D");
+  tr->Branch("n_an", &n_an, "n_an/D");
+  tr->Branch("n_aa", &n_aa, "n_aa/D");
+  tr->Branch("n_mig", &n_mig, "n_mig/D");
+  tr->Branch("n_beam", &n_beam, "n_beam/D");
+  tr->Branch("err_ap", &err_ap, "err_ap/D");
+  tr->Branch("err_an", &err_an, "err_an/D");
+  tr->Branch("err_aa", &err_aa, "err_aa/D");
+  tr->Branch("err_mig", &err_mig, "err_mig/D");
+  tr->Branch("err_beam", &err_beam, "err_beam/D");
+  tr->Branch("f_ap", &f_ap, "f_ap/D");
+  tr->Branch("err_fap", &err_fap, "err_fap/D");
+  tr->Branch("chi2", &chi2, "chi2/D");
+  tr->Branch("dof", &dof, "dof/D");
+  for (size_t i = 0; i < rows.size(); i++) {
+    reac_i = rows[i].reac;
+    n_data = rows[i].n_data;
+    n_ap = rows[i].n_ap;
+    n_an = rows[i].n_an;
+    n_aa = rows[i].n_aa;
+    n_mig = rows[i].n_mig;
+    n_beam = rows[i].n_beam;
+    err_ap = rows[i].err_ap;
+    err_an = rows[i].err_an;
+    err_aa = rows[i].err_aa;
+    err_mig = rows[i].err_mig;
+    err_beam = rows[i].err_beam;
+    f_ap = rows[i].f_ap;
+    err_fap = rows[i].err_fap;
+    chi2 = rows[i].chi2;
+    dof = rows[i].dof;
+    tr->Fill();
+  }
+  tr->Write();
+  delete tr;
+  delete rf;
+
+  std::cout << "strip-sum-scatter: template fit written to " << dir
+            << "/template_fit_report.txt and template_fit.root" << std::endl;
+}
+
 /// Per reaction strip, overlay TRACES_PER_CLASS sampled per-strip traces of
 /// every sim population the control directory holds, in the experimental
 /// DrawRegionTraces style (beam grey, (a,a') azure, (a,n) red, (a,p) green,
@@ -2099,7 +3581,8 @@ void StripSumScatter::SimOverlay() {
     for (Int_t i = 0; i < Int_t(it->second.size()); i++) {
       TGraph *g = it->second[i];
       // Match the experimental region-trace colours (DrawRegionTraces): beam
-      // grey, (a,a') azure, (a,n) red -- keyed off the population label.
+      // grey, (a,a') azure, (a,n) red, (a,p) green -- keyed off the
+      // population label, same values as SimClassColor.
       TString lab = g->GetTitle();
       Int_t color = kBlack;
       if (lab == "Beam")
@@ -2108,6 +3591,8 @@ void StripSumScatter::SimOverlay() {
         color = kAzure + 2;
       else if (lab == "(#alpha,n)")
         color = kRed + 1;
+      else if (lab == "(#alpha,p)")
+        color = kGreen + 2;
       g->SetMarkerStyle(20);
       g->SetMarkerSize(0.3);
       g->SetMarkerColorAlpha(color, 0.35);
@@ -3332,6 +4817,7 @@ Bool_t StripSumScatter::Prepare() {
         delete chain_by_run[run_order[i]];
       return kFALSE;
     }
+    m_simStudyGate = first.gate;
   }
   SetStripNoise(strip_mean, strip_sigma);
   {
@@ -3384,6 +4870,14 @@ void StripSumScatter::Run() {
     SimTraceOverlay();
     SimTagReport();
   }
+
+  // Optional (a,p) plane study, scored on the simulated populations.
+  if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.PLANE_STUDY)
+    PlaneStudy();
+
+  // Optional template fit of the tagged data against the sim components.
+  if (Constants::cfg.STRIP_SUM_SCATTER_CONFIG.TEMPLATE_FIT)
+    TemplateFit();
 
   // Interactive region-trace overlay (requires DISPLAY).
   Int_t reac = Constants::cfg.STRIP_SUM_SCATTER_CONFIG.CANDIDATE_REAC_STRIP;
