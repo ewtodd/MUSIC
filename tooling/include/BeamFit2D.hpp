@@ -46,6 +46,8 @@ public:
    *        correlation-aware Mahalanobis chi2 below n^2, one level, since a
    *        density contour has one. A Gaussian keeps 1 - exp(-n^2/2) inside.
    * @param b Fitted spot; `ok` must be true.
+   * @param x Point x coordinate.
+   * @param y Point y coordinate.
    * @param n Level, in sigma.
    */
   static Bool_t InEllipseXY(const BeamFit2D &b, Double_t x, Double_t y,
@@ -156,8 +158,18 @@ public:
   /**
    * @brief The 1-D counterpart: a Gaussian on a flat pedestal, fitted over
    *        @p window_nsigma of the seed and judged over the whole of @p h.
-   * @param fix_mu Hold the centre at @p seed_mu, for a distribution with more
-   *               than one peak.
+   * @param h             Histogram to fit, and to judge chi2 over; must not be
+   *                      null, and a couple of bins per seed sigma would do.
+   * @param seed_mu       Seed centre; sets the fitted window and `mu`'s limits.
+   * @param seed_sigma    Seed width; positive, and sets the fitted window and
+   *                      `sigma`'s limits at 0.2 to 5 times the seed.
+   * @param window_nsigma Half-width fitted, in the seed's sigma.
+   * @param fix_mu        Hold the centre at @p seed_mu, for a distribution
+   *                      with more than one peak.
+   * @param mu            Fitted centre, untouched when the fit is rejected.
+   * @param sigma         Fitted width, untouched when the fit is rejected.
+   * @param chi2_ndf      Reduced chi2 over the whole of @p h, so what the
+   *                      window excluded is what it notices; -1 if no fit ran.
    * @return `kFALSE` when the fit failed or ran away; @p mu and @p sigma are
    *         then untouched.
    */

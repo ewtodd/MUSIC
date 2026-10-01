@@ -643,6 +643,18 @@ private:
   static TString PrettyLabel(const TString &tag);
 
 public:
+  /// @brief The one strip an event is tagged at, among those whose tag
+  ///        passed (`pass[ReacIndex]`), per TAG_RESOLVE; -1 when none.
+  /// @param ev   Decoded event.
+  /// @param pass Per-strip pass flags, indexed from REACTION_STRIP_MIN.
+  static Int_t ResolveTag(const EnergyView &ev,
+                          const std::vector<Bool_t> &pass);
+  /// @brief One tag condition on its own: whether `c` passes for `reac`
+  ///        under `T`, true where it does not apply at that strip.
+  static Bool_t Condition(TagCut c, const EnergyView &ev, Int_t reac,
+                          const TagThresholds &T);
+  /// @brief Whether the configuration has condition `c` in force.
+  static Bool_t ConditionActive(TagCut c, const TagThresholds &T);
   /**
    * @brief Which condition of the tag an event fails first at a strip.
    *
@@ -654,16 +666,6 @@ public:
    * @param reac  Reaction strip index.
    * @return `kTagPass` if tagged, else the first failing TagCut.
    */
-  /// @brief The one strip an event is tagged at, among those whose tag
-  ///        passed (`pass[ReacIndex]`), per TAG_RESOLVE; -1 when none.
-  static Int_t ResolveTag(const EnergyView &ev,
-                          const std::vector<Bool_t> &pass);
-  /// @brief One tag condition on its own: whether `c` passes for `reac`
-  ///        under `T`, true where it does not apply at that strip.
-  static Bool_t Condition(TagCut c, const EnergyView &ev, Int_t reac,
-                          const TagThresholds &T);
-  /// @brief Whether the configuration has condition `c` in force.
-  static Bool_t ConditionActive(TagCut c, const TagThresholds &T);
   static TagCut RejectReason(const EnergyView &ev, Int_t reac);
   /// @brief RejectReason under an explicit threshold set.
   static TagCut RejectReason(const EnergyView &ev, Int_t reac,
