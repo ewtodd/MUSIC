@@ -259,7 +259,7 @@ RunEpoch MakeEpoch(const TString &name, const std::vector<Int_t> &runs) {
   RunEpoch ep;
   ep.name = name;
   ep.runs = runs;
-  ep.source = cfg.USE_SOLARIS_DATA ? kSolaris : kCoMPASS;
+  ep.source = cfg.USE_SOLARIS_DATA ? kSOLARIS : kCOMPASS;
   ep.n_boards = cfg.N_BOARDS;
   ep.n_channels = cfg.N_CHANNELS;
   ep.channel_map =
@@ -373,7 +373,7 @@ Bool_t ActiveHasCathode() {
   return gActiveEpoch ? gActiveEpoch->has_cathode : cfg.HAS_CATHODE;
 }
 Bool_t ActiveUseSolarisData() {
-  return gActiveEpoch ? (gActiveEpoch->source == kSolaris)
+  return gActiveEpoch ? (gActiveEpoch->source == kSOLARIS)
                       : cfg.USE_SOLARIS_DATA;
 }
 Double_t ActiveEventTimeWindowUs() {
@@ -479,7 +479,7 @@ void ActivateAnalysisEpoch() {
     return;
   SetActiveEpoch(ep);
   std::cout << "epoch " << ep->name << " ("
-            << (ep->source == kSolaris ? "SOLARIS" : "CoMPASS") << ", "
+            << (ep->source == kSOLARIS ? "SOLARIS" : "CoMPASS") << ", "
             << ep->runs.size() << " run(s)"
             << (ep->file_tag.Length() ? ", files tagged " + ep->file_tag : "")
             << ")" << std::endl;

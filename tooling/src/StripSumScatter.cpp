@@ -6,11 +6,11 @@
 #include <fstream>
 #include <sstream>
 
-const char *const kTagCutName[kNTagCuts] = {
+const char *const kTagCutName[kNTAGCUTS] = {
     "tagged",    "upstream beam", "jump",       "reac level",
     "tail rise", "re-rise",       "post above", "beam crossing",
     "end strip", "cliff",         "other strip"};
-const char *const kPreCutName[kNPreCuts] = {
+const char *const kPreCutName[kNPRECUTS] = {
     "reached tag", "all strips", "beam gate", "pileup",
     "noise",       "smoothness", "both mult"};
 
@@ -62,8 +62,8 @@ StripSumScatter::StripSumScatter() {
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MAX -
           Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN + 1,
       0);
-  m_preCounts.assign(kNPreCuts, 0);
-  m_cutCounts.assign(m_tagged.size() * kNTagCuts, 0);
+  m_preCounts.assign(kNPRECUTS, 0);
+  m_cutCounts.assign(m_tagged.size() * kNTAGCUTS, 0);
 }
 
 StripSumScatter::~StripSumScatter() {
@@ -217,21 +217,21 @@ Bool_t StripSumScatter::BeamUpstreamOf(const EnergyView &ev, Int_t reac) {
 
 Bool_t StripSumScatter::ConditionActive(TagCut c, const TagThresholds &T) {
   switch (c) {
-  case kCutUpstream:
+  case kCUT_UPSTREAM:
     return T.require_upstream;
-  case kCutJump:
-  case kCutReacLevel:
-  case kCutEndStrip:
+  case kCUT_JUMP:
+  case kCUT_REAC_LEVEL:
+  case kCUT_END_STRIP:
     return kTRUE;
-  case kCutTailRise:
+  case kCUT_TAIL_RISE:
     return T.tail_rise_nsigma > 0.0 && T.tail_fall_from_strip > 0;
-  case kCutRerise:
+  case kCUT_RERISE:
     return T.tail_rerise_nsigma > 0.0;
-  case kCutPostAbove:
+  case kCUT_POST_ABOVE:
     return T.post_above_nsigma > 0.0 && T.post_above_strips > 0;
-  case kCutCross:
+  case kCUT_CROSS:
     return T.cross_min_strip > 0.0;
-  case kCutCliff:
+  case kCUT_CLIFF:
     return T.cliff_max > 0.0;
   default:
     return kFALSE;
@@ -253,16 +253,16 @@ Bool_t StripSumScatter::Condition(TagCut c, const EnergyView &ev, Int_t reac,
           ? 16
           : 17;
   switch (c) {
-  case kCutUpstream:
+  case kCUT_UPSTREAM:
     // Otherwise a reaction at an earlier strip can pass this strip's jump
     // gate on a noise fluctuation and be counted here as well.
     return BeamUpstreamOf(ev, reac, T);
-  case kCutJump:
+  case kCUT_JUMP:
     return ev.Total(reac) - ev.Total(reac - 1) >
            T.jump_nsigma * StripSigma(reac);
-  case kCutReacLevel:
+  case kCUT_REAC_LEVEL:
     return ev.Total(reac) > StripMean(reac) + T.jump_nsigma * StripSigma(reac);
-  case kCutTailRise: {
+  case kCUT_TAIL_RISE: {
     // Falling tail: no rise beyond the noise from the start strip on.
     const Int_t start = TMath::Max(reac + 1, T.tail_fall_from_strip + 1);
     for (Int_t s = start; s <= kLast; s++)
@@ -271,7 +271,7 @@ Bool_t StripSumScatter::Condition(TagCut c, const EnergyView &ev, Int_t reac,
         return kFALSE;
     return kTRUE;
   }
-  case kCutRerise: {
+  case kCUT_RERISE: {
     // No return: back at the beam after the peak, then above it again.
     Int_t peak = reac;
     for (Int_t s = reac + 1; s <= TMath::Min(YHiOf(reac), kLast); s++)
@@ -289,7 +289,7 @@ Bool_t StripSumScatter::Condition(TagCut c, const EnergyView &ev, Int_t reac,
     }
     return kTRUE;
   }
-  case kCutPostAbove:
+  case kCUT_POST_ABOVE:
     // Persistence: the excess must hold for post_above_strips strips
     // after the reaction, each more than post_above_nsigma of its spread.
     for (Int_t s = reac + 1; s <= TMath::Min(reac + T.post_above_strips, kLast);
@@ -298,7 +298,7 @@ Bool_t StripSumScatter::Condition(TagCut c, const EnergyView &ev, Int_t reac,
           !(ev.Total(s) > StripMean(s) + T.post_above_nsigma * StripSigma(s)))
         return kFALSE;
     return kTRUE;
-  case kCutCross: {
+  case kCUT_CROSS: {
     // The residue's range: the trace may not read below the beam before
     // strip cross_min_strip (an absolute strip); the window is reac+1..S.
     const Int_t upto = TMath::Min(Int_t(T.cross_min_strip + 0.5), kLast);
@@ -307,12 +307,12 @@ Bool_t StripSumScatter::Condition(TagCut c, const EnergyView &ev, Int_t reac,
         return kFALSE;
     return kTRUE;
   }
-  case kCutEndStrip:
+  case kCUT_END_STRIP:
     // The end strip below the beam by n sigma of its own spread: a residue
     // that has stopped (or is stopping) reads low there, the beam does not.
     return ev.Total(end_strip) <
            StripMean(end_strip) - T.end_strip_nsigma * StripSigma(end_strip);
-  case kCutCliff: {
+  case kCUT_CLIFF: {
     // A stop is gradual: the last step may take only part of the fall from
     // the peak; the elastic class keeps its excess to end_strip-1.
     if (!(end_strip - 1 > reac))
@@ -331,20 +331,20 @@ Bool_t StripSumScatter::Condition(TagCut c, const EnergyView &ev, Int_t reac,
 
 TagCut StripSumScatter::TailReason(const EnergyView &ev, Int_t reac,
                                    const TagThresholds &T) {
-  for (Int_t c = kCutTailRise; c <= kCutPostAbove; c++)
+  for (Int_t c = kCUT_TAIL_RISE; c <= kCUT_POST_ABOVE; c++)
     if (ConditionActive(TagCut(c), T) && !Condition(TagCut(c), ev, reac, T))
       return TagCut(c);
-  return kTagPass;
+  return kTAG_PASS;
 }
 
 // Sequential: the first active condition that fails, in enum order, so the
 // cut report reads as a funnel.
 TagCut StripSumScatter::RejectReason(const EnergyView &ev, Int_t reac,
                                      const TagThresholds &T) {
-  for (Int_t c = kCutUpstream; c <= kCutCliff; c++)
+  for (Int_t c = kCUT_UPSTREAM; c <= kCUT_CLIFF; c++)
     if (ConditionActive(TagCut(c), T) && !Condition(TagCut(c), ev, reac, T))
       return TagCut(c);
-  return kTagPass;
+  return kTAG_PASS;
 }
 
 TagCut StripSumScatter::RejectReason(const EnergyView &ev, Int_t reac) {
@@ -417,14 +417,14 @@ std::vector<SelectionStep> StripSumScatter::DescribeSelection() {
   const TString entrance = AxisName(ent_x) + " vs " + AxisName(ent_y);
   // Input: what the numbers below are measured against.
   AddSelectionStep(
-      out, SelectionStep::kInput, "events", "calibrated events",
+      out, SelectionStep::kINPUT, "events", "calibrated events",
       Form("E(s) = strip total in beam units (beam = 1)%s; beam gates fitted "
            "per %s",
            Constants::ActiveIgnoreShortStrips() ? ", long ends only" : "",
            Constants::ActiveUseSolarisData() ? "run" : "subfile"),
       kTRUE, -1, -1);
   AddSelectionStep(
-      out, SelectionStep::kInput, "beam_ref", "beam reference",
+      out, SelectionStep::kINPUT, "beam_ref", "beam reference",
       Form("beam mean and σ per strip from the first %s's pure-beam sample: "
            "every strip fired, inside the entrance (%s) and exit (%s) "
            "ellipses at %.1f σ, 3σ-clipped",
@@ -435,106 +435,110 @@ std::vector<SelectionStep> StripSumScatter::DescribeSelection() {
 
   // Event level, in the order of the fill loop.
   AddSelectionStep(
-      out, SelectionStep::kEventLevel, "all_strips", kPreCutName[kPreAllStrips],
+      out, SelectionStep::kEVENT_LEVEL, "all_strips",
+      kPreCutName[kPRE_ALL_STRIPS],
       Form("every strip %d-%d read above zero", req0 ? 0 : 1, last), kTRUE,
-      kPreAllStrips, -1);
+      kPRE_ALL_STRIPS, -1);
   const TString gates =
       C.GATE_NSIGMA > 0.0
           ? TString(Form("strip %d within %.1f σ of its fitted beam peak",
                          C.GATE_STRIP, C.GATE_NSIGMA))
           : TString("no beam gate");
-  AddSelectionStep(out, SelectionStep::kEventLevel, "gate",
-                   kPreCutName[kPreGate], gates, kTRUE, kPreGate, -1);
+  AddSelectionStep(out, SelectionStep::kEVENT_LEVEL, "gate",
+                   kPreCutName[kPRE_GATE], gates, kTRUE, kPRE_GATE, -1);
   AddSelectionStep(
-      out, SelectionStep::kEventLevel, "pileup", kPreCutName[kPrePileup],
+      out, SelectionStep::kEVENT_LEVEL, "pileup", kPreCutName[kPRE_PILEUP],
       Form("%s of strips 1-16 at or above beam + %.1f σ",
            FewerStrips(C.PILEUP_MIN_STRIPS).Data(), C.PILEUP_NSIGMA),
-      C.PILEUP_NSIGMA > 0.0, kPrePileup, -1);
-  AddSelectionStep(out, SelectionStep::kEventLevel, "noise",
-                   kPreCutName[kPreNoise],
+      C.PILEUP_NSIGMA > 0.0, kPRE_PILEUP, -1);
+  AddSelectionStep(out, SelectionStep::kEVENT_LEVEL, "noise",
+                   kPreCutName[kPRE_NOISE],
                    Form("%s of strips 1-16 at or below beam − %.1f σ",
                         FewerStrips(C.NOISE_MIN_STRIPS).Data(), C.NOISE_NSIGMA),
-                   C.NOISE_NSIGMA > 0.0, kPreNoise, -1);
+                   C.NOISE_NSIGMA > 0.0, kPRE_NOISE, -1);
   AddSelectionStep(
-      out, SelectionStep::kEventLevel, "smooth", kPreCutName[kPreSmooth],
+      out, SelectionStep::kEVENT_LEVEL, "smooth", kPreCutName[kPRE_SMOOTH],
       Form("every step between strips 1-%d within %.1f σ of the later "
            "strip's spread, the single largest rise excepted",
            last, C.SMOOTHNESS_NSIGMA),
-      C.SMOOTHNESS_NSIGMA > 0.0, kPreSmooth, -1);
+      C.SMOOTHNESS_NSIGMA > 0.0, kPRE_SMOOTH, -1);
   AddSelectionStep(
-      out, SelectionStep::kEventLevel, "both_mult", kPreCutName[kPreBothMult],
+      out, SelectionStep::kEVENT_LEVEL, "both_mult",
+      kPreCutName[kPRE_BOTH_MULT],
       Form("at most %d of strips 1-%d with both ends fired (raw ADC)",
            C.BOTH_MULT_MAX, TMath::Min(16, C.BOTH_MULT_COUNT_TO)),
-      C.BOTH_MULT_MAX >= 0, kPreBothMult, -1);
+      C.BOTH_MULT_MAX >= 0, kPRE_BOTH_MULT, -1);
 
   // Per reaction strip, in the order of RejectReason. The loop marker first:
   // it carries the strip range and is not a cut.
   AddSelectionStep(
-      out, SelectionStep::kPerStrip, "reac_loop",
+      out, SelectionStep::kPER_STRIP, "reac_loop",
       Form("for each reaction strip reac = %d..%d", C.REACTION_STRIP_MIN,
            C.REACTION_STRIP_MAX),
       "every strip is tested on its own; the first failing condition ends "
       "its test",
       kTRUE, -1, -1);
-  AddSelectionStep(out, SelectionStep::kPerStrip, "upstream",
-                   kTagCutName[kCutUpstream],
+  AddSelectionStep(out, SelectionStep::kPER_STRIP, "upstream",
+                   kTagCutName[kCUT_UPSTREAM],
                    Form("every strip 1..reac−1 within %.1f σ of the beam",
                         C.BEAM_UPSTREAM_NSIGMA),
-                   C.REQUIRE_BEAM_UPSTREAM_OF_REAC, -1, kCutUpstream);
+                   C.REQUIRE_BEAM_UPSTREAM_OF_REAC, -1, kCUT_UPSTREAM);
   AddSelectionStep(
-      out, SelectionStep::kPerStrip, "jump", kTagCutName[kCutJump],
+      out, SelectionStep::kPER_STRIP, "jump", kTagCutName[kCUT_JUMP],
       Form("E(reac) − E(reac−1) > %.1f σ(reac)", C.REAC_JUMP_NSIGMA), kTRUE, -1,
-      kCutJump);
-  AddSelectionStep(out, SelectionStep::kPerStrip, "reac_level",
-                   kTagCutName[kCutReacLevel],
+      kCUT_JUMP);
+  AddSelectionStep(out, SelectionStep::kPER_STRIP, "reac_level",
+                   kTagCutName[kCUT_REAC_LEVEL],
                    Form("E(reac) > beam + %.1f σ(reac)", C.REAC_JUMP_NSIGMA),
-                   kTRUE, -1, kCutReacLevel);
+                   kTRUE, -1, kCUT_REAC_LEVEL);
   AddSelectionStep(
-      out, SelectionStep::kPerStrip, "tail_rise", kTagCutName[kCutTailRise],
+      out, SelectionStep::kPER_STRIP, "tail_rise", kTagCutName[kCUT_TAIL_RISE],
       Form("no step up above %.1f σ from strip max(reac, %d)+1 to %d",
            C.TAIL_RISE_NSIGMA, C.TAIL_FALL_FROM_STRIP, last),
-      C.TAIL_FALL_FROM_STRIP > 0 && C.TAIL_RISE_NSIGMA > 0.0, -1, kCutTailRise);
+      C.TAIL_FALL_FROM_STRIP > 0 && C.TAIL_RISE_NSIGMA > 0.0, -1,
+      kCUT_TAIL_RISE);
   AddSelectionStep(
-      out, SelectionStep::kPerStrip, "rerise", kTagCutName[kCutRerise],
+      out, SelectionStep::kPER_STRIP, "rerise", kTagCutName[kCUT_RERISE],
       Form("once back within %.1f σ of the beam after the peak, never above "
            "beam + %.1f σ again",
            C.TAIL_RETURN_NSIGMA, C.TAIL_RERISE_NSIGMA),
-      C.TAIL_RERISE_NSIGMA > 0.0, -1, kCutRerise);
+      C.TAIL_RERISE_NSIGMA > 0.0, -1, kCUT_RERISE);
+  AddSelectionStep(out, SelectionStep::kPER_STRIP, "post_above",
+                   kTagCutName[kCUT_POST_ABOVE],
+                   Form("strips reac+1 to reac+%d all above beam + %.1f σ",
+                        C.POST_ABOVE_STRIPS, C.POST_ABOVE_NSIGMA),
+                   C.POST_ABOVE_NSIGMA > 0.0 && C.POST_ABOVE_STRIPS > 0, -1,
+                   kCUT_POST_ABOVE);
   AddSelectionStep(
-      out, SelectionStep::kPerStrip, "post_above", kTagCutName[kCutPostAbove],
-      Form("strips reac+1 to reac+%d all above beam + %.1f σ",
-           C.POST_ABOVE_STRIPS, C.POST_ABOVE_NSIGMA),
-      C.POST_ABOVE_NSIGMA > 0.0 && C.POST_ABOVE_STRIPS > 0, -1, kCutPostAbove);
-  AddSelectionStep(
-      out, SelectionStep::kPerStrip, "cross", kTagCutName[kCutCross],
+      out, SelectionStep::kPER_STRIP, "cross", kTagCutName[kCUT_CROSS],
       Form("strips reac+1 through %d all at or above the beam mean: the "
            "residue reaches strip %d before crossing the beam",
            C.POST_CROSS_MIN_STRIP, C.POST_CROSS_MIN_STRIP),
-      C.POST_CROSS_MIN_STRIP > 0, -1, kCutCross);
+      C.POST_CROSS_MIN_STRIP > 0, -1, kCUT_CROSS);
   AddSelectionStep(
-      out, SelectionStep::kPerStrip, "last_strip", kTagCutName[kCutEndStrip],
+      out, SelectionStep::kPER_STRIP, "last_strip", kTagCutName[kCUT_END_STRIP],
       Form("strip %d below beam − %.1f σ", end_strip, C.END_STRIP_NSIGMA),
-      kTRUE, -1, kCutEndStrip);
+      kTRUE, -1, kCUT_END_STRIP);
   AddSelectionStep(
-      out, SelectionStep::kPerStrip, "cliff", kTagCutName[kCutCliff],
+      out, SelectionStep::kPER_STRIP, "cliff", kTagCutName[kCUT_CLIFF],
       Form("the last step, strip %d to %d, at most %.0f%% of the fall from "
            "the peak",
            end_strip - 1, end_strip, 100.0 * C.TAIL_CLIFF_MAX_FRACTION),
-      C.TAIL_CLIFF_MAX_FRACTION > 0.0, -1, kCutCliff);
+      C.TAIL_CLIFF_MAX_FRACTION > 0.0, -1, kCUT_CLIFF);
   AddSelectionStep(
-      out, SelectionStep::kPerStrip, "one_tag", kTagCutName[kCutOtherTag],
+      out, SelectionStep::kPER_STRIP, "one_tag", kTagCutName[kCUT_OTHER_TAG],
       C.TAG_RESOLVE == StripSumScatterConfig::TAG_RESOLVE_FIRST_STRIP
           ? "one tag per event: the first strip that passes takes it"
           : "one tag per event: the passing strip with the largest jump takes "
             "it",
-      kTRUE, -1, kCutOtherTag);
+      kTRUE, -1, kCUT_OTHER_TAG);
 
   // What becomes of a tag.
-  AddSelectionStep(out, SelectionStep::kOutcome, "tagged", "tagged",
+  AddSelectionStep(out, SelectionStep::kOUTCOME, "tagged", "tagged",
                    "a reaction at reac; one strip per event", kTRUE, -1,
-                   kTagPass);
+                   kTAG_PASS);
   AddSelectionStep(
-      out, SelectionStep::kOutcome, "n_beam", "beam count",
+      out, SelectionStep::kOUTCOME, "n_beam", "beam count",
       "events past the event-level cuts with beam upstream of reac and no "
       "tag before it: the beam incident on reac, the denominator",
       kTRUE, -1, -1);
@@ -547,12 +551,12 @@ std::vector<SelectionStep> StripSumScatter::DescribeSelection() {
                  "gas pressure uncertainty",
                  C.CUT_VARIATION_NSIGMA_STEP, C.CUT_VARIATION_CLIFF_STEP);
     AddSelectionStep(
-        out, SelectionStep::kOutcome, "xs", "cross section, all tagged",
+        out, SelectionStep::kOUTCOME, "xs", "cross section, all tagged",
         "σ(reac) = tagged / (beam count × target atoms per strip); " + sys,
         kTRUE, -1, -1);
   } else {
     AddSelectionStep(
-        out, SelectionStep::kOutcome, "xs", "cross section, mixture fit",
+        out, SelectionStep::kOUTCOME, "xs", "cross section, mixture fit",
         Form("scatter x = ΣE(%d..%d), y = ΣE(reac+1..reac+%d)%s; bivariate "
              "Gaussian mixture per strip, (a,n) = reaction component within "
              "%.1f σ, count as attributed by the fit",
@@ -1712,8 +1716,8 @@ void StripSumScatter::SimTagReport() {
       continue;
     }
     const Long64_t n = t->GetEntries();
-    std::vector<Long64_t> pre(kNPreCuts, 0);
-    std::vector<Long64_t> own(kNTagCuts, 0);
+    std::vector<Long64_t> pre(kNPRECUTS, 0);
+    std::vector<Long64_t> own(kNTAGCUTS, 0);
     Long64_t tag_own = 0, tag_earlier = 0, tag_later = 0, tag_none = 0;
     std::vector<Long64_t> tag_at(nReac, 0);
     EnergyView ev;
@@ -1737,32 +1741,32 @@ void StripSumScatter::SimTagReport() {
       ev.strip17 = gain[17] * e.strip17;
       // Event level, sequential as in the fill.
       if (!AllStripsFired(ev)) {
-        pre[kPreAllStrips]++;
+        pre[kPRE_ALL_STRIPS]++;
         continue;
       }
       if (IsPileup(ev)) {
-        pre[kPrePileup]++;
+        pre[kPRE_PILEUP]++;
         continue;
       }
       if (IsNoise(ev)) {
-        pre[kPreNoise]++;
+        pre[kPRE_NOISE]++;
         continue;
       }
       if (!IsSmooth(ev, C.SMOOTHNESS_NSIGMA)) {
-        pre[kPreSmooth]++;
+        pre[kPRE_SMOOTH]++;
         continue;
       }
       if (C.BOTH_MULT_MAX >= 0) {
         if (CountBothEnds(ev, TMath::Min(16, C.BOTH_MULT_COUNT_TO)) >
             C.BOTH_MULT_MAX) {
-          pre[kPreBothMult]++;
+          pre[kPRE_BOTH_MULT]++;
           continue;
         }
       }
-      pre[kPrePass]++;
+      pre[kPRE_PASS]++;
       for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
         const TagCut why = RejectReason(ev, reac);
-        pass[ReacIndex(reac)] = why == kTagPass;
+        pass[ReacIndex(reac)] = why == kTAG_PASS;
         if (reac == c.strip)
           own[why]++;
       }
@@ -1787,22 +1791,22 @@ void StripSumScatter::SimTagReport() {
                 gSystem->BaseName(c.file))
         << std::endl;
     TString line = "  event level:";
-    for (Int_t p = 1; p < kNPreCuts; p++)
-      if (p != kPreGate)
+    for (Int_t p = 1; p < kNPRECUTS; p++)
+      if (p != kPRE_GATE)
         line += Form(" %s %lld,", kPreCutName[p], pre[p]);
-    line += Form(" reached the tag %lld (%.1f%%)", pre[kPrePass],
-                 n > 0 ? 100.0 * pre[kPrePass] / n : 0.0);
+    line += Form(" reached the tag %lld (%.1f%%)", pre[kPRE_PASS],
+                 n > 0 ? 100.0 * pre[kPRE_PASS] / n : 0.0);
     out << line << std::endl;
     if (c.strip >= 0) {
       line = Form("  own strip %d:", c.strip);
-      for (Int_t w = 1; w < kNTagCuts; w++)
-        if (w != kCutOtherTag)
+      for (Int_t w = 1; w < kNTAGCUTS; w++)
+        if (w != kCUT_OTHER_TAG)
           line += Form(" %s %lld,", kTagCutName[w], own[w]);
-      line +=
-          Form(" tagged %lld (%.1f%% of events, %.1f%% of those reaching "
-               "the tag)",
-               own[kTagPass], n > 0 ? 100.0 * own[kTagPass] / n : 0.0,
-               pre[kPrePass] > 0 ? 100.0 * own[kTagPass] / pre[kPrePass] : 0.0);
+      line += Form(" tagged %lld (%.1f%% of events, %.1f%% of those reaching "
+                   "the tag)",
+                   own[kTAG_PASS], n > 0 ? 100.0 * own[kTAG_PASS] / n : 0.0,
+                   pre[kPRE_PASS] > 0 ? 100.0 * own[kTAG_PASS] / pre[kPRE_PASS]
+                                      : 0.0);
       out << line << std::endl;
       out << Form("  one tag: own %lld, earlier strip %lld, later strip %lld, "
                   "none %lld",
@@ -2496,13 +2500,13 @@ StripSumScatter::JudgeEventLevel(const BeamGate1D &gate, const EnergyView &ev,
   v.event = v.gate && !v.pileup && !v.noise;
   // Sequential rejection: the first cut that fails counts.
   if (!v.gate)
-    v.pre_cut = kPreGate;
+    v.pre_cut = kPRE_GATE;
   else if (v.pileup)
-    v.pre_cut = kPrePileup;
+    v.pre_cut = kPRE_PILEUP;
   else if (v.noise)
-    v.pre_cut = kPreNoise;
+    v.pre_cut = kPRE_NOISE;
   else if (!v.smooth_ok)
-    v.pre_cut = kPreSmooth;
+    v.pre_cut = kPRE_SMOOTH;
   return v;
 }
 
@@ -2537,7 +2541,7 @@ void StripSumScatter::TagUnderVariants(
     if (!var_event[v] || (T.smooth_nsigma > 0.0 && step_z > T.smooth_nsigma))
       continue;
     for (Int_t reac = kReacMin; reac <= kReacMax; reac++)
-      pass[ReacIndex(reac)] = RejectReason(ev, reac, T) == kTagPass;
+      pass[ReacIndex(reac)] = RejectReason(ev, reac, T) == kTAG_PASS;
     const Int_t won = ResolveTag(ev, pass);
     if (won >= 0)
       res.tagged_var[v][ReacIndex(won)]++;
@@ -2552,17 +2556,17 @@ Int_t StripSumScatter::TagNominal(const EnergyView &ev,
                                   Int_t kReacMax, Int_t nReacStrips,
                                   std::vector<Bool_t> &pass,
                                   SingleRunFillResult &res, UInt_t &mask) {
-  std::vector<TagCut> why(nReacStrips, kTagPass);
+  std::vector<TagCut> why(nReacStrips, kTAG_PASS);
   for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
     why[ReacIndex(reac)] = RejectReason(ev, reac);
-    pass[ReacIndex(reac)] = why[ReacIndex(reac)] == kTagPass;
+    pass[ReacIndex(reac)] = why[ReacIndex(reac)] == kTAG_PASS;
   }
   const Int_t won = ResolveTag(ev, pass);
   for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
     TagCut w = why[ReacIndex(reac)];
-    if (w == kTagPass && reac != won)
-      w = kCutOtherTag;
-    res.cut_counts[ReacIndex(reac) * kNTagCuts + w]++;
+    if (w == kTAG_PASS && reac != won)
+      w = kCUT_OTHER_TAG;
+    res.cut_counts[ReacIndex(reac) * kNTAGCUTS + w]++;
   }
   if (won >= 0) {
     mask |= (1u << ReacIndex(won));
@@ -2620,8 +2624,8 @@ StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
   Long64_t totalGated = 0, totalSeen = 0, totalNormed = 0;
   res.tagged.assign(nReacStrips, 0);
   res.normed_at.assign(nReacStrips, 0);
-  res.cut_counts.assign(nReacStrips * kNTagCuts, 0);
-  res.pre_counts.assign(kNPreCuts, 0);
+  res.cut_counts.assign(nReacStrips * kNTAGCUTS, 0);
+  res.pre_counts.assign(kNPRECUTS, 0);
   // The cut-variation set, fixed for the run: each event past the event-level
   // cuts is tagged once per variant as well.
   const std::vector<std::pair<TString, TagThresholds>> variants =
@@ -2654,7 +2658,7 @@ StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
     // An event with a strip that did not fire is incomplete whatever strip
     // is asked about, so it goes before anything per strip.
     if (!AllStripsFired(ev)) {
-      res.pre_counts[kPreAllStrips]++;
+      res.pre_counts[kPRE_ALL_STRIPS]++;
       continue;
     }
     // The beam selection, decided at the nominal level for the count and
@@ -2678,7 +2682,7 @@ StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
         // Sequential: counted here only if the rest let it through. Not
         // varied: it drops the event for every variant too.
         if (nom.event && nom.smooth_ok)
-          res.pre_counts[kPreBothMult]++;
+          res.pre_counts[kPRE_BOTH_MULT]++;
         continue;
       }
     }
@@ -2694,7 +2698,7 @@ StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
     TagUnderVariants(ev, step_z, kReacMin, kReacMax, variants, var_event, pass,
                      res);
     if (nom.event && nom.smooth_ok) {
-      res.pre_counts[kPrePass]++;
+      res.pre_counts[kPRE_PASS]++;
       // The last pre-reaction count: here, not at `seen`, is what makes the
       // tag-count ratio a cross section: same gate + quality efficiencies.
       totalNormed++;
@@ -2989,10 +2993,10 @@ void StripSumScatter::WriteCutReport() const {
   const Int_t kReacMin = C.REACTION_STRIP_MIN;
   const Int_t kReacMax = C.REACTION_STRIP_MAX;
   // Which conditions are on, from the same list the diagram draws.
-  Bool_t active[kNTagCuts], pre_active[kNPreCuts];
-  for (Int_t c = 0; c < kNTagCuts; c++)
+  Bool_t active[kNTAGCUTS], pre_active[kNPRECUTS];
+  for (Int_t c = 0; c < kNTAGCUTS; c++)
     active[c] = kTRUE;
-  for (Int_t c = 0; c < kNPreCuts; c++)
+  for (Int_t c = 0; c < kNPRECUTS; c++)
     pre_active[c] = kTRUE;
   const std::vector<SelectionStep> steps = DescribeSelection();
   for (size_t i = 0; i < steps.size(); i++) {
@@ -3011,7 +3015,7 @@ void StripSumScatter::WriteCutReport() const {
       << std::endl;
   out << std::endl;
   out << "Event-level cuts (before any reaction is asked about):" << std::endl;
-  for (Int_t c = 1; c < kNPreCuts; c++) {
+  for (Int_t c = 1; c < kNPRECUTS; c++) {
     if (!pre_active[c])
       out << Form("  %-14s off", kPreCutName[c]) << std::endl;
     else
@@ -3020,9 +3024,9 @@ void StripSumScatter::WriteCutReport() const {
                   m_nSeen > 0 ? 100.0 * m_preCounts[c] / m_nSeen : 0.0)
           << std::endl;
   }
-  out << Form("  %-14s %12lld  (%6.2f%% of seen)", kPreCutName[kPrePass],
-              m_preCounts[kPrePass],
-              m_nSeen > 0 ? 100.0 * m_preCounts[kPrePass] / m_nSeen : 0.0)
+  out << Form("  %-14s %12lld  (%6.2f%% of seen)", kPreCutName[kPRE_PASS],
+              m_preCounts[kPRE_PASS],
+              m_nSeen > 0 ? 100.0 * m_preCounts[kPRE_PASS] / m_nSeen : 0.0)
       << std::endl;
   out << std::endl;
 
@@ -3030,16 +3034,16 @@ void StripSumScatter::WriteCutReport() const {
          "cuts; % of those):"
       << std::endl;
   out << "reac";
-  for (Int_t c = 1; c < kNTagCuts; c++)
+  for (Int_t c = 1; c < kNTAGCUTS; c++)
     out << Form(" | %13s", kTagCutName[c]);
-  out << Form(" | %13s", kTagCutName[kTagPass]) << std::endl;
+  out << Form(" | %13s", kTagCutName[kTAG_PASS]) << std::endl;
   for (Int_t reac = kReacMin; reac <= kReacMax; reac++) {
-    const Long64_t *row = &m_cutCounts[ReacIndex(reac) * kNTagCuts];
+    const Long64_t *row = &m_cutCounts[ReacIndex(reac) * kNTAGCUTS];
     Long64_t total = 0;
-    for (Int_t c = 0; c < kNTagCuts; c++)
+    for (Int_t c = 0; c < kNTAGCUTS; c++)
       total += row[c];
     out << Form("%4d", reac);
-    for (Int_t c = 1; c < kNTagCuts; c++) {
+    for (Int_t c = 1; c < kNTAGCUTS; c++) {
       if (!active[c])
         out << Form(" | %13s", "off");
       else
@@ -3047,8 +3051,8 @@ void StripSumScatter::WriteCutReport() const {
                                     total > 0 ? 100.0 * row[c] / total : 0.0));
     }
     out << Form(" | %13s",
-                Form("%lld (%.3f%%)", row[kTagPass],
-                     total > 0 ? 100.0 * row[kTagPass] / total : 0.0))
+                Form("%lld (%.3f%%)", row[kTAG_PASS],
+                     total > 0 ? 100.0 * row[kTAG_PASS] / total : 0.0))
         << std::endl;
   }
   std::cout << out.str();

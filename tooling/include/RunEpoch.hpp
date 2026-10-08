@@ -12,8 +12,8 @@
 
 /// @brief Which acquisition system produced an epoch's data.
 enum RunSource {
-  kCoMPASS, ///< CAEN CoMPASS.
-  kSolaris  ///< SOLARIS DAQ.
+  kCOMPASS, ///< CAEN CoMPASS.
+  kSOLARIS  ///< SOLARIS DAQ.
 };
 
 /**
@@ -120,7 +120,7 @@ struct RunEpoch {
 
   /// @brief Construct with SOLARIS-era defaults; override per epoch.
   RunEpoch()
-      : name(""), source(kSolaris), enabled(kTRUE), file_tag(""), max_files(-1),
+      : name(""), source(kSOLARIS), enabled(kTRUE), file_tag(""), max_files(-1),
         n_boards(1), n_channels(64), timing_ref_board(0), do_board_sync(kFALSE),
         do_sort(kFALSE), event_time_window_us(8.0), seed_holdoff_us(0.0),
         seed_holdoff_max_ratio(0.5), reference_channel("Grid"),

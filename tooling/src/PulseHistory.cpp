@@ -3,6 +3,7 @@
 #include "FileSet.hpp"
 #include "IOUtils.hpp"
 #include "PlottingUtils.hpp"
+#include <PulseHistoryGroups.hpp>
 #include <TCanvas.h>
 #include <TDecompChol.h>
 #include <TF1.h>
@@ -31,19 +32,19 @@ namespace PulseHistory {
 
 const char *GroupName(Int_t g) {
   switch (g) {
-  case kLongLeft:
+  case kLONG_LEFT:
     return "long L (odd strips)";
-  case kLongRight:
+  case kLONG_RIGHT:
     return "long R (even strips)";
-  case kShortLeft:
+  case kSHORT_LEFT:
     return "short L (even strips)";
-  case kShortRight:
+  case kSHORT_RIGHT:
     return "short R (odd strips)";
-  case kStrip0:
+  case kSTRIP0:
     return "strip 0 (unsegmented)";
-  case kStrip17:
+  case kSTRIP17:
     return "strip 17 (unsegmented)";
-  case kGrid:
+  case kGRID:
     return "grid (seed channel)";
   }
   return "none";
@@ -51,19 +52,19 @@ const char *GroupName(Int_t g) {
 
 const char *GroupTag(Int_t g) {
   switch (g) {
-  case kLongLeft:
+  case kLONG_LEFT:
     return "L";
-  case kLongRight:
+  case kLONG_RIGHT:
     return "R";
-  case kShortLeft:
+  case kSHORT_LEFT:
     return "Ls";
-  case kShortRight:
+  case kSHORT_RIGHT:
     return "Rs";
-  case kStrip0:
+  case kSTRIP0:
     return "S0";
-  case kStrip17:
+  case kSTRIP17:
     return "S17";
-  case kGrid:
+  case kGRID:
     return "G";
   }
   return "none";
@@ -71,35 +72,35 @@ const char *GroupTag(Int_t g) {
 
 Int_t ChainOf(Int_t g) {
   switch (g) {
-  case kLongLeft:
-  case kShortLeft:
+  case kLONG_LEFT:
+  case kSHORT_LEFT:
     return 0;
-  case kLongRight:
-  case kShortRight:
+  case kLONG_RIGHT:
+  case kSHORT_RIGHT:
     return 1;
   }
   return -1;
 }
 
-Bool_t IsLongGroup(Int_t g) { return g == kLongLeft || g == kLongRight; }
+Bool_t IsLongGroup(Int_t g) { return g == kLONG_LEFT || g == kLONG_RIGHT; }
 
 namespace {
 const PulseHistoryGroupOption *GroupOption(Int_t g) {
   const PulseHistoryGroups &m = Constants::ActivePulseHistoryGroups();
   switch (g) {
-  case kLongLeft:
+  case kLONG_LEFT:
     return &m.long_left;
-  case kLongRight:
+  case kLONG_RIGHT:
     return &m.long_right;
-  case kShortLeft:
+  case kSHORT_LEFT:
     return &m.short_left;
-  case kShortRight:
+  case kSHORT_RIGHT:
     return &m.short_right;
-  case kStrip0:
+  case kSTRIP0:
     return &m.strip0;
-  case kStrip17:
+  case kSTRIP17:
     return &m.strip17;
-  case kGrid:
+  case kGRID:
     return &m.grid;
   default:
     return nullptr;
@@ -114,7 +115,7 @@ Bool_t GroupEnabled(Int_t g) {
 
 Bool_t GroupWantsForm(Int_t g) {
   const PulseHistoryGroupOption *o = GroupOption(g);
-  return o ? (o->enabled && o->kernel == kPulseHistoryForm) : kFALSE;
+  return o ? (o->enabled && o->kernel == kANALYTIC) : kFALSE;
 }
 
 Double_t GroupTauUs(Int_t g) {
@@ -123,7 +124,7 @@ Double_t GroupTauUs(Int_t g) {
 }
 
 Kernel::Kernel() {
-  for (Int_t a = 0; a < kMaxAmpBins; a++) {
+  for (Int_t a = 0; a < kMAX_AMP_BINS; a++) {
     c[a] = 0.0;
     cb[a] = 0.0;
     for (Int_t b = 0; b < kNBins; b++) {
@@ -135,7 +136,7 @@ Kernel::Kernel() {
 }
 
 Double_t Kernel::FormAt(Int_t a, Double_t dt_us) const {
-  if (a < 0 || a >= kMaxAmpBins || !(tau_us > 0.0))
+  if (a < 0 || a >= kMAX_AMP_BINS || !(tau_us > 0.0))
     return 0.0;
   if (dt_us < t_lo_us) {
     // The previous trapezoid is still under the read point: free bins.
@@ -150,13 +151,13 @@ Double_t Kernel::FormAt(Int_t a, Double_t dt_us) const {
 }
 
 Double_t Kernel::EffectiveWindowUs(Int_t a) const {
-  if (a < 0 || a >= kMaxAmpBins || cb[a] == 0.0)
+  if (a < 0 || a >= kMAX_AMP_BINS || cb[a] == 0.0)
     return 0.0;
   return c[a] * tau_us / cb[a];
 }
 
 Result::Result() {
-  for (Int_t g = 0; g < kNGroups; g++) {
+  for (Int_t g = 0; g < kNGROUPS; g++) {
     enabled[g] = kTRUE;
     mean_shift[g] = 0.0;
     n_clamped_group[g] = 0;
@@ -169,7 +170,7 @@ Result::Result() {
 Result::~Result() { FreeDiagnostics(); }
 
 void Result::FreeDiagnostics() {
-  for (Int_t g = 0; g < kNGroups; g++) {
+  for (Int_t g = 0; g < kNGROUPS; g++) {
     delete dev_vs_pred[g];
     delete dev_before[g];
     delete dev_after[g];
@@ -269,7 +270,7 @@ TString BandLabel(Int_t a, Int_t n_amp, Bool_t latex) {
 
 std::vector<Int_t> BuildGroupMap() {
   const Int_t nch = Constants::ActiveNChannels();
-  std::vector<Int_t> gm(Constants::ActiveNBoards() * nch, kNone);
+  std::vector<Int_t> gm(Constants::ActiveNBoards() * nch, kNONE);
   const std::map<std::pair<Int_t, Int_t>, TString> &cm =
       Constants::ActiveChannelMap();
   for (std::map<std::pair<Int_t, Int_t>, TString>::const_iterator it =
@@ -280,15 +281,15 @@ std::vector<Int_t> BuildGroupMap() {
     if (idx < 0 || idx >= Int_t(gm.size()))
       continue;
     if (name == "Strip0") {
-      gm[idx] = kStrip0;
+      gm[idx] = kSTRIP0;
       continue;
     }
     if (name == "Strip17") {
-      gm[idx] = kStrip17;
+      gm[idx] = kSTRIP17;
       continue;
     }
     if (name == "Grid") {
-      gm[idx] = kGrid;
+      gm[idx] = kGRID;
       continue;
     }
     if (name.Length() < 2 || (name[0] != 'L' && name[0] != 'R'))
@@ -302,9 +303,9 @@ std::vector<Int_t> BuildGroupMap() {
     const Bool_t odd = (s % 2) != 0;
     const Bool_t is_long = (name[0] == 'L') ? odd : !odd;
     if (name[0] == 'L')
-      gm[idx] = is_long ? kLongLeft : kShortLeft;
+      gm[idx] = is_long ? kLONG_LEFT : kSHORT_LEFT;
     else
-      gm[idx] = is_long ? kLongRight : kShortRight;
+      gm[idx] = is_long ? kLONG_RIGHT : kSHORT_RIGHT;
   }
   return gm;
 }
@@ -542,7 +543,7 @@ Bool_t Lookahead(const ScanState &st, size_t i0) {
   // is a fitted channel; the window below starts after it.
   {
     const Int_t i = HitIndex(st.hits[i0]);
-    if (i >= 0 && i < st.nidx && st.group_of[i] != kNone)
+    if (i >= 0 && i < st.nidx && st.group_of[i] != kNONE)
       st.ev_e[i] = Double_t(st.hits[i0].energy);
   }
   for (size_t j = i0 + 1;
@@ -550,7 +551,7 @@ Bool_t Lookahead(const ScanState &st, size_t i0) {
     const Int_t i = HitIndex(st.hits[j]);
     if (i == st.strip0 && st.hits[j].energy > 0)
       strip0_fired = kTRUE;
-    if (i < 0 || i >= st.nidx || st.group_of[i] == kNone)
+    if (i < 0 || i >= st.nidx || st.group_of[i] == kNONE)
       continue;
     if (Double_t(st.hits[j].energy) > st.ev_e[i])
       st.ev_e[i] = Double_t(st.hits[j].energy);
@@ -997,12 +998,12 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
   const Double_t window_ps = Constants::ActiveEventTimeWindowUs() * 1.0e6;
   const Int_t nidx = Int_t(group_of.size());
   const Int_t n_amp = TMath::Max(
-      1, TMath::Min(kMaxAmpBins, Constants::cfg.PULSE_HISTORY_AMP_BINS));
+      1, TMath::Min(kMAX_AMP_BINS, Constants::cfg.PULSE_HISTORY_AMP_BINS));
   // Every channel with a kernel, and the long ends alone, which are what the
   // beam-like selection is made of.
   std::vector<Int_t> fit_ch, long_ch;
   for (Int_t i = 0; i < nidx; i++) {
-    if (group_of[i] == kNone)
+    if (group_of[i] == kNONE)
       continue;
     fit_ch.push_back(i);
     if (IsLongGroup(group_of[i]))
@@ -1019,7 +1020,7 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
   for (size_t j = 0; j < hits.size(); j++) {
     const RawHit &h = hits[j];
     const Int_t i = HitIndex(h);
-    if (i < 0 || i >= nidx || group_of[i] == kNone)
+    if (i < 0 || i >= nidx || group_of[i] == kNONE)
       continue;
     const Int_t b = Int_t(Double_t(h.energy) / emax * nb);
     if (b >= 0 && b < nb)
@@ -1040,7 +1041,7 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
 
   // Pass A: seeds making a beam-like event for each group, and the channel
   // means; short ends and strips 0/17 enter the fit only where they fired.
-  std::vector<size_t> seeds[kNGroups];
+  std::vector<size_t> seeds[kNGROUPS];
   std::vector<Double_t> mean(nidx, 0.0);
   std::vector<Double_t> ev_e(nidx, 0.0);
   const Double_t olo = Constants::cfg.PULSE_HISTORY_OWN_LO;
@@ -1048,7 +1049,7 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
   // The form is fitted for every group as soon as one asks for it, so the
   // report can compare it everywhere; otherwise the scan keeps its cost.
   Bool_t want_form = kFALSE;
-  for (Int_t g = 1; g < kNGroups; g++)
+  for (Int_t g = 1; g < kNGROUPS; g++)
     want_form = want_form || (GroupEnabled(g) && GroupWantsForm(g));
   FormGrid grid;
   {
@@ -1069,11 +1070,11 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
   }
   // A tau given for a group is appended to the grid so the applied form is
   // solved at exactly that value; given_j[g] is -1 when profiled.
-  Int_t given_j[kNGroups];
-  for (Int_t g = 0; g < kNGroups; g++)
+  Int_t given_j[kNGROUPS];
+  for (Int_t g = 0; g < kNGROUPS; g++)
     given_j[g] = -1;
   if (want_form)
-    for (Int_t g = 1; g < kNGroups; g++) {
+    for (Int_t g = 1; g < kNGROUPS; g++) {
       const Double_t tau = GroupTauUs(g);
       if (!(tau > 0.0) || !GroupEnabled(g))
         continue;
@@ -1110,7 +1111,7 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
     res.n_seeds++;
     if (!Lookahead(st, j))
       continue;
-    for (Int_t g = 1; g < kNGroups; g++) {
+    for (Int_t g = 1; g < kNGROUPS; g++) {
       if (!BeamFor(st, g))
         continue;
       seeds[g].push_back(j);
@@ -1124,7 +1125,7 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
     }
   }
   res.n_beam_events = 0;
-  for (Int_t g = 1; g < kNGroups; g++)
+  for (Int_t g = 1; g < kNGROUPS; g++)
     res.n_beam_events =
         TMath::Max(res.n_beam_events, Long64_t(seeds[g].size()));
   if (res.n_beam_events < Constants::cfg.PULSE_HISTORY_MIN_EVENTS) {
@@ -1152,7 +1153,7 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
   std::vector<std::vector<Int_t>> nz_tau(lay.n_tau);
   const Int_t bin_lo = 1, bin_hi = 1 + n_amp * kNBins;
   const Int_t low_lo = bin_hi, low_hi = bin_hi + n_amp * lay.n_free;
-  for (Int_t g = 1; g < kNGroups; g++) {
+  for (Int_t g = 1; g < kNGROUPS; g++) {
     res.enabled[g] = GroupEnabled(g);
     if (!res.enabled[g])
       continue; // configured off: no kernel, no correction
@@ -1167,7 +1168,7 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
     res.name_ch[fit_ch[k]] = NameOfIndex(fit_ch[k]);
   res.kernel_ch.assign(nidx, Kernel());
   Bool_t any = kFALSE;
-  for (Int_t g = 1; g < kNGroups; g++) {
+  for (Int_t g = 1; g < kNGROUPS; g++) {
     Kernel &G = res.kernel[g];
     if (!res.enabled[g]) {
       G.ok = kFALSE;
@@ -1221,7 +1222,7 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
 
   // Decay summary per fitted group: pre-correction deviation vs previous-pulse
   // time. p2 = the preamp decay the pole-zero missed, hardware-study number.
-  for (Int_t g = 1; g < kNGroups; g++) {
+  for (Int_t g = 1; g < kNGROUPS; g++) {
     Kernel &K = res.kernel[g];
     if (!K.ok)
       continue;
@@ -1240,7 +1241,7 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
   if (Constants::SavePlots()) {
     const TString tag = file_label;
     const Double_t xlo = kLogLo + 6.0, xhi = kLogHi + 6.0;
-    for (Int_t g = 1; g < kNGroups; g++) {
+    for (Int_t g = 1; g < kNGROUPS; g++) {
       const char *gn = GroupTag(g);
       res.dev_vs_pred[g] =
           new TH2D(Form("h_ph_dev_vs_pred_%s_%s", gn, tag.Data()),
@@ -1289,7 +1290,7 @@ Bool_t Measure(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
       res.dtprev_before_ch[c]->SetDirectory(nullptr);
       res.dtprev_after_ch[c]->SetDirectory(nullptr);
     }
-    for (Int_t g = 1; g < kNGroups; g++) {
+    for (Int_t g = 1; g < kNGROUPS; g++) {
       if (!res.kernel[g].ok)
         continue;
       // Only the applied models' features: bins where a channel is binned,
@@ -1321,12 +1322,12 @@ void Apply(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
   const Int_t nidx = Int_t(group_of.size());
   const Double_t keep_ps = Constants::cfg.PULSE_HISTORY_APPLY_MAX_US * 1.0e6;
   std::vector<std::deque<Past>> past(nidx);
-  Double_t shift_sum[kNGroups] = {0};
-  Long64_t shift_n[kNGroups] = {0};
+  Double_t shift_sum[kNGROUPS] = {0};
+  Long64_t shift_n[kNGROUPS] = {0};
   for (size_t j = 0; j < hits.size(); j++) {
     RawHit &h = hits[j];
     const Int_t i = HitIndex(h);
-    if (i < 0 || i >= nidx || group_of[i] == kNone)
+    if (i < 0 || i >= nidx || group_of[i] == kNONE)
       continue;
     const Int_t g = group_of[i];
     const Double_t t = Double_t(h.timestamp);
@@ -1359,7 +1360,7 @@ void Apply(std::vector<RawHit> &hits, const std::vector<Int_t> &group_of,
     // The kernel was fitted on raw amplitudes of the previous pulses.
     d.push_back({t, e_raw});
   }
-  for (Int_t g = 0; g < kNGroups; g++)
+  for (Int_t g = 0; g < kNGROUPS; g++)
     res.mean_shift[g] = shift_n[g] ? shift_sum[g] / shift_n[g] : 0.0;
 }
 
@@ -1413,7 +1414,7 @@ TString Report(const Result &res, const TString &file_label, Bool_t detail) {
             res.sorted_input ? "" : " (SORTED: input was not time ordered)",
             res.n_seeds, res.n_beam_events, res.n_corrected, res.n_clamped)
     << std::endl;
-  for (Int_t g = 1; g < kNGroups; g++) {
+  for (Int_t g = 1; g < kNGROUPS; g++) {
     const Kernel &K = res.kernel[g];
     // The group's own fit (the sum of its channels) is the fallback kernel
     // and the reference the per-channel lines are read against.
@@ -1518,8 +1519,8 @@ TLegend *RightLegend(Int_t nentries, Bool_t header, Bool_t top,
 // over them (solid where applied, dashed where the bins are).
 void DrawKernelFigure(const Kernel &K, const TString &subdir,
                       const char *fname) {
-  const Int_t colors[kMaxAmpBins] = {kBlack,     kRed + 1,    kAzure + 1,
-                                     kGreen + 2, kOrange + 7, kMagenta + 1};
+  const Int_t colors[kMAX_AMP_BINS] = {kBlack,     kRed + 1,    kAzure + 1,
+                                       kGreen + 2, kOrange + 7, kMagenta + 1};
   const Double_t xlo = kLogLo + 6.0, xhi = kLogHi + 6.0;
   TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
   Double_t ylo = 0.0, yhi = 0.0;
@@ -1546,8 +1547,8 @@ void DrawKernelFigure(const Kernel &K, const TString &subdir,
     for (Int_t b = 0; b < kNBins; b++)
       gr->SetPoint(b, xlo + (b + 0.5) * (xhi - xlo) / kNBins, K.k_binned[a][b]);
     gr->SetMarkerStyle(20);
-    gr->SetMarkerColor(colors[a % kMaxAmpBins]);
-    gr->SetLineColor(colors[a % kMaxAmpBins]);
+    gr->SetMarkerColor(colors[a % kMAX_AMP_BINS]);
+    gr->SetLineColor(colors[a % kMAX_AMP_BINS]);
     gr->SetLineWidth(2);
     gr->Draw(K.form_ok ? "P SAME" : "PL SAME");
     // "< 0.5x beam, bins" per band, or just "Bins" for one kernel.
@@ -1566,7 +1567,7 @@ void DrawKernelFigure(const Kernel &K, const TString &subdir,
         const Double_t l = xlo + (i + 0.5) * (xhi - xlo) / nf;
         gf->SetPoint(i, l, K.FormAt(a, TMath::Power(10.0, l)));
       }
-      gf->SetLineColor(colors[a % kMaxAmpBins]);
+      gf->SetLineColor(colors[a % kMAX_AMP_BINS]);
       gf->SetLineWidth(2);
       gf->SetLineStyle(K.form ? 1 : 2);
       gf->Draw("L SAME");
@@ -1604,8 +1605,8 @@ struct PulseRow {
          form_ok = kFALSE, form_tau_given = kFALSE;
   Double_t form_tau_us = 0.0, form_tau_free_us = 0.0, r2_form_free = 0.0,
            r2_form = 0.0, r2_binned = 0.0, r2_group = 0.0;
-  Double_t form_c[kMaxAmpBins], form_cb[kMaxAmpBins];
-  Double_t k_binned[kMaxAmpBins * kNBins], k[kMaxAmpBins * kNBins],
+  Double_t form_c[kMAX_AMP_BINS], form_cb[kMAX_AMP_BINS];
+  Double_t k_binned[kMAX_AMP_BINS * kNBins], k[kMAX_AMP_BINS * kNBins],
       centre_us[kNBins];
   Double_t tau_us = 0.0, tau_err_us = 0.0, tau_p0 = 0.0, tau_p1 = 0.0,
            tau_p3 = 0.0;
@@ -1638,7 +1639,7 @@ void FillPulseRow(PulseRow &row, const Kernel &K, Int_t g, Int_t idx,
   row.r2_binned = K.r2_binned;
   row.r2_group = K.r2_group;
   row.n_amp = K.n_amp;
-  for (Int_t a = 0; a < kMaxAmpBins; a++) {
+  for (Int_t a = 0; a < kMAX_AMP_BINS; a++) {
     row.form_c[a] = K.c[a];
     row.form_cb[a] = K.cb[a];
     for (Int_t b = 0; b < kNBins; b++) {
@@ -1678,7 +1679,7 @@ void SavePlots(Result &res, const TString &file_label) {
   const TString subdir_ch = subdir + "/channels";
   const Double_t xlo = kLogLo + 6.0, xhi = kLogHi + 6.0;
   // Kernels: the group fit, one canvas per group.
-  for (Int_t g = 1; g < kNGroups; g++)
+  for (Int_t g = 1; g < kNGROUPS; g++)
     if (res.kernel[g].ok)
       DrawKernelFigure(res.kernel[g], subdir, Form("kernel_%s", GroupTag(g)));
   // And every channel's own, under channels/.
@@ -1688,7 +1689,7 @@ void SavePlots(Result &res, const TString &file_label) {
                        Form("kernel_%s", res.name_ch[c].Data()));
   // Per group, the applied kernels of its channels on one canvas (beam band),
   // the group's own dashed, so a channel that differs stands out.
-  for (Int_t g = 1; g < kNGroups; g++) {
+  for (Int_t g = 1; g < kNGROUPS; g++) {
     const Kernel &G = res.kernel[g];
     if (!G.ok)
       continue;
@@ -1746,7 +1747,7 @@ void SavePlots(Result &res, const TString &file_label) {
                               subdir, PlotSaveOptions::kLINEAR);
     delete c;
   }
-  for (Int_t g = 1; g < kNGroups; g++) {
+  for (Int_t g = 1; g < kNGROUPS; g++) {
     const char *gn = GroupTag(g);
     if (res.dev_vs_pred[g] && res.dev_vs_pred[g]->GetEntries() > 0) {
       TCanvas *c = PlottingUtils::GetConfiguredCanvas(kFALSE);
@@ -1868,17 +1869,17 @@ void WriteToEventsFile(const TString &events_subpath, const Result &res) {
   t->Branch("NAmpBins", &row.n_amp, "NAmpBins/I");
   // Kernel is what was applied, at the bin centres (the form evaluated there
   // when Form is true); KernelBinned the binned fit, always.
-  t->Branch("Kernel", row.k, Form("Kernel[%d]/D", kMaxAmpBins * kNBins));
+  t->Branch("Kernel", row.k, Form("Kernel[%d]/D", kMAX_AMP_BINS * kNBins));
   t->Branch("KernelBinned", row.k_binned,
-            Form("KernelBinned[%d]/D", kMaxAmpBins * kNBins));
+            Form("KernelBinned[%d]/D", kMAX_AMP_BINS * kNBins));
   t->Branch("Form", &row.form, "Form/O");
   t->Branch("FormOk", &row.form_ok, "FormOk/O");
   t->Branch("FormTauUs", &row.form_tau_us, "FormTauUs/D");
   t->Branch("FormTauGiven", &row.form_tau_given, "FormTauGiven/O");
   t->Branch("FormTauFreeUs", &row.form_tau_free_us, "FormTauFreeUs/D");
   t->Branch("R2FormFree", &row.r2_form_free, "R2FormFree/D");
-  t->Branch("FormC", row.form_c, Form("FormC[%d]/D", kMaxAmpBins));
-  t->Branch("FormCB", row.form_cb, Form("FormCB[%d]/D", kMaxAmpBins));
+  t->Branch("FormC", row.form_c, Form("FormC[%d]/D", kMAX_AMP_BINS));
+  t->Branch("FormCB", row.form_cb, Form("FormCB[%d]/D", kMAX_AMP_BINS));
   t->Branch("R2Form", &row.r2_form, "R2Form/D");
   t->Branch("R2Binned", &row.r2_binned, "R2Binned/D");
   t->Branch("R2Group", &row.r2_group, "R2Group/D");
@@ -1903,10 +1904,10 @@ void WriteToEventsFile(const TString &events_subpath, const Result &res) {
   t->Branch("NCorrected", &row.n_corrected, "NCorrected/L");
   t->Branch("NClamped", &row.n_clamped, "NClamped/L");
   const Int_t nch = Constants::ActiveNChannels();
-  for (Int_t g = 1; g < kNGroups; g++)
+  for (Int_t g = 1; g < kNGROUPS; g++)
     FillPulseRow(row, res.kernel[g], g, -1, res, nch, t);
   for (Int_t c = 0; c < Int_t(res.kernel_ch.size()); c++)
-    if (res.group_of[c] != kNone)
+    if (res.group_of[c] != kNONE)
       FillPulseRow(row, res.kernel_ch[c], res.group_of[c], c, res, nch, t);
   t->Write("pulse_history", TObject::kOverwrite);
   f->Close();

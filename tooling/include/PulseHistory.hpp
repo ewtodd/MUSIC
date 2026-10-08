@@ -38,7 +38,7 @@ const Double_t kLogLo = -6.0; ///< Lowest dt bin edge: log10 of 1 us in seconds.
 const Double_t kLogHi =
     -3.5; ///< Highest dt bin edge: log10 of 316 us in seconds.
 /// Maximum amplitude bands a kernel may split the previous pulse into.
-const Int_t kMaxAmpBins = 6;
+const Int_t kMAX_AMP_BINS = 6;
 /// Fewest (event, channel) pairs a channel needs for a kernel of its own;
 /// below it the channel is corrected with its group's kernel.
 const Long64_t kMinPairsPerChannel = 2000;
@@ -128,14 +128,14 @@ struct Kernel {
   /// channel's own could not be fitted; #why_group says why.
   Bool_t from_group = kFALSE;
   TString why_group;
-  Int_t n_amp = 1; ///< Amplitude bands actually used, at most #kMaxAmpBins.
+  Int_t n_amp = 1; ///< Amplitude bands actually used, at most #kMAX_AMP_BINS.
   /// The applied kernel at the bin centres, `[amplitude band][dt bin]`: the
   /// binned coefficients themselves, or the form evaluated there when #form.
   /// What the report prints and the plots draw.
-  Double_t k[kMaxAmpBins][kNBins];
+  Double_t k[kMAX_AMP_BINS][kNBins];
   /// The binned fit's coefficients, always kept so the form can be judged
   /// against them. Equal to #k unless #form.
-  Double_t k_binned[kMaxAmpBins][kNBins];
+  Double_t k_binned[kMAX_AMP_BINS][kNBins];
 
   /// @name Pole-zero form
   /// Fitted alongside the bins whenever any group asks for the form
@@ -154,9 +154,10 @@ struct Kernel {
   /// on a given #tau_us. Equal to #tau_us and #r2_form when nothing is given.
   Double_t tau_free_us = 0.0;
   Double_t r2_form_free = 0.0;
-  Double_t c[kMaxAmpBins];  ///< Direct-tail amplitude per band; > 0 undershoot.
-  Double_t cb[kMaxAmpBins]; ///< Baseline-term amplitude per band.
-  Double_t k_low[kMaxAmpBins][kNBins]; ///< Free coefficients, bins < #n_free.
+  Double_t
+      c[kMAX_AMP_BINS]; ///< Direct-tail amplitude per band; > 0 undershoot.
+  Double_t cb[kMAX_AMP_BINS];            ///< Baseline-term amplitude per band.
+  Double_t k_low[kMAX_AMP_BINS][kNBins]; ///< Free coefficients, bins < #n_free.
   Int_t n_free = 0;       ///< Bins below t_lo that stay free under the form.
   Double_t t_m_us = 0.0;  ///< Read point after a pulse: rise + peaking.
   Double_t t_f_us = 0.0;  ///< Baseline freeze after a trigger: 2 rise + flat.

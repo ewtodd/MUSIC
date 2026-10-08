@@ -202,7 +202,7 @@ int main(int argc, char *argv[]) {
   } else {
     for (Int_t e = 0; e < Int_t(Constants::cfg.EPOCHS.size()); e++) {
       const RunEpoch &ep = Constants::cfg.EPOCHS[e];
-      if (!ep.enabled || ep.source != kSolaris)
+      if (!ep.enabled || ep.source != kSOLARIS)
         continue;
       const Double_t sec = forced ? forcedSeconds : ep.split_chunk_seconds;
       std::cout << "epoch " << ep.name << ": " << ep.runs.size() << " run(s), ";

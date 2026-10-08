@@ -149,7 +149,7 @@ void InitDatasetConfig() {
   // pulse history correction... the answer is a resounding NO!
   RunEpoch compass = MakeEpoch("compass", {16, 17, 37});
   compass.file_tag = "compass";
-  compass.source = kCoMPASS;
+  compass.source = kCOMPASS;
   compass.n_boards = 4;
   compass.n_channels = 16;
   compass.timing_ref_board = 1;

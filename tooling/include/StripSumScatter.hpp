@@ -57,24 +57,24 @@
  *
  * `StripSumScatter::RejectReason` returns the first one an event fails at a
  * reaction strip, so the per-condition counts are sequential: each counts
- * events that passed everything before it. `kTagPass` is a tag.
+ * events that passed everything before it. `kTAG_PASS` is a tag.
  */
 enum TagCut {
-  kTagPass = 0,
-  kCutUpstream,  ///< A strip before the reaction was not beam-like.
-  kCutJump,      ///< Jump at the reaction strip below the gate.
-  kCutReacLevel, ///< Reaction-strip deposit below 1 + the gate.
-  kCutTailRise,  ///< A rise in the tail (TAIL_RISE_NSIGMA).
-  kCutRerise,    ///< Back at the beam, then above it again (TAIL_RERISE_*).
-  kCutPostAbove, ///< The excess did not persist (POST_ABOVE_*).
-  kCutCross,     ///< Read below the beam before POST_CROSS_MIN_STRIP.
-  kCutEndStrip,  ///< The end strip not END_STRIP_NSIGMA below the beam.
-  kCutCliff,     ///< The fall happened in the last step (TAIL_CLIFF_*).
-  kCutOtherTag,  ///< Passed, but the event's one tag went to another strip.
-  kNTagCuts
+  kTAG_PASS = 0,
+  kCUT_UPSTREAM,   ///< A strip before the reaction was not beam-like.
+  kCUT_JUMP,       ///< Jump at the reaction strip below the gate.
+  kCUT_REAC_LEVEL, ///< Reaction-strip deposit below 1 + the gate.
+  kCUT_TAIL_RISE,  ///< A rise in the tail (TAIL_RISE_NSIGMA).
+  kCUT_RERISE,     ///< Back at the beam, then above it again (TAIL_RERISE_*).
+  kCUT_POST_ABOVE, ///< The excess did not persist (POST_ABOVE_*).
+  kCUT_CROSS,      ///< Read below the beam before POST_CROSS_MIN_STRIP.
+  kCUT_END_STRIP,  ///< The end strip not END_STRIP_NSIGMA below the beam.
+  kCUT_CLIFF,      ///< The fall happened in the last step (TAIL_CLIFF_*).
+  kCUT_OTHER_TAG,  ///< Passed, but the event's one tag went to another strip.
+  kNTAGCUTS
 };
 /// @brief Short labels for TagCut, indexed by it.
-extern const char *const kTagCutName[kNTagCuts];
+extern const char *const kTagCutName[kNTAGCUTS];
 
 /**
  * @brief Every threshold the tag applies, as one value set.
@@ -115,20 +115,20 @@ struct TagThresholds {
 
 /**
  * @brief The event-level cuts applied before any reaction is asked about, in
- * order; sequential like TagCut. `kPrePass` reached the tag.
+ * order; sequential like TagCut. `kPRE_PASS` reached the tag.
  */
 enum PreCut {
-  kPrePass = 0,
-  kPreAllStrips, ///< A strip did not fire.
-  kPreGate,      ///< Failed a beam gate.
-  kPrePileup,    ///< Pileup.
-  kPreNoise,     ///< Noise.
-  kPreSmooth,    ///< A strip-to-strip step above SMOOTHNESS_NSIGMA.
-  kPreBothMult,  ///< Both-ends multiplicity (BOTH_MULT_MAX).
-  kNPreCuts
+  kPRE_PASS = 0,
+  kPRE_ALL_STRIPS, ///< A strip did not fire.
+  kPRE_GATE,       ///< Failed a beam gate.
+  kPRE_PILEUP,     ///< Pileup.
+  kPRE_NOISE,      ///< Noise.
+  kPRE_SMOOTH,     ///< A strip-to-strip step above SMOOTHNESS_NSIGMA.
+  kPRE_BOTH_MULT,  ///< Both-ends multiplicity (BOTH_MULT_MAX).
+  kNPRECUTS
 };
 /// @brief Short labels for PreCut, indexed by it.
-extern const char *const kPreCutName[kNPreCuts];
+extern const char *const kPreCutName[kNPRECUTS];
 
 /**
  * @brief One step of the event selection, as
@@ -141,7 +141,7 @@ extern const char *const kPreCutName[kNPreCuts];
  */
 struct SelectionStep {
   /// Where in the selection the step sits.
-  enum Stage { kInput, kEventLevel, kPerStrip, kOutcome };
+  enum Stage { kINPUT, kEVENT_LEVEL, kPER_STRIP, kOUTCOME };
   Stage stage;
   TString id;     ///< Node identifier, `[a-z0-9_]`.
   TString name;   ///< Short name, as in the cut report.
@@ -302,8 +302,8 @@ struct SingleRunFillResult {
   /// The per-strip denominator under each variant, indexed the same way: a
   /// variant of the beam selection moves it as well as the tagged count.
   std::vector<std::vector<Long64_t>> normed_var;
-  /// Sequential per-condition counts, `[ReacIndex(reac) * kNTagCuts + cut]`,
-  /// for the tag-cut report. `kTagPass` entries equal `tagged`.
+  /// Sequential per-condition counts, `[ReacIndex(reac) * kNTAGCUTS + cut]`,
+  /// for the tag-cut report. `kTAG_PASS` entries equal `tagged`.
   std::vector<Long64_t> cut_counts;
   /// Sequential event-level counts, indexed by PreCut.
   std::vector<Long64_t> pre_counts;
@@ -664,13 +664,13 @@ public:
    *
    * @param ev    Decoded event.
    * @param reac  Reaction strip index.
-   * @return `kTagPass` if tagged, else the first failing TagCut.
+   * @return `kTAG_PASS` if tagged, else the first failing TagCut.
    */
   static TagCut RejectReason(const EnergyView &ev, Int_t reac);
   /// @brief RejectReason under an explicit threshold set.
   static TagCut RejectReason(const EnergyView &ev, Int_t reac,
                              const TagThresholds &T);
-  /// @brief The tail-shape part of RejectReason: `kTagPass` or the first
+  /// @brief The tail-shape part of RejectReason: `kTAG_PASS` or the first
   ///        failing tail condition, under an explicit threshold set.
   static TagCut TailReason(const EnergyView &ev, Int_t reac,
                            const TagThresholds &T);
@@ -705,7 +705,7 @@ public:
    * columns and by SelectionDiagram for the block diagram, so it is kept
    * beside RejectReason and must follow its order.
    *
-   * @return The steps, SelectionStep::kInput first.
+   * @return The steps, SelectionStep::kINPUT first.
    */
   static std::vector<SelectionStep> DescribeSelection();
 

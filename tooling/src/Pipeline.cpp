@@ -374,7 +374,7 @@ void Pipeline::Run() {
         continue;
       std::cout << std::endl;
       std::cout << "=== epoch " << epoch.name << " ("
-                << (epoch.source == kSolaris ? "SOLARIS" : "CoMPASS") << ", "
+                << (epoch.source == kSOLARIS ? "SOLARIS" : "CoMPASS") << ", "
                 << epoch.runs.size() << " run(s), " << epoch.n_boards << "x"
                 << epoch.n_channels << " ch) ===" << std::endl;
       Constants::SetActiveEpoch(&epoch);

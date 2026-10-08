@@ -56,23 +56,23 @@ std::vector<SelectionStep> Live(const std::vector<SelectionStep> &steps) {
 // A step that filters: it has a reject exit. Input, the loop marker and the
 // outcome nodes do not.
 Bool_t IsCut(const SelectionStep &st) {
-  return (st.pre_cut >= 0 || (st.tag_cut >= 0 && st.tag_cut != kTagPass));
+  return (st.pre_cut >= 0 || (st.tag_cut >= 0 && st.tag_cut != kTAG_PASS));
 }
 
 const char *RejectLabel(const SelectionStep &st) {
-  return st.stage == SelectionStep::kEventLevel ? "drop event"
-                                                : "no tag at reac";
+  return st.stage == SelectionStep::kEVENT_LEVEL ? "drop event"
+                                                 : "no tag at reac";
 }
 
 const char *StageTitle(SelectionStep::Stage s) {
   switch (s) {
-  case SelectionStep::kInput:
+  case SelectionStep::kINPUT:
     return "input";
-  case SelectionStep::kEventLevel:
+  case SelectionStep::kEVENT_LEVEL:
     return "event-level cuts";
-  case SelectionStep::kPerStrip:
+  case SelectionStep::kPER_STRIP:
     return "per reaction strip";
-  case SelectionStep::kOutcome:
+  case SelectionStep::kOUTCOME:
     return "outcome";
   }
   return "";
@@ -82,12 +82,12 @@ const char *StageTitle(SelectionStep::Stage s) {
 // event-level cuts, per-strip conditions, outcome.
 Int_t Column(SelectionStep::Stage s) {
   switch (s) {
-  case SelectionStep::kInput:
-  case SelectionStep::kEventLevel:
+  case SelectionStep::kINPUT:
+  case SelectionStep::kEVENT_LEVEL:
     return 0;
-  case SelectionStep::kPerStrip:
+  case SelectionStep::kPER_STRIP:
     return 1;
-  case SelectionStep::kOutcome:
+  case SelectionStep::kOUTCOME:
     return 2;
   }
   return 0;
@@ -107,7 +107,7 @@ std::vector<Edge> Chain(const std::vector<SelectionStep> &steps) {
   for (size_t i = 0; i < steps.size(); i++) {
     const SelectionStep &st = steps[i];
     const Int_t col = Column(st.stage);
-    if (st.stage == SelectionStep::kOutcome) {
+    if (st.stage == SelectionStep::kOUTCOME) {
       if (st.id == "tagged" && last_strip.Length())
         edges.push_back({last_strip, st.id, kTRUE});
       else if (st.id == "xs") {
@@ -120,7 +120,7 @@ std::vector<Edge> Chain(const std::vector<SelectionStep> &steps) {
       edges.push_back({prev, st.id, col != prev_col});
     prev = st.id;
     prev_col = col;
-    if (st.stage == SelectionStep::kPerStrip)
+    if (st.stage == SelectionStep::kPER_STRIP)
       last_strip = st.id;
   }
   return edges;
@@ -149,7 +149,7 @@ TString SelectionDiagram::Dot(const std::vector<SelectionStep> &all,
   s << "  edge [color=\"#555555\", fontname=\"Helvetica\", fontsize=9, "
        "arrowsize=0.7];"
     << std::endl;
-  for (Int_t stage = SelectionStep::kInput; stage <= SelectionStep::kOutcome;
+  for (Int_t stage = SelectionStep::kINPUT; stage <= SelectionStep::kOUTCOME;
        stage++) {
     s << Form("  subgraph cluster_%d {", stage) << std::endl;
     s << Form("    label=\"%s\"; labeljust=\"l\"; fontname=\"Helvetica-Bold\"; "
@@ -219,7 +219,7 @@ TString SelectionDiagram::Mermaid(const std::vector<SelectionStep> &all,
   s << "  classDef note fill:#e8eef7,stroke:#555,color:#000;" << std::endl;
   s << "  classDef tagged fill:#e3f2e1,stroke:#555,color:#000;" << std::endl;
   s << "  classDef rej fill:none,stroke:none,color:#b00020;" << std::endl;
-  for (Int_t stage = SelectionStep::kInput; stage <= SelectionStep::kOutcome;
+  for (Int_t stage = SelectionStep::kINPUT; stage <= SelectionStep::kOUTCOME;
        stage++) {
     s << Form("  subgraph stage_%d[\"%s\"]", stage,
               StageTitle(SelectionStep::Stage(stage)))
