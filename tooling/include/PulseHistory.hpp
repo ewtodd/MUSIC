@@ -42,8 +42,8 @@ const Int_t kMaxAmpBins = 6;
 /// Fewest (event, channel) pairs a channel needs for a kernel of its own;
 /// below it the channel is corrected with its group's kernel.
 const Long64_t kMinPairsPerChannel = 2000;
-/// @name Pole-zero kernel form
-/// The preamp decay time of the form (see `kPulseHistoryForm`) is not linear
+/// @name Pole-zero kernel analytic form
+/// The preamp decay time of the analytic form (see `kANALYTIC`) is not linear
 /// in the fit, so it is profiled: the linear coefficients are solved for every
 /// tau of a logarithmic grid from #kTauGridLoUs to #kTauGridHiUs and the tau
 /// with the smallest residual is kept. The grid step is the resolution of the
@@ -81,16 +81,16 @@ const Int_t kTauFitMinEntries = 100;
  *       follows the track position, so its kernel is fitted on the fired hits
  *       alone and describes a smaller share of its variance than a long end's.
  */
-enum Group {
-  kNone = 0,       ///< Not part of any corrected group.
-  kLongLeft = 1,   ///< Long end, left chain.
-  kLongRight = 2,  ///< Long end, right chain.
-  kShortLeft = 3,  ///< Short end, left chain.
-  kShortRight = 4, ///< Short end, right chain.
-  kStrip0 = 5,     ///< Strip 0, unsegmented.
-  kStrip17 = 6,    ///< Strip 17, unsegmented.
-  kGrid = 7,       ///< The Frisch grid: the seed channel, one per event.
-  kNGroups = 8     ///< Count of groups; not a group itself.
+enum ChannelGroup {
+  kNONE = 0,        ///< Not part of any corrected group.
+  kLONG_LEFT = 1,   ///< Long end, left chain.
+  kLONG_RIGHT = 2,  ///< Long end, right chain.
+  kSHORT_LEFT = 3,  ///< Short end, left chain.
+  kSHORT_RIGHT = 4, ///< Short end, right chain.
+  kSTRIP0 = 5,      ///< Strip 0, unsegmented.
+  kSTRIP17 = 6,     ///< Strip 17, unsegmented.
+  kGRID = 7,        ///< The Frisch grid: the seed channel, one per event.
+  kNGROUPS = 8      ///< Count of groups; not a group itself.
 };
 /// @brief Human-readable name of a Group.
 const char *GroupName(Int_t g);
@@ -222,7 +222,7 @@ struct Kernel {
 struct Result {
   /// The group fits, one per Group: each the fit over the sum of its
   /// channels, the fallback for a channel without a kernel of its own.
-  Kernel kernel[kNGroups];
+  Kernel kernel[kNGROUPS];
   /// The applied kernels, one per (board, channel) index as in the group map
   /// (empty before Measure()): the channel's own fit, or a flagged copy of
   /// its group's.
@@ -230,14 +230,14 @@ struct Result {
   std::vector<Int_t> group_of;  ///< The group map Measure() was given.
   std::vector<TString> name_ch; ///< Channel-map name per index.
   Bool_t
-      enabled[kNGroups]; ///< Whether the group was configured for correction.
+      enabled[kNGROUPS]; ///< Whether the group was configured for correction.
   Long64_t n_hits = 0;   ///< Hits examined.
   Long64_t n_seeds = 0;  ///< Hits usable as a previous pulse.
   Long64_t n_beam_events = 0; ///< Beam-like events the fit drew on.
   Long64_t n_corrected = 0;   ///< Hits that received a correction.
   Long64_t n_clamped = 0; ///< Corrections clamped rather than applied in full.
-  Long64_t n_clamped_group[kNGroups]; ///< Clamps per group.
-  Double_t mean_shift[kNGroups];      ///< Mean subtracted term per group, ADC.
+  Long64_t n_clamped_group[kNGROUPS]; ///< Clamps per group.
+  Double_t mean_shift[kNGROUPS];      ///< Mean subtracted term per group, ADC.
   Bool_t sorted_input = kTRUE; ///< Whether the input arrived time-ordered.
   /// Beam peak per (board, channel) index, in ADC. Zero where the channel is
   /// not a long end, which is what AmpBinOf() keys off.
@@ -247,13 +247,13 @@ struct Result {
   /// SavePlots(). Null
   /// otherwise.
   /// @{
-  TH2D *dev_vs_pred[kNGroups]; ///< Channel deviation against predicted shift.
-  TH1D *dev_before[kNGroups];  ///< Deviation distribution before correction.
-  TH1D *dev_after[kNGroups];   ///< And after.
-  TH1D *shift[kNGroups];       ///< Shift applied per hit.
+  TH2D *dev_vs_pred[kNGROUPS]; ///< Channel deviation against predicted shift.
+  TH1D *dev_before[kNGROUPS];  ///< Deviation distribution before correction.
+  TH1D *dev_after[kNGROUPS];   ///< And after.
+  TH1D *shift[kNGROUPS];       ///< Shift applied per hit.
   TProfile
-      *dtprev_before[kNGroups]; ///< Deviation against time to previous pulse.
-  TProfile *dtprev_after[kNGroups]; ///< And after.
+      *dtprev_before[kNGROUPS]; ///< Deviation against time to previous pulse.
+  TProfile *dtprev_after[kNGROUPS]; ///< And after.
   /// Per channel index, deviation against time to previous pulse before and
   /// after the channel's own kernel; drawn per group on one canvas.
   std::vector<TProfile *> dtprev_before_ch;

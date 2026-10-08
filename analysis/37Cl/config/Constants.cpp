@@ -1,5 +1,6 @@
 #include "Constants.hpp"
 #include <DedupStrategy.hpp>
+#include <PulseHistoryGroups.hpp>
 #include <RtypesCore.h>
 #include <RunEpoch.hpp>
 
@@ -54,11 +55,11 @@ void InitDatasetConfig() {
 
   gInstance.PULSE_HISTORY_CORRECTION = kTRUE;
   gInstance.PULSE_HISTORY_GROUPS.long_left.enabled = kTRUE;
-  gInstance.PULSE_HISTORY_GROUPS.long_left.kernel = kPulseHistoryBinned;
+  gInstance.PULSE_HISTORY_GROUPS.long_left.kernel = kBINNED;
   gInstance.PULSE_HISTORY_GROUPS.long_right.enabled = kTRUE;
-  gInstance.PULSE_HISTORY_GROUPS.long_right.kernel = kPulseHistoryBinned;
+  gInstance.PULSE_HISTORY_GROUPS.long_right.kernel = kBINNED;
   gInstance.PULSE_HISTORY_GROUPS.short_left.enabled = kTRUE;
-  gInstance.PULSE_HISTORY_GROUPS.short_left.kernel = kPulseHistoryForm;
+  gInstance.PULSE_HISTORY_GROUPS.short_left.kernel = kANALYTIC;
   gInstance.PULSE_HISTORY_APPLY_MAX_US = 316.0;
   gInstance.PULSE_HISTORY_AMP_BINS = 4;
 

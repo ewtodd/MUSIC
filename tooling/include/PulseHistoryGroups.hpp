@@ -20,30 +20,16 @@
  * compare them; this chooses which one corrects the group's energies.
  */
 enum PulseHistoryKernel {
-  /// One free coefficient per logarithmic dt bin: tracks whatever the
-  /// electronics did, at the price of bin-to-bin noise on sparse groups.
-  kPulseHistoryBinned,
-  /// The pole-zero form (PoleZeroMUSIC, doc/polezero.tex Eq. kernel): the
-  /// direct tail of the previous pulse under the read point plus that pulse's
-  /// share of the trapezoid baseline,
-  ///   k(dt) = -c exp(-(dt + t_m)/tau) + c_B (exp(-t_f/tau) - exp(-dt/tau)),
-  /// the second term only once the baseline unfreezes (dt > t_f). tau is the
-  /// preamp decay: given per group (`PulseHistoryGroupOption::tau_us`) or,
-  /// when not, profiled on a grid; the profile runs either way so a given
-  /// value can be checked against what the data prefer. c and c_B are fitted
-  /// per amplitude band, c_B free because the restorer's effective window is
-  /// not known from the settings. t_m and t_f come from the trapezoid
-  /// settings below.
-  /// Gaps shorter than the trapezoid, where the previous pulse's own top and
-  /// fall sit under the read point, keep one free coefficient per bin.
-  kPulseHistoryForm
+  kBINNED,
+  kANALYTIC //   k(dt) = -c exp(-(dt + t_m)/tau) + c_B (exp(-t_f/tau) -
+            //   exp(-dt/tau))
 };
 
 /// @brief Per-group pulse-history setting: whether the group is corrected and
 /// with which kernel shape.
 struct PulseHistoryGroupOption {
   Bool_t enabled = kFALSE;
-  PulseHistoryKernel kernel = kPulseHistoryBinned;
+  PulseHistoryKernel kernel = kBINNED;
   /// Known preamp decay time in microseconds, for the form. Positive: the
   /// applied form uses this tau and the report says where the free profile
   /// lands relative to it. Zero: the profiled tau is applied.
@@ -60,6 +46,10 @@ struct PulseHistoryGroupOption {
  * correction, so its energies are left as read out. The set in force is
  * Constants::ActivePulseHistoryGroups(): the active epoch's copy when one is
  * set, the flat `PULSE_HISTORY_GROUPS` otherwise.
+ *
+ * The correction for grid should be taken with a grain of salt until such time
+ * that the DAQ changes to accurately capture the bimodal grid signal. Right
+ * now, it is really only reliable as a source of timing.
  */
 struct PulseHistoryGroups {
   PulseHistoryGroupOption long_left;   ///< Long end of the odd strips (L).
