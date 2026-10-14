@@ -61,7 +61,7 @@ void InitDatasetConfig() {
   gInstance.PULSE_HISTORY_GROUPS.short_left.enabled = kTRUE;
   gInstance.PULSE_HISTORY_GROUPS.short_left.kernel = kANALYTIC;
   gInstance.PULSE_HISTORY_APPLY_MAX_US = 316.0;
-  gInstance.PULSE_HISTORY_AMP_BINS = 4;
+  gInstance.PULSE_HISTORY_AMP_BINS = 1;
 
   gInstance.MAX_FUSED_WORKERS = 16;
   gInstance.SKIP_EXISTING = kFALSE;
