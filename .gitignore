@@ -6,7 +6,6 @@ upstream
 *.md
 CLAUDE.md
 QWEN.md 
-AGENTS.md
 .qwen 
 .claude/*
 .claude/settings.json
@@ -66,3 +65,5 @@ analysis/*/root_files/talys/
 # Documentation sources, not generated notes — the blanket *.md above would eat
 # these. The narrative pages are inputs to the doxygen site and are tracked.
 !doc/pages/*.md
+# Notes for coding agents working in this repository.
+!/AGENTS.md

@@ -41,7 +41,7 @@ nix develop .#37Cl      # editing only; gives the toolchain and include paths
 Binaries land in `./result/bin`, take no command-line arguments, and must be run
 from inside `nix develop .#<dataset>` so they can find their runtime libraries.
 The main entry point is `./result/bin/pipeline`; every knob lives in
-`Constants.hpp` / `Constants.cpp` and the `control/` TOMLs.
+`Constants.hpp` / `Constants.cpp` and the `sim_control/` TOMLs.
 <!---->
 There is no `make` step you run yourself — `tooling/Makefile` is an internal
 recipe the flake drives.
@@ -59,7 +59,7 @@ recipe the flake drives.
 | `python/` | Python library for machine learning |
 <!---->
 The tooling is identical across datasets; only
-`analysis/<dataset>/config/Constants.cpp` and the `control/` TOMLs differ. See
+`analysis/<dataset>/config/Constants.cpp` and the `sim_control/` TOMLs differ. See
 [Repository layout](https://docs.ethanwtodd.com/music/layout.html) for how that split works.
 <!---->
 ## Building the docs locally

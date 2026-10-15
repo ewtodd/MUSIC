@@ -17,8 +17,9 @@
  *
  * Simulations come from
  * [Remix-MUSIC-Sim](https://github.com/ewtodd/Remix-MUSIC-Sim), driven by the
- * TOML control files in `<dataset>/control`. Each control file that writes a
- * `traces_<iso>_` output contributes one simulation to compare against.
+ * TOML control files in `<dataset>/sim_control`. Each control file that
+ * writes a `traces_<iso>_` output contributes one simulation to compare
+ * against.
  */
 class RemixSim {
 public:
@@ -33,7 +34,7 @@ public:
     TString tag; ///< Simulation tag, from the control file's output line.
   };
 
-  /// @brief Absolute path to the control directory, `<dataset>/control`.
+  /// @brief Absolute path to the control directory, `<dataset>/sim_control`.
   static TString ControlDir();
 
   /**

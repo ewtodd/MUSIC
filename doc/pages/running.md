@@ -20,7 +20,7 @@ nix develop .#87Rb
 ```
 
 @note The binaries take no command-line arguments. Every knob lives in
-`Constants.hpp` / `Constants.cpp` and in the `control/` TOMLs. Each binary
+`Constants.hpp` / `Constants.cpp` and in the `sim_control/` TOMLs. Each binary
 resolves its dataset directory at build time and cross-checks the dataset name
 if `MUSIC_DATASET_DIR` is overridden.
 

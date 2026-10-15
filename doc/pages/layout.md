@@ -13,7 +13,7 @@ tooling/                shared source — built once per dataset
     gpu/                  CUDA timestamp-sort kernel (libgpuaccel.so), dlopen'd at runtime
 analysis/<dataset>/
     config/Constants.cpp  per-dataset config overrides (run numbers, thresholds, gates, ...)
-    control/              per-reaction TOML control files (gas, beam, target, detector)
+    sim_control/          per-reaction TOML control files (gas, beam, target, detector)
     bin/                  built binaries (git-ignored; produced only by the internal Makefile)
     build/                object files + libmusic.a (git-ignored; internal Makefile)
     root_files/           event ROOT files produced by the pipeline
@@ -31,7 +31,7 @@ Each dataset then overrides only the fields it cares about, in
 `analysis/<dataset>/config/Constants.cpp`, which is compiled into that dataset's
 binaries.
 
-The `control/` TOML files are the only other per-dataset input. **The tooling
+The `sim_control/` TOML files are the only other per-dataset input. **The tooling
 itself is identical across datasets** — which is what makes a single API
 reference meaningful for all of them.
 
