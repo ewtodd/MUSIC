@@ -1,5 +1,13 @@
 *.toml 
 *.srim
+# Track the sim controls and their reference tables: each control is one run and
+# every .srim/.tab pins a stopping/TALYS table the run depends on, unlike the
+# generated traces_*.root and logs that stay ignored. scripts/format-controls
+# keeps the TOMLs canonical so a hand edit or sed never inflates the diff.
+!analysis/*/sim_control/*.toml
+!analysis/*/sim_root_files/*.srim
+!analysis/*/sim_root_files_catima/*.srim
+!analysis/*/sim_root_files_srim/*.srim
 upstream
 *.log
 *.html

@@ -61,6 +61,15 @@ recipe the flake drives.
 The tooling is identical across datasets; only
 `analysis/<dataset>/config/Constants.cpp` and the `sim_control/` TOMLs differ. See
 [Repository layout](https://docs.ethanwtodd.com/music/layout.html) for how that split works.
+
+Edit a control value with `scripts/edit-control <file> <section.key> <value>`
+(e.g. `beam.energy`, `detector.strip`) rather than sed: it rewrites only the
+value, keeping the alignment and trailing comment, so the git diff stays a
+single line. `scripts/format-controls` canonicalizes a control (aligns `=`,
+one space before `#`) and is idempotent; `.githooks/pre-commit` runs it on
+staged controls automatically. The `sim_control/` TOMLs, the `sim_root_files/`
+`.srim` stopping tables, and the TALYS `.tab` tables are tracked so a run's
+inputs are reproducible.
 <!---->
 ## Building the docs locally
 <!---->

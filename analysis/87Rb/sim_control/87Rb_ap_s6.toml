@@ -1,0 +1,106 @@
+[gas]
+species     = "4He" # Fill gas: 4He, 3He, Ar, CF4, CH4, P10, iC4H10
+pressure    = 555.0 # Torr
+temperature = 293.0 # K
+
+[beam]
+species     = "87Rb" # Use "AEl" notation
+energy      = 401.07 # Beam KE at the accelerator (before entrance window) [MeV]
+energy_fwhm = 0.9 # Beam energy FWHM at accelerator [MeV]
+dedx_scale  = 1.0 # Bragg-peak barometer (2026-09-03, window loss live at 46.9 MeV): the data
+                   # beam peak sits at strip 14.4 (even) / 15.0 (odd), raw ADC medians; "mean" at
+                   # 1.0 peaks at 14.2, at 0.92 it runs past strip 16. The 0.92 was fit to the
+                   # paper's 11-13 MeV/strip level while the window key was dead. SRIM at 1.0
+                   # peaks at 10.4, catima past 16. Change the model, redo this.
+
+[target]
+species  = "4He"
+compound = "91Y"
+
+[windows.entrance]
+# mg/cm^2 areal density
+material         = "Ti"
+thickness_mg_cm2 = 1.3
+dedx_scale       = 1.08367 # calibrated to measured 46.9 MeV Ti-window loss
+
+[windows.exit]
+# mg/cm^2 areal density
+material         = "Ti"
+thickness_mg_cm2 = 1.3
+dedx_scale       = 1.08367 # calibrated to measured 46.9 MeV Ti-window loss
+
+[windows.degrader]
+thickness_um = -1
+
+[detector]
+eloss_bins = 555 # Number of bins for y axis
+max_eloss  = 20.0 # Max y value [MeV]
+strip      = 6
+# Per-channel noise as %FWHM of the channel's energy deposit. -1 on a given
+# channel disables noise there. Mutually exclusive with a scalar `resolution_fwhm_percent` key
+# in [detector].
+[detector.resolution_fwhm_percent]
+Cathode = 8.0
+S0      = 8.0
+L1      = 8.0
+R1      = 8.0
+L2      = 8.0
+R2      = 8.0
+L3      = 8.0
+R3      = 8.0
+L4      = 8.0
+R4      = 8.0
+L5      = 8.0
+R5      = 8.0
+L6      = 8.0
+R6      = 8.0
+L7      = 8.0
+R7      = 8.0
+L8      = 8.0
+R8      = 8.0
+L9      = 8.0
+R9      = 8.0
+L10     = 8.0
+R10     = 8.0
+L11     = 8.0
+R11     = 8.0
+L12     = 8.0
+R12     = 8.0
+L13     = 8.0
+R13     = 8.0
+L14     = 8.0
+R14     = 8.0
+L15     = 8.0
+R15     = 8.0
+L16     = 8.0
+R16     = 8.0
+S17     = 8.0
+
+[physics]
+# Stopping model. "mean" averages catima (ATIMA) and SRIM per energy point,
+# which is what ApJ 983:142 sec 2.2 used to reproduce the measured beam energy
+# losses. Neither alone does it here: catima puts the beam Bragg peak past
+# strip 17 (paper: 13-14) so the (a,xn) recoil never drops below beam and the
+# strip-17 tag keeps ~5% of true (a,n) events; pure SRIM reproduces the tag
+# (63%) but deposits 12.80 MeV/strip against the measured 11-13. "mean" at the
+# calibrated scale gives the paper's level and keeps the tag signature (13%).
+# Tables are cached beside this run's output; mean-cache generates them once
+# per gas state.
+stopping   = "mean"
+straggling = false
+
+[reaction]
+talys_class = "Sr"
+
+[run]
+seed             = 49
+events_per_strip = 10000
+threads          = 32
+wait             = 0
+update           = 0
+max_time         = 2000.0 # ns
+sim_step         = 0.001 # cm
+method           = 0
+output           = "/home/e-work/MUSIC/analysis/87Rb/sim_root_files/traces_87Rb_ap_s6.root"
+file_opt         = "recreate"
+print_opt        = 0

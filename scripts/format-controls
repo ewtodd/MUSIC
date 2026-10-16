@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# format-controls - canonicalize Remix-MUSIC-Sim control TOMLs in place.
+#
+# Whitespace-only and idempotent (running twice produces identical output), so a
+# value edit (via scripts/edit-control) or a bulk sed never cascades into a
+# whole-file reformat in git. The canonical style is:
+#
+#   - '=' aligned within each [section] by its longest key name,
+#   - exactly one space before a trailing '#' comment,
+#   - blank lines / comment-only lines / [header] lines preserved verbatim.
+#
+# Usage:  format-controls FILE...
+# Rewrites each FILE in place. .githooks/pre-commit runs this on staged controls
+# so controls are committed canonical.
+set -euo pipefail
+
+prog=$(cat <<'AWK'
+function splitcom(s,   i, c, inq) {
+    # s = everything after the first '='. Split at the first '#' that is not
+    # inside a double-quoted string; trim whitespace off both sides.
+    inq = 0
+    for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (c == "\"") inq = !inq
+        else if (c == "#" && !inq) {
+            val[1] = substr(s, 1, i - 1); gsub(/[ \t]+$/, "", val[1])
+            com[1] = substr(s, i + 1);    gsub(/^[ \t]+/, "", com[1])
+            return
+        }
+    }
+    val[1] = s; gsub(/[ \t]+$/, "", val[1]); com[1] = ""
+}
+
+function flush(   i, w) {
+    if (!nbuf) return
+    w = 0
+    for (i = 1; i <= nbuf; i++)
+        if (isassign[i] && length(keys[i]) > w) w = length(keys[i])
+    for (i = 1; i <= nbuf; i++) {
+        if (isassign[i]) {
+            printf "%s = %s", pad(keys[i], w), vals[i]
+            if (coms[i] != "") printf " # %s", coms[i]
+            printf "\n"
+        } else {
+            print bufs[i]
+        }
+    }
+    nbuf = 0
+    delete isassign; delete keys; delete vals; delete coms; delete bufs
+}
+
+function pad(k, w,   s) { s = k; while (length(s) < w) s = s " "; return s }
+
+BEGIN { nbuf = 0 }
+
+/^\[/ { flush(); print; next }
+
+{
+    bufs[++nbuf] = $0
+    if (match($0, /^[[:space:]]*([A-Za-z0-9_]+)[[:space:]]*=[[:space:]]*(.*)$/, m)) {
+        keys[nbuf] = m[1]
+        splitcom(m[2])
+        vals[nbuf] = val[1]
+        coms[nbuf] = com[1]
+        isassign[nbuf] = 1
+    }
+}
+
+END { flush() }
+AWK
+)
+
+for f in "$@"; do
+    [ -f "$f" ] || { echo "format-controls: no such file: $f" >&2; exit 1; }
+    awk "$prog" "$f" > "$f.tmp"
+    mv "$f.tmp" "$f"
+done

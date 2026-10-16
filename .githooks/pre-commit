@@ -32,6 +32,19 @@ if [ -f README.md ] && [ -f "$BANNER" ]; then
     fi
 fi
 
+# Canonicalize staged sim_control TOMLs so a bulk sed/autoformat can't smuggle a
+# whole-file reformat into a commit; control edits made via scripts/edit-control
+# stay a one-line diff, and scripts/format-controls is idempotent so this does
+# nothing to an already-canonical staged file.
+ctl=$(git diff --cached --name-only --diff-filter=ACMR \
+        | grep -E '^analysis/[^/]+/sim_control/[^/]+\.toml$' || true)
+if [ -n "$ctl" ]; then
+    for f in $ctl; do
+        scripts/format-controls "$f"
+        git add "$f"
+    done
+fi
+
 files=$(git diff --cached --name-only --diff-filter=ACMR \
         | grep -E '\.(c|cc|cpp|cxx|h|hpp|hxx)$' || true)
 
