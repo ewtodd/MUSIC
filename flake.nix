@@ -73,7 +73,7 @@
         analysis-utils =
           if isLaptop then utils.packages.${system}.default else utils.packages.${system}.cuda;
         analysis-utils-py = utils.packages.${system}.pythonPackage;
-        root = if isLaptop then pkgs.root else utils.packages.${system}.rootCuda;
+        root = if isLaptop then utils.packages.${system}.root else utils.packages.${system}.rootCuda;
         talys = talys-nix.packages.${system}.default;
         talys-potentials = talys-nix.packages.${system}.talys-atomki-v2-potentials;
         clangdConfigFile = (pkgs.formats.yaml { }).generate "dot-clangd" {
