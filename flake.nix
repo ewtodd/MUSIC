@@ -144,8 +144,14 @@
 
               # Where GENERATED outputs (root_files, plots) land. Defaults to the
               # in-repo dataset dir (on /home); override this one var to redirect
-              # processed output to a scratch drive without rebuilding.
+              # processed output to a scratch drive without rebuilding. A value
+              # that does not match this dataset's dir is warned about, so a stale
+              # MUSIC_RESULTS_DIR inherited from another dataset's shell cannot
+              # silently redirect output (e.g. 87Rb results landing in 37Cl).
               export MUSIC_RESULTS_DIR="''${MUSIC_RESULTS_DIR:-$git_root/analysis/${dataset}}"
+              if [ "$MUSIC_RESULTS_DIR" != "$git_root/analysis/${dataset}" ]; then
+                echo "WARNING: MUSIC_RESULTS_DIR='$MUSIC_RESULTS_DIR' but this is the ${dataset} shell; generated output will land there." >&2
+              fi
               echo "MUSIC results: $MUSIC_RESULTS_DIR"
               export TALYS_BIN="${talys}/bin/talys"
               export TALYS_ATOMKI_V2_DIR="${talys-potentials}/share/talys/atomki-v2"
