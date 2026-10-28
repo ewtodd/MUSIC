@@ -151,7 +151,10 @@ struct StripAlignmentResult {
  *       `[detector.eres]` table keyed Cathode, S0, S17, L1..L16, R1..R16.
  *       Bringing it back needs a width per channel again, measured from the
  *       beam-peak histogram rather than a fit, and a run-level aggregation
- *       after the ridge ratios.
+ *       after the ridge ratios. Remix-MUSIC-Sim now rejects `[detector.eres]`:
+ *       write the same percent-FWHM values, with the same channel keys, as
+ *       `[detector.resolution_fwhm_percent]` (`noise_sigma_mev` is the
+ *       absolute-MeV alternative; a control may use only one of the two).
  */
 class CalibrateBeam {
 public:
