@@ -1,4 +1,5 @@
 #include "StripSumScatter.hpp"
+#include "Plots.hpp"
 #include "RegionCuts.hpp"
 #include "SelectionDiagram.hpp"
 #include <TParameter.h>
@@ -910,7 +911,7 @@ BeamFit2D StripSumScatter::FindBeamGate(TChain *chain, Int_t sx, Int_t sy,
   BeamFitUtils::DrawEllipse(out, nsigma, kRed + 1);
   // Same folder and naming as the strip gates: beam_gate_s0_s1,
   // beam_gate_s1_grid, ... under strip_sum_scatter/<group>.
-  PlottingUtils::SaveFigure(
+  Plots::SaveFigure(
       c, Form("beam_gate_%s_%s", AxisTag(sx).Data(), AxisTag(sy).Data()),
       subdir, PlotSaveOptions::kLINEAR);
   delete c;
@@ -1000,7 +1001,7 @@ BeamGate1D StripSumScatter::FindStripGate(TChain *chain, Int_t strip,
     hi->SetLineWidth(2);
     lo->Draw();
     hi->Draw();
-    PlottingUtils::SaveFigure(c, Form("beam_gate_s%d", strip), subdir);
+    Plots::SaveFigure(c, Form("beam_gate_s%d", strip), subdir);
     delete lo;
     delete hi;
     delete c;
@@ -1142,7 +1143,7 @@ void StripSumScatter::DrawRegionTraces(const TString &save_name,
   }
   leg->Draw();
 
-  PlottingUtils::SaveFigure(c, save_name, subdir, PlotSaveOptions::kLINEAR);
+  Plots::SaveFigure(c, save_name, subdir, PlotSaveOptions::kLINEAR);
   delete c;
 }
 
@@ -1186,7 +1187,7 @@ void StripSumScatter::DrawRegionMeanTraces(const TString &save_name,
     means[i]->Draw("LX SAME"); // mean line, no end caps
   leg->Draw();
 
-  PlottingUtils::SaveFigure(c, save_name, subdir, PlotSaveOptions::kLINEAR);
+  Plots::SaveFigure(c, save_name, subdir, PlotSaveOptions::kLINEAR);
   for (Int_t i = 0; i < Int_t(means.size()); i++)
     delete means[i];
   delete leg;
@@ -2120,10 +2121,10 @@ void StripSumScatter::SimOverlay() {
       leg->AddEntry(g, g->GetTitle(), "p");
     }
     leg->Draw();
-    PlottingUtils::SaveFigure(c,
-                              Form("sim_normsumE_reac%d_s%d_%d_vs_s%d_%d", r,
-                                   YLoOf(r), YHiOf(r), kXLo, kXHi),
-                              "sim_scatter", PlotSaveOptions::kLINEAR);
+    Plots::SaveFigure(c,
+                      Form("sim_normsumE_reac%d_s%d_%d_vs_s%d_%d", r, YLoOf(r),
+                           YHiOf(r), kXLo, kXHi),
+                      "sim_scatter", PlotSaveOptions::kLINEAR);
     delete leg;
     delete c;
     delete frame;
@@ -3114,10 +3115,10 @@ void StripSumScatter::PlotScatters() {
     PlottingUtils::ConfigureAndDraw2DHistogram(m_scatter[reac], c);
     m_scatter[reac]->GetYaxis()->SetTitleOffset(1.3);
     c->SetLeftMargin(0.18);
-    PlottingUtils::SaveFigure(c,
-                              Form("normsumE_reac%d_s%d_%d_vs_s%d_%d", reac,
-                                   YLoOf(reac), YHiOf(reac), kXLo, kXHi),
-                              "strip_sum_scatter", PlotSaveOptions::kLINEAR);
+    Plots::SaveFigure(c,
+                      Form("normsumE_reac%d_s%d_%d_vs_s%d_%d", reac,
+                           YLoOf(reac), YHiOf(reac), kXLo, kXHi),
+                      "strip_sum_scatter", PlotSaveOptions::kLINEAR);
     delete c;
   }
 }
@@ -3295,7 +3296,7 @@ void StripSumScatter::InteractiveOverlay(Int_t reac) {
 Bool_t StripSumScatter::Prepare() {
   // Required before the threaded fill touches TChains from worker threads.
   ROOT::EnableThreadSafety();
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNGAndPDF,
                                 Paths::ResultsDir() + "/plots",
                                 Paths::ResultsDir() + "/root_files");
   gROOT->SetBatch(kTRUE);

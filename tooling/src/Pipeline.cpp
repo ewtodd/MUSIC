@@ -354,7 +354,7 @@ void Pipeline::Run() {
   ROOT::EnableThreadSafety();
   GpuAccel::Init();
   const TString project_root = Paths::DatasetDir();
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNGAndPDF,
                                 Paths::ResultsDir() + "/plots",
                                 Paths::ResultsDir() + "/root_files");
 

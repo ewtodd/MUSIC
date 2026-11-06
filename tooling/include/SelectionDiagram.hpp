@@ -40,10 +40,11 @@ TString Mermaid(const std::vector<SelectionStep> &steps, const TString &title);
 
 /**
  * @brief Write `selection.dot` and `selection.mmd` under `dir`, and render
- *        the DOT to `selection.png` and `selection.pdf` when `dot` is
+ *        the DOT to `selection.png` and `pdf/selection.pdf` when `dot` is
  *        available.
  * @param steps From StripSumScatter::DescribeSelection().
- * @param dir   Output directory, created if missing.
+ * @param dir   Output directory, created if missing; the rendered PDF goes to
+ *              its `pdf/` subfolder, like every figure's.
  * @param title Diagram title.
  */
 void Write(const std::vector<SelectionStep> &steps, const TString &dir,

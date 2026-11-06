@@ -1,4 +1,5 @@
 #include "Timing.hpp"
+#include "Plots.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -188,16 +189,16 @@ void Timing::PlotExtremeEvents2D(TH2F *h_before, TH2F *h_after,
   PlottingUtils::ConfigureAndDraw2DHistogram(h_before, c_before);
   c_before->SetLogz(kFALSE);
   if (Constants::SavePlots())
-    PlottingUtils::SaveFigure(c_before, "extreme_events_before", subdir,
-                              PlotSaveOptions::kLINEAR);
+    Plots::SaveFigure(c_before, "extreme_events_before", subdir,
+                      PlotSaveOptions::kLINEAR);
   delete c_before;
 
   TCanvas *c_after = PlottingUtils::GetConfiguredCanvas(kFALSE);
   PlottingUtils::ConfigureAndDraw2DHistogram(h_after, c_after);
   c_after->SetLogz(kFALSE);
   if (Constants::SavePlots())
-    PlottingUtils::SaveFigure(c_after, "extreme_events_after", subdir,
-                              PlotSaveOptions::kLINEAR);
+    Plots::SaveFigure(c_after, "extreme_events_after", subdir,
+                      PlotSaveOptions::kLINEAR);
   delete c_after;
 
   Int_t n = gStyle->GetNumberOfColors();
@@ -223,8 +224,8 @@ void Timing::PlotExtremeEvents2D(TH2F *h_before, TH2F *h_after,
     h_before_zoom->Draw();
     c_before_zoom->SetRightMargin(0.07);
     if (Constants::SavePlots())
-      PlottingUtils::SaveFigure(c_before_zoom, "extreme_events_before_zoom_us",
-                                subdir, PlotSaveOptions::kLINEAR);
+      Plots::SaveFigure(c_before_zoom, "extreme_events_before_zoom_us", subdir,
+                        PlotSaveOptions::kLINEAR);
     delete c_before_zoom;
   }
 
@@ -239,8 +240,8 @@ void Timing::PlotExtremeEvents2D(TH2F *h_before, TH2F *h_after,
     h_after_zoom->Draw();
     c_after_zoom->SetRightMargin(0.07);
     if (Constants::SavePlots())
-      PlottingUtils::SaveFigure(c_after_zoom, "extreme_events_after_zoom_us",
-                                subdir, PlotSaveOptions::kLINEAR);
+      Plots::SaveFigure(c_after_zoom, "extreme_events_after_zoom_us", subdir,
+                        PlotSaveOptions::kLINEAR);
     delete c_after_zoom;
   }
   if (!old_palette.empty()) {
@@ -288,9 +289,9 @@ void Timing::PlotCostLandscape(const std::vector<Double_t> &shifts,
   PlottingUtils::AddText(Form("best shift = %.6f s", best_shift), 0.85, 0.85);
 
   if (Constants::SavePlots())
-    PlottingUtils::SaveFigure(
-        canvas, Form("cost_landscape_board_%d%s", board, tag.Data()),
-        "timing/" + file_label, PlotSaveOptions::kLINEAR);
+    Plots::SaveFigure(canvas,
+                      Form("cost_landscape_board_%d%s", board, tag.Data()),
+                      "timing/" + file_label, PlotSaveOptions::kLINEAR);
   delete canvas;
 }
 

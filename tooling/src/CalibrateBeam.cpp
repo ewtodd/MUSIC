@@ -1,4 +1,5 @@
 #include "CalibrateBeam.hpp"
+#include "Plots.hpp"
 #include <Rtypes.h>
 #include <TH2D.h>
 #include <utility>
@@ -201,9 +202,8 @@ BeamFit2D FindBeamGateStrips(const FileSpec &spec, Int_t sx, Int_t sy,
     BeamFitUtils::DrawEllipse(out, Constants::cfg.BEAM_GATE_NSIGMA,
                               kViolet + 2);
     if (Constants::SavePlots())
-      PlottingUtils::SaveFigure(cv, Form("beam_gate_s%02d", sy),
-                                plot_subdir + "/beam_gate",
-                                PlotSaveOptions::kLINEAR);
+      Plots::SaveFigure(cv, Form("beam_gate_s%02d", sy),
+                        plot_subdir + "/beam_gate", PlotSaveOptions::kLINEAR);
     delete cv;
   }
   delete h;
@@ -716,8 +716,8 @@ void SaveRidgeFitPlots(const StripPairSamples pairs[18], const RidgeFit dbg[18],
       }
     }
     if (Constants::SavePlots())
-      PlottingUtils::SaveFigure(cv, Form("ridge_s%02d", s), subdir,
-                                PlotSaveOptions::kLINEAR);
+      Plots::SaveFigure(cv, Form("ridge_s%02d", s), subdir,
+                        PlotSaveOptions::kLINEAR);
     delete cv;
     delete g;
     delete lf;
@@ -1259,15 +1259,14 @@ void SaveDynamicRangeOverlay(const FileSpec &spec, const TString &plot_subdir,
     leg->AddEntry(h[s], Form("S%d", s), "l");
   leg->Draw();
   if (Constants::SavePlots())
-    PlottingUtils::SaveFigure(cv, "dynamic_range_check", plot_subdir,
-                              PlotSaveOptions::kLOG);
+    Plots::SaveFigure(cv, "dynamic_range_check", plot_subdir,
+                      PlotSaveOptions::kLOG);
   delete cv;
   delete leg;
   TCanvas *cg = PlottingUtils::GetConfiguredCanvas(kTRUE);
   PlottingUtils::ConfigureAndDrawHistogram(hg, kBlue + 1);
   if (Constants::SavePlots())
-    PlottingUtils::SaveFigure(cg, "grid_spectrum", plot_subdir,
-                              PlotSaveOptions::kLOG);
+    Plots::SaveFigure(cg, "grid_spectrum", plot_subdir, PlotSaveOptions::kLOG);
   delete cg;
   delete hg;
   for (Int_t s = 0; s < kNStrips; s++)
@@ -1489,8 +1488,8 @@ StripAlignmentResult FindStripCentroidAlignment(const FileSpec &spec,
       g_pile_plot->Draw("P SAME");
     }
     if (Constants::SavePlots())
-      PlottingUtils::SaveFigure(cv, "strip_alignment_check", plot_subdir,
-                                PlotSaveOptions::kLINEAR);
+      Plots::SaveFigure(cv, "strip_alignment_check", plot_subdir,
+                        PlotSaveOptions::kLINEAR);
     delete cv;
     delete g_beam_plot;
     delete g_pile_plot;
@@ -1758,7 +1757,7 @@ void CalibrateBeam::AggregateRidgeRatiosForRun(
 
 void CalibrateBeam::Run(const TString &file_label) {
   const TString project_root = Paths::DatasetDir();
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNGAndPDF,
                                 Paths::ResultsDir() + "/plots",
                                 Paths::ResultsDir() + "/root_files");
   gROOT->SetBatch(kTRUE);

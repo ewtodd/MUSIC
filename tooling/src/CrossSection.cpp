@@ -3,6 +3,7 @@
 #include "Constants.hpp"
 #include "InitUtils.hpp"
 #include "Paths.hpp"
+#include "Plots.hpp"
 #include "PlottingUtils.hpp"
 #include "RegionCuts.hpp"
 #include "StripSumScatter.hpp"
@@ -899,7 +900,7 @@ void CrossSection::Draw(const std::vector<const ChannelResult *> &rs,
   leg->Draw();
   // The stamp, drawn last so it sits over the frame.
   StampPreliminary(c);
-  PlottingUtils::SaveFigure(c, name, "cross_section", PlotSaveOptions::kLOG);
+  Plots::SaveFigure(c, name, "cross_section", PlotSaveOptions::kLOG);
   delete c;
 }
 
@@ -1468,8 +1469,7 @@ void CrossSection::DrawFit(const ChannelResult &r, const TString &name) const {
   PlottingUtils::DrawTitle(
       pads.top, Form("%s%s", Paths::DatasetName().Data(), Label(ch).Data()),
       PlottingUtils::FigureScale(pads.plot));
-  PlottingUtils::SaveFigure(pads.c, name, "cross_section",
-                            PlotSaveOptions::kLOG);
+  Plots::SaveFigure(pads.c, name, "cross_section", PlotSaveOptions::kLOG);
   delete pads.c;
 }
 

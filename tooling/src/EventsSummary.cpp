@@ -1,4 +1,5 @@
 #include "EventsSummary.hpp"
+#include "Plots.hpp"
 #include <TLine.h>
 
 Bool_t SummaryGridPartnerIsStrip1() {
@@ -93,8 +94,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
   h.h_music->GetYaxis()->SetTitleOffset(1.4);
   c_music->SetLeftMargin(0.18);
   if (Constants::SavePlots())
-    PlottingUtils::SaveFigure(c_music, musicName, subdir,
-                              PlotSaveOptions::kLINEAR);
+    Plots::SaveFigure(c_music, musicName, subdir, PlotSaveOptions::kLINEAR);
   out_file->cd();
   c_music->Write(h.h_music->GetName(), TObject::kOverwrite);
   delete c_music;
@@ -103,7 +103,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
   c_mult->cd();
   PlottingUtils::ConfigureAndDrawHistogram(h.h_mult, kBlue + 1);
   if (Constants::SavePlots())
-    PlottingUtils::SaveFigure(c_mult, multName, subdir, PlotSaveOptions::kLOG);
+    Plots::SaveFigure(c_mult, multName, subdir, PlotSaveOptions::kLOG);
   delete c_mult;
 
   for (Int_t s = 1; s <= 16; s++) {
@@ -122,8 +122,8 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
       ridge->Draw("SAME");
     }
     if (Constants::SavePlots())
-      PlottingUtils::SaveFigure(c, TString("long_vs_short_s") + s + plot_suffix,
-                                subdir, PlotSaveOptions::kLINEAR);
+      Plots::SaveFigure(c, TString("long_vs_short_s") + s + plot_suffix, subdir,
+                        PlotSaveOptions::kLINEAR);
     out_file->cd();
     c->Write(h.h2_long_vs_short[s - 1]->GetName(), TObject::kOverwrite);
     if (ridge) {
@@ -139,7 +139,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
     c->cd();
     PlottingUtils::ConfigureAndDrawHistogram(h.h1_cathode, kBlue + 1);
     if (Constants::SavePlots())
-      PlottingUtils::SaveFigure(c, cathName, subdir, PlotSaveOptions::kLOG);
+      Plots::SaveFigure(c, cathName, subdir, PlotSaveOptions::kLOG);
     out_file->cd();
     h.h1_cathode->Write(h.h1_cathode->GetName(), TObject::kOverwrite);
     delete c;
@@ -150,7 +150,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
     c->cd();
     PlottingUtils::ConfigureAndDrawHistogram(h.h1_strip17, kBlue + 1);
     if (Constants::SavePlots())
-      PlottingUtils::SaveFigure(c, strip17Name, subdir, PlotSaveOptions::kLOG);
+      Plots::SaveFigure(c, strip17Name, subdir, PlotSaveOptions::kLOG);
     out_file->cd();
     h.h1_strip17->Write(h.h1_strip17->GetName(), TObject::kOverwrite);
     delete c;
@@ -162,7 +162,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
     PlottingUtils::ConfigureAndDraw2DHistogram(h.h2_strip0_vs_grid, c);
     h.h2_strip0_vs_grid->GetYaxis()->SetTitleOffset(1.3);
     if (Constants::SavePlots())
-      PlottingUtils::SaveFigure(c, s0gName, subdir, PlotSaveOptions::kLINEAR);
+      Plots::SaveFigure(c, s0gName, subdir, PlotSaveOptions::kLINEAR);
     out_file->cd();
     c->Write(h.h2_strip0_vs_grid->GetName(), TObject::kOverwrite);
     delete c;
@@ -172,7 +172,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
     c->cd();
     PlottingUtils::ConfigureAndDrawHistogram(h.h1_strip0, kBlue + 1);
     if (Constants::SavePlots())
-      PlottingUtils::SaveFigure(c, s0Name, subdir, PlotSaveOptions::kLOG);
+      Plots::SaveFigure(c, s0Name, subdir, PlotSaveOptions::kLOG);
     out_file->cd();
     h.h1_strip0->Write(h.h1_strip0->GetName(), TObject::kOverwrite);
     delete c;
@@ -182,7 +182,7 @@ void SaveAndDeleteSummaryHistograms(SummaryHistograms &h, TFile *out_file,
     c->cd();
     PlottingUtils::ConfigureAndDrawHistogram(h.h1_grid, kBlue + 1);
     if (Constants::SavePlots())
-      PlottingUtils::SaveFigure(c, gName, subdir, PlotSaveOptions::kLOG);
+      Plots::SaveFigure(c, gName, subdir, PlotSaveOptions::kLOG);
     out_file->cd();
     h.h1_grid->Write(h.h1_grid->GetName(), TObject::kOverwrite);
     delete c;
@@ -230,7 +230,7 @@ void EventsSummary::SaveSampleTraces(const std::vector<TGraph *> &traces,
   }
 
   if (Constants::SavePlots())
-    PlottingUtils::SaveFigure(c, save_name, subdir, PlotSaveOptions::kLINEAR);
+    Plots::SaveFigure(c, save_name, subdir, PlotSaveOptions::kLINEAR);
   delete c;
   delete frame;
 }

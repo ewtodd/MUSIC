@@ -9,7 +9,7 @@
 
 int main() {
   Constants::ActivateAnalysisEpoch();
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNGAndPDF,
                                 Paths::ResultsDir() + "/plots",
                                 Paths::ResultsDir() + "/root_files");
   gROOT->SetBatch(kTRUE);

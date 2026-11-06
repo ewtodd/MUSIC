@@ -1,6 +1,7 @@
 #include "RegionCuts.hpp"
 #include "Constants.hpp"
 #include "Paths.hpp"
+#include "Plots.hpp"
 #include "PlottingUtils.hpp"
 #include <TAxis.h>
 #include <TCanvas.h>
@@ -469,8 +470,8 @@ void SaveFigures(TH2F *scatter, Int_t reac, const RegionFit &fit, TCutG *an,
       an->Draw("L SAME");
     }
     // 2D: z is already log from the utility; kLOG means a log y here.
-    PlottingUtils::SaveFigure(c, Form("regions_reac%d", reac), subdir,
-                              PlotSaveOptions::kLINEAR);
+    Plots::SaveFigure(c, Form("regions_reac%d", reac), subdir,
+                      PlotSaveOptions::kLINEAR);
     delete c;
     for (Int_t k = 0; k < Int_t(tmp.size()); k++)
       delete tmp[k];
@@ -488,8 +489,8 @@ void SaveFigures(TH2F *scatter, Int_t reac, const RegionFit &fit, TCutG *an,
     model->SetLineColor(cReac);
     model->SetLineWidth(1);
     model->Draw("CONT3 SAME");
-    PlottingUtils::SaveFigure(c, Form("regions_reac%d_model", reac), subdir,
-                              PlotSaveOptions::kLINEAR);
+    Plots::SaveFigure(c, Form("regions_reac%d_model", reac), subdir,
+                      PlotSaveOptions::kLINEAR);
     delete c;
   }
 
@@ -513,7 +514,7 @@ void SaveFigures(TH2F *scatter, Int_t reac, const RegionFit &fit, TCutG *an,
     m->SetLineColor(cReac);
     m->SetLineWidth(2);
     m->Draw("HIST SAME");
-    PlottingUtils::SaveFigure(
+    Plots::SaveFigure(
         c, Form("regions_reac%d_proj%s", reac, which == 0 ? "x" : "y"), subdir,
         PlotSaveOptions::kLOG);
     delete c;

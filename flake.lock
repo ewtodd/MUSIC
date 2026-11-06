@@ -1,5 +1,22 @@
 {
   "nodes": {
+    "clad-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790572406,
+        "narHash": "sha256-NIU2Sp8eBMpQ+1bSdykVnJJKTo8KS/2hBVKPAg1MwGg=",
+        "owner": "vgvassilev",
+        "repo": "clad",
+        "rev": "06f4bc8c6b1d36958519acc006dda22ad2731647",
+        "type": "github"
+      },
+      "original": {
+        "owner": "vgvassilev",
+        "ref": "v2.5",
+        "repo": "clad",
+        "type": "github"
+      }
+    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -63,6 +80,23 @@
         "utils": "utils"
       }
     },
+    "root-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792401138,
+        "narHash": "sha256-QU4gODLwlGIbIFt+wAq4GikdwzIUWwix1bgP26i/GIE=",
+        "owner": "root-project",
+        "repo": "root",
+        "rev": "e0e5723692467ac53dcc5871e990a68f1e5adf30",
+        "type": "github"
+      },
+      "original": {
+        "owner": "root-project",
+        "repo": "root",
+        "rev": "e0e5723692467ac53dcc5871e990a68f1e5adf30",
+        "type": "github"
+      }
+    },
     "systems": {
       "locked": {
         "lastModified": 1681028828,
@@ -115,15 +149,17 @@
     },
     "utils": {
       "inputs": {
+        "clad-src": "clad-src",
         "flake-utils": "flake-utils_2",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "root-src": "root-src"
       },
       "locked": {
-        "lastModified": 1790097080,
-        "narHash": "sha256-LIKh44WEGXSAWJuCGFu7vv/fuaAUYX8NA0g57v3cEeg=",
+        "lastModified": 1793212189,
+        "narHash": "sha256-vYl9+/gTk9QYOVggy9ePCYTsauUAFUZHh+8mrwSH/is=",
         "owner": "ewtodd",
         "repo": "Analysis-Utilities",
-        "rev": "a030519fea84914ecd5439d629f42aedf3424fa5",
+        "rev": "623c4d6d496c4e58cb27e72211610c70f2ef34a8",
         "type": "github"
       },
       "original": {

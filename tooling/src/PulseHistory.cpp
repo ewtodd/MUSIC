@@ -2,6 +2,7 @@
 #include "Constants.hpp"
 #include "FileSet.hpp"
 #include "IOUtils.hpp"
+#include "Plots.hpp"
 #include "PlottingUtils.hpp"
 #include <PulseHistoryGroups.hpp>
 #include <TCanvas.h>
@@ -1583,7 +1584,7 @@ void DrawKernelFigure(const Kernel &K, const TString &subdir,
   TLine *zero = new TLine(xlo, 0.0, xhi, 0.0);
   zero->SetLineStyle(2);
   zero->Draw();
-  PlottingUtils::SaveFigure(c, fname, subdir, PlotSaveOptions::kLINEAR);
+  Plots::SaveFigure(c, fname, subdir, PlotSaveOptions::kLINEAR);
   delete c;
 }
 
@@ -1743,8 +1744,8 @@ void SavePlots(Result &res, const TString &file_label) {
     TLine *zero = new TLine(xlo, 0.0, xhi, 0.0);
     zero->SetLineStyle(2);
     zero->Draw();
-    PlottingUtils::SaveFigure(c, Form("kernel_channels_%s", GroupTag(g)),
-                              subdir, PlotSaveOptions::kLINEAR);
+    Plots::SaveFigure(c, Form("kernel_channels_%s", GroupTag(g)), subdir,
+                      PlotSaveOptions::kLINEAR);
     delete c;
   }
   for (Int_t g = 1; g < kNGROUPS; g++) {
@@ -1757,8 +1758,8 @@ void SavePlots(Result &res, const TString &file_label) {
       diag->SetLineColor(kRed + 1);
       diag->SetLineStyle(2);
       diag->Draw();
-      PlottingUtils::SaveFigure(c, Form("deviation_vs_predicted_%s", gn),
-                                subdir, PlotSaveOptions::kLINEAR);
+      Plots::SaveFigure(c, Form("deviation_vs_predicted_%s", gn), subdir,
+                        PlotSaveOptions::kLINEAR);
       delete c;
     }
     if (res.dev_before[g] && res.dev_before[g]->GetEntries() > 0) {
@@ -1773,8 +1774,8 @@ void SavePlots(Result &res, const TString &file_label) {
       leg->AddEntry(res.dev_after[g],
                     Form("After, RMS %.1f", res.kernel[g].rms_after), "l");
       leg->Draw();
-      PlottingUtils::SaveFigure(c, Form("deviation_before_after_%s", gn),
-                                subdir, PlotSaveOptions::kLOG);
+      Plots::SaveFigure(c, Form("deviation_before_after_%s", gn), subdir,
+                        PlotSaveOptions::kLOG);
       delete c;
     }
     if (res.dtprev_before[g] && res.dtprev_before[g]->GetEntries() > 0) {
@@ -1790,8 +1791,8 @@ void SavePlots(Result &res, const TString &file_label) {
       leg->AddEntry(res.dtprev_before[g], "Before", "l");
       leg->AddEntry(res.dtprev_after[g], "After", "l");
       leg->Draw();
-      PlottingUtils::SaveFigure(c, Form("deviation_vs_dt_previous_%s", gn),
-                                subdir, PlotSaveOptions::kLINEAR);
+      Plots::SaveFigure(c, Form("deviation_vs_dt_previous_%s", gn), subdir,
+                        PlotSaveOptions::kLINEAR);
       delete c;
     }
     // The channels of the group after their own kernels, on one canvas:
@@ -1823,17 +1824,17 @@ void SavePlots(Result &res, const TString &file_label) {
         leg->AddEntry(p, res.name_ch[chans[k]].Data(), "l");
       }
       leg->Draw();
-      PlottingUtils::SaveFigure(c,
-                                Form("deviation_vs_dt_channels_%s_%s",
-                                     pass == 0 ? "before" : "after", gn),
-                                subdir, PlotSaveOptions::kLINEAR);
+      Plots::SaveFigure(c,
+                        Form("deviation_vs_dt_channels_%s_%s",
+                             pass == 0 ? "before" : "after", gn),
+                        subdir, PlotSaveOptions::kLINEAR);
       delete c;
     }
     if (res.shift[g] && res.shift[g]->GetEntries() > 0) {
       TCanvas *c = PlottingUtils::GetConfiguredCanvas(kTRUE);
       PlottingUtils::ConfigureAndDrawHistogram(res.shift[g], kBlack);
-      PlottingUtils::SaveFigure(c, Form("applied_shift_%s", gn), subdir,
-                                PlotSaveOptions::kLOG);
+      Plots::SaveFigure(c, Form("applied_shift_%s", gn), subdir,
+                        PlotSaveOptions::kLOG);
       delete c;
     }
   }

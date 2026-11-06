@@ -219,7 +219,7 @@ Int_t RunModel(const TalysModel &model, const TString &work,
 } // namespace
 
 int main() {
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNGAndPDF,
                                 Paths::ResultsDir() + "/plots",
                                 Paths::ResultsDir() + "/root_files");
   const CrossSectionConfig &X = Constants::cfg.CROSS_SECTION_CONFIG;

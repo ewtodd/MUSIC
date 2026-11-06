@@ -34,9 +34,10 @@ These operate on the pipeline's output ROOT files, and are all in
 - **`strip-sum-scatter`** — reaction-strip scatter and dE plots, trace region
   overlays, comparisons against simulation. Also writes the event selection as
   configured, cut by cut in the order applied, to
-  `plots/strip_sum_scatter/selection.{dot,mmd}` (and `.png`/`.pdf` when
-  Graphviz's `dot` is on the PATH, as it is in the dev shells); `compute-regions`
-  writes the same in the all-tagged mode.
+  `plots/strip_sum_scatter/selection.{dot,mmd}` (with the rendered versions
+  landing as `.png` beside it and `pdf/selection.pdf` when Graphviz's `dot` is
+  on the PATH, as it is in the dev shells); `compute-regions` writes the same
+  in the all-tagged mode.
 - **`preprocess-sol`** — the SOL-processing tool: splits `.sol` files into
   time chunks and decodes them to raw-hit ROOT files.
 - **`cross-section`** — the absolute cross section per reaction strip from the
@@ -49,6 +50,10 @@ These operate on the pipeline's output ROOT files, and are all in
 Generated data — event ROOT files and plots — is written to `MUSIC_RESULTS_DIR`
 when that is set, and otherwise to the baked-in dataset directory. The pipeline
 log always goes to `<dataset dir>/pipeline_fused.log`.
+
+Figures are saved in both formats: each plot directory keeps the `.png` files
+and its `.pdf` vector copies all together under a `pdf/` subfolder
+(`log_`-prefixed variants included).
 
 Running from the dev shell points both `MUSIC_DATASET_DIR` and
 `MUSIC_RESULTS_DIR` at the in-repo `analysis/<dataset>`, which is writable.

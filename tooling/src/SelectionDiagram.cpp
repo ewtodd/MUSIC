@@ -290,6 +290,15 @@ void SelectionDiagram::Write(const std::vector<SelectionStep> &steps,
       ok = kFALSE;
   }
   delete[] dot;
+  // The PDF joins every other figure's: under the plot dir's `pdf/` folder.
+  const TString pdf_dir = dir + "/pdf";
+  if (ok && !gSystem->AccessPathName(base + ".pdf")) {
+    if (gSystem->AccessPathName(pdf_dir))
+      gSystem->mkdir(pdf_dir, kTRUE);
+    gSystem->Rename(base + ".pdf", pdf_dir + "/selection.pdf");
+  }
   std::cout << "selection diagram: " << base << ".{dot,mmd"
-            << (ok ? ",png,pdf}" : "} (dot failed to render)") << std::endl;
+            << (ok ? ",png} (and pdf/selection.pdf)"
+                   : "} (dot failed to render)")
+            << std::endl;
 }

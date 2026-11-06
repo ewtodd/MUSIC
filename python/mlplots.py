@@ -1,5 +1,7 @@
 """ROOT-based plots in the house PlottingUtils style (blind pipeline)."""
 
+import os
+
 import numpy as np
 
 import analysis_utilities as au
@@ -10,12 +12,31 @@ _ROOT = None
 
 
 def _root():
-    """Lazy one-time ROOT + style init (batch mode, house dirs)."""
+    """Lazy one-time ROOT + style init (batch mode, house dirs).
+
+    kPNGAndPDF paints every figure twice, as .png and .pdf; _save() then
+    files the PDFs under the plot directory's `pdf/` subfolder.
+    """
     global _ROOT
     if _ROOT is None:
-        _ROOT = au.set_root_preferences(plots_dir=config.PLOTS_DIR,
-                                        root_files_dir=config.ROOT_FILES_DIR)
+        _ROOT = au.set_root_preferences(
+            save_format=au.load_cpp_library().PlotSaveFormat.kPNGAndPDF,
+            plots_dir=config.PLOTS_DIR,
+            root_files_dir=config.ROOT_FILES_DIR)
     return _ROOT
+
+
+def _save(R, c, name, subdir=config.PLOT_SUBDIR):
+    """SaveFigure's linear variant, then file the written PDFs into the
+    figure directory's `pdf/` subfolder (mirrors tooling Plots::SaveFigure)."""
+    R.PlottingUtils.SaveFigure(c, name, subdir, R.PlotSaveOptions.kLINEAR)
+    full = os.path.join(R.PlottingUtils.GetPlotsBaseDir(), subdir)
+    pdf_dir = os.path.join(full, "pdf")
+    for stem in (name, "log_" + name):
+        src = os.path.join(full, stem + ".pdf")
+        if os.path.exists(src):
+            os.makedirs(pdf_dir, exist_ok=True)
+            os.replace(src, os.path.join(pdf_dir, stem + ".pdf"))
 
 
 def _graph(R, x, y):
@@ -72,7 +93,7 @@ def cluster_scatter(named_points, name, x_title, y_title,
         graphs.append(g)
         leg.AddEntry(g, label, "p")
     leg.Draw()
-    R.PlottingUtils.SaveFigure(c, name, subdir, R.PlotSaveOptions.kLINEAR)
+    _save(R, c, name, subdir)
 
 
 def feature_hist2d(named_points, name, x_title, y_title,
@@ -133,7 +154,7 @@ def feature_hist2d(named_points, name, x_title, y_title,
         keep.append(h)
         leg.AddEntry(h, label, "f")
     leg.Draw()
-    R.PlottingUtils.SaveFigure(c, name, subdir, R.PlotSaveOptions.kLINEAR)
+    _save(R, c, name, subdir)
 
 
 def value_hist(values, name, x_title, subdir=config.PLOT_SUBDIR, vline=None,
@@ -168,7 +189,7 @@ def value_hist(values, name, x_title, subdir=config.PLOT_SUBDIR, vline=None,
     if label:
         text = R.PlottingUtils.AddText(label, 0.42, 0.85)
         text.Draw()
-    R.PlottingUtils.SaveFigure(c, name, subdir, R.PlotSaveOptions.kLINEAR)
+    _save(R, c, name, subdir)
 
 
 def _trace_palette(R):
@@ -261,7 +282,7 @@ def overlay_cluster_means(groups,
     leg.Draw()
     text = R.PlottingUtils.AddText(label, 0.42, 0.85)
     text.Draw()
-    R.PlottingUtils.SaveFigure(c, name, subdir, R.PlotSaveOptions.kLINEAR)
+    _save(R, c, name, subdir)
 
 
 def overlay_cluster_traces(groups,
@@ -306,7 +327,7 @@ def overlay_cluster_traces(groups,
     leg.Draw()
     text = R.PlottingUtils.AddText(label, 0.42, 0.85)
     text.Draw()
-    R.PlottingUtils.SaveFigure(c, name, subdir, R.PlotSaveOptions.kLINEAR)
+    _save(R, c, name, subdir)
 
 
 def scree_plot(ratios, name, subdir=config.PLOT_SUBDIR, label=""):
@@ -350,7 +371,7 @@ def scree_plot(ratios, name, subdir=config.PLOT_SUBDIR, label=""):
         text = R.PlottingUtils.AddText(label, 0.42, 0.45)
         text.Draw()
         keep.append(text)
-    R.PlottingUtils.SaveFigure(c, name, subdir, R.PlotSaveOptions.kLINEAR)
+    _save(R, c, name, subdir)
 
 
 def matrix_hist(matrix, row_labels, col_labels, name, x_title, y_title,
@@ -377,4 +398,4 @@ def matrix_hist(matrix, row_labels, col_labels, name, x_title, y_title,
     h.SetMarkerSize(1.2)
     c = R.PlottingUtils.GetConfiguredCanvas(R.kFALSE)
     h.Draw("COLZ TEXT")
-    R.PlottingUtils.SaveFigure(c, name, subdir, R.PlotSaveOptions.kLINEAR)
+    _save(R, c, name, subdir)
