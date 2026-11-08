@@ -1243,8 +1243,16 @@ void SaveDynamicRangeOverlay(const FileSpec &spec, const TString &plot_subdir,
     if (m > y_top)
       y_top = m;
   }
-  TCanvas *cv = PlottingUtils::GetConfiguredCanvas(kFALSE);
-  cv->SetRightMargin(0.20);
+  std::vector<TString> labels;
+  for (Int_t s = 0; s < kNStrips; s++)
+    labels.push_back(Form("S%d", s));
+  const Double_t legend_width_px = PlottingUtils::LegendWidthPx(labels);
+  // The standard frame with a legend pad to its right, log y on the plot pad
+  // itself: kLOG would set it on the canvas, which here holds only the pads.
+  TPad *plot = nullptr;
+  TPad *legend_pad = nullptr;
+  TCanvas *cv = PlottingUtils::GetConfiguredCanvasWithSideLegend(
+      plot, legend_pad, Int_t(legend_width_px), 800, kTRUE);
   Bool_t first = kTRUE;
   for (Int_t s = 0; s < kNStrips; s++) {
     Int_t color = colors[s % Int_t(colors.size())];
@@ -1254,13 +1262,35 @@ void SaveDynamicRangeOverlay(const FileSpec &spec, const TString &plot_subdir,
     h[s]->Draw(first ? "HIST" : "HIST SAME");
     first = kFALSE;
   }
-  TLegend *leg = PlottingUtils::AddLegend(0.81, 0.99, 0.10, 0.95);
+  TLegend *leg = PlottingUtils::AddSideLegend(plot, legend_pad, kNStrips);
+  // Two corrections to AddSideLegend's box. Eighteen of its 50 px rows are
+  // taller than the frame, so the box would fill the canvas height and cover
+  // the last x-axis label: fit it to the frame's height (both pads span the
+  // canvas height, so the frame's margins carry over). And it spans the whole
+  // legend pad, from the frame's right edge to the canvas edge, which also
+  // holds the plot's right margin: narrow it to the width its entries need,
+  // centred between the frame and the edge. ROOT paints a drawn legend from
+  // its pad coordinates, which in the axis-less legend pad equal NDC, so both
+  // are set.
+  const Double_t frame_bottom = plot->GetBottomMargin();
+  const Double_t frame_top = 1.0 - plot->GetTopMargin();
+  const Double_t legend_pad_px = legend_pad->GetWw() * legend_pad->GetAbsWNDC();
+  const Double_t box_left = 0.5 * (1.0 - legend_width_px / legend_pad_px);
+  const Double_t box_right = 1.0 - box_left;
+  leg->SetX1NDC(box_left);
+  leg->SetX2NDC(box_right);
+  leg->SetY1NDC(frame_bottom);
+  leg->SetY2NDC(frame_top);
+  leg->SetX1(box_left);
+  leg->SetX2(box_right);
+  leg->SetY1(frame_bottom);
+  leg->SetY2(frame_top);
   for (Int_t s = 0; s < kNStrips; s++)
-    leg->AddEntry(h[s], Form("S%d", s), "l");
-  leg->Draw();
+    leg->AddEntry(h[s], labels[s], "l");
+  // Saved under the log_ name kLOG gave it, now that the pad is already log.
   if (Constants::SavePlots())
-    Plots::SaveFigure(cv, "dynamic_range_check", plot_subdir,
-                      PlotSaveOptions::kLOG);
+    Plots::SaveFigure(cv, "log_dynamic_range_check", plot_subdir,
+                      PlotSaveOptions::kLINEAR);
   delete cv;
   delete leg;
   TCanvas *cg = PlottingUtils::GetConfiguredCanvas(kTRUE);
