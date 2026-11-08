@@ -504,9 +504,13 @@ public:
   Double_t PULSE_HISTORY_BEAM_LO;
   Double_t PULSE_HISTORY_BEAM_HI;
 
-  /// Looser window for the long ends of the chain whose kernel is being
-  /// fit; the one above is used on strips that are not actively being fit
-  /// in order to find actual beam-like events.
+  /// Window for the long ends of the chain whose kernel is being fit; the one
+  /// above is used on the other chain. Both default to 0.5-1.6: a beam
+  /// particle leaves every long end near its own mode, so the same window
+  /// finds beam on both chains. A tighter window on the other chain cuts it
+  /// by its pulse history (after a recent pulse it passes only when the
+  /// particle happened to be high), and both chains see the same particle,
+  /// so the fitted chain's kernel then learns that excess as history.
   Double_t PULSE_HISTORY_OWN_LO;
   Double_t PULSE_HISTORY_OWN_HI;
 
