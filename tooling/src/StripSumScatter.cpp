@@ -1331,7 +1331,7 @@ TString StripSumScatter::BuildFingerprint(const FileSet::GateGroups &groups) {
   // Two parts split by the bar. Before: what decides tagging and keeping; a
   // change there refills. After: plane-only, re-projected from the reservoir.
   TString s =
-      Form("v45 reac[%d,%d] short=%d bmult[%d,%d] pileup=%.2fsig,%d "
+      Form("v46 reac[%d,%d] short=%d bmult[%d,%d] pileup=%.2fsig,%d "
            "noise=%.2fsig,%d "
            "jump=%.2fsig smooth=%.2fsig "
            "end=%.2fsig gate[s%d,%.2f,c%.4f,%d,%.3f,%.3f]",
@@ -2249,6 +2249,9 @@ Bool_t StripSumScatter::TryLoadCache(const TString &cacheName,
     e.seed_ts = 0;
     if (tt->GetBranch("seed_ts"))
       tt->SetBranchAddress("seed_ts", &e.seed_ts);
+    e.run = -1;
+    if (tt->GetBranch("run"))
+      tt->SetBranchAddress("run", &e.run);
     Long64_t nt = tt->GetEntries();
     m_reservoir.reserve(nt);
     for (Long64_t j = 0; j < nt; j++) {
@@ -2349,6 +2352,7 @@ void StripSumScatter::WriteCache(const TString &cacheName,
   tt->Branch("beam_flat", &e.beam_flat, "beam_flat/O");
   tt->Branch("both_mult", &e.both_mult, "both_mult/I");
   tt->Branch("seed_ts", &e.seed_ts, "seed_ts/l");
+  tt->Branch("run", &e.run, "run/I");
   for (Int_t k = 0; k < Int_t(m_reservoir.size()); k++) {
     e = m_reservoir[k];
     tt->Fill();
@@ -2461,9 +2465,10 @@ static void VariantMovesEventLevel(
 }
 
 // The trace record: calibrated and raw ADC strips, the strip-0/-17 ends,
-// the mirrored short side, the both-channel multiplicity, seed, mask, beam.
+// the mirrored short side, the both-channel multiplicity, seed, run, mask,
+// beam.
 static void FillTraceEvt(TraceEvt &e, const EnergyView &ev, ULong64_t seed_ts,
-                         UInt_t mask, Bool_t beam) {
+                         Int_t run, UInt_t mask, Bool_t beam) {
   for (Int_t k = 0; k < 16; k++) {
     e.leftdE[k] = Float_t(ev.left[k]);
     e.rightdE[k] = Float_t(ev.right[k]);
@@ -2485,6 +2490,7 @@ static void FillTraceEvt(TraceEvt &e, const EnergyView &ev, ULong64_t seed_ts,
     }
   e.both_mult = CountBothEnds(ev, 16);
   e.seed_ts = seed_ts;
+  e.run = run;
   e.reac_mask = mask;
   e.beam_flat = beam;
 }
@@ -2601,10 +2607,9 @@ void StripSumScatter::AllocateRunScatters(Int_t run, Int_t kReacMin,
 /// One run's scatter fill. Each call builds PRIVATE scatter histograms and its
 /// own reservoir slice, so the runs never touch shared state; the caller merges
 /// them in run order, which makes the threaded result identical to sequential.
-SingleRunFillResult
-StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
-                                 const BeamGate1D &gate,
-                                 const BeamEllipses &runBeam) {
+SingleRunFillResult StripSumScatter::FillRunScatters(
+    Int_t key, Int_t run_number, const TString &label, TChain *chain,
+    const BeamGate1D &gate, const BeamEllipses &runBeam) {
   const Int_t run = key; // unique per task: names the private histograms
   const Int_t kReacMin =
       Constants::cfg.STRIP_SUM_SCATTER_CONFIG.REACTION_STRIP_MIN;
@@ -2717,7 +2722,7 @@ StripSumScatter::FillRunScatters(Int_t key, const TString &label, TChain *chain,
       nBeamKept++;
 
     TraceEvt e;
-    FillTraceEvt(e, ev, seed_ts_in, mask, beam);
+    FillTraceEvt(e, ev, seed_ts_in, run_number, mask, beam);
     res.reservoir.push_back(e);
     if (mask != 0)
       totalGated++;
@@ -2875,8 +2880,9 @@ void StripSumScatter::FillScatterFile(
     TChain ch("events");
     ch.Add(tasks[t].path);
     if (ch.GetEntries() > 0)
-      phase.fills[t] = FillRunScatters(runOrder[i], labelVec[i], &ch,
-                                       fits[i].gate, fits[i].pure_beam);
+      phase.fills[t] =
+          FillRunScatters(runOrder[i], tasks[t].run_number, labelVec[i], &ch,
+                          fits[i].gate, fits[i].pure_beam);
   }
   std::lock_guard<std::mutex> lk(phase.merge_mutex);
   phase.filled[t] = kTRUE;
@@ -2953,6 +2959,7 @@ void StripSumScatter::FillScatters(const FileSet::GateGroups &groups) {
         continue;
       FillTask t;
       t.run_idx = it->second;
+      t.run_number = specs[k].run;
       t.path = full;
       tasks.push_back(t);
     }

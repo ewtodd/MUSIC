@@ -222,10 +222,13 @@ struct TraceEvt {
   Bool_t beam_flat; ///< Whether the trace looked flat, i.e. beam-like.
   Int_t both_mult;  ///< Split strips (1-16) with both ends above threshold.
   /// Timestamp of the grid hit that seeded the event, from the events tree.
-  /// Unique per event and independent of how runs are split into files, so a
-  /// cached event joins back to its source record. Zero when the source
-  /// predates the seed-timestamp branch.
+  /// Unique per event within its run and independent of how runs are split
+  /// into files; the digitiser restarts it with every run. Zero when the
+  /// source predates the seed-timestamp branch.
   ULong64_t seed_ts;
+  /// Run the event came from. With seed_ts it joins a cached event back to its
+  /// source record, raw data included. -1 when the cache predates it.
+  Int_t run = -1;
 
   /// @brief A strip's deposit: the sum of its ends, or the unsegmented value.
   Double_t Total(Int_t strip) const {
@@ -577,10 +580,11 @@ private:
   /// subfile on CoMPASS. `label` names it in logs and plot folders.
   static SingleRunFitResult FitRunGates(Int_t key, const TString &label,
                                         TChain *chain);
-  static SingleRunFillResult FillRunScatters(Int_t key, const TString &label,
-                                             TChain *chain,
-                                             const BeamGate1D &gate,
-                                             const BeamEllipses &runBeam);
+  /// `run` is the run number the chain's events came from, recorded with each
+  /// kept event (TraceEvt::run); `key` may be a per-file counter instead.
+  static SingleRunFillResult
+  FillRunScatters(Int_t key, Int_t run, const TString &label, TChain *chain,
+                  const BeamGate1D &gate, const BeamEllipses &runBeam);
   /// The event-level beam verdict at one threshold set: the gate, pileup,
   /// noise and smoothness decisions, the combined event decision, and the
   /// sequential pre-reaction cut, or -1 when none.
@@ -714,10 +718,11 @@ private:
   // Run n indexed tasks on a pool of workers, pulling from a shared queue.
   static void RunIndexedParallel(Int_t n, Int_t workers,
                                  const std::function<void(Int_t)> &task);
-  // One fill task: a processed events file and the index of the gate group
-  // (run) it belongs to.
+  // One fill task: a processed events file, the index of the gate group (run)
+  // it belongs to, and the file's run number.
   struct FillTask {
     Int_t run_idx;
+    Int_t run_number;
     TString path;
   };
   // The fill phase's state shared by the workers: the per-file results, the
